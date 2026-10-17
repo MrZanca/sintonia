@@ -1,0 +1,17 @@
+[package]
+name = "sintonia-player"
+description = "Sintonia: involucro di libmpv (build LGPL)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+links = "mpv"
+
+[dependencies]
+sintonia-core = { path = "../sintonia-core" }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[lints]
+workspace = true

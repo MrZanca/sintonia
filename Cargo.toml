@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = ["crates/sintonia-core", "crates/sintonia-player", "crates/sintonia-app"]
+exclude = ["bozza-grafica"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+authors = ["MrZanca"]
+publish = false
+
+[workspace.dependencies]
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+slint = "1.18"
+slint-build = "1.18"
+glow = "0.16"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+undocumented_unsafe_blocks = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

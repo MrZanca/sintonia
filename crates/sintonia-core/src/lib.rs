@@ -1,0 +1,6 @@
+//! Logica di Sintonia senza interfaccia: sorgenti (M3U, Xtream Codes), guida XMLTV, database.
+//!
+//! In M0 contiene solo [`redact`], che serve già al player per non scrivere credenziali nei log.
+//! Il resto arriva con le milestone M1-M3.
+
+pub mod redact;
