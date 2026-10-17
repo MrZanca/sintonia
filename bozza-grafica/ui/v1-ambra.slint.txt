@@ -1,0 +1,1997 @@
+// Sintonia: bozza grafica (mockup statico, dati finti).
+// Nessun canale reale: nomi, loghi e programmi sono inventati.
+
+// ───────────────────────────── Tema ─────────────────────────────
+
+global Theme {
+    out property <color> bg: #0b0e13;
+    out property <color> surface: #131821;
+    out property <color> surface-2: #1b2230;
+    out property <color> line: #232b3a;
+    out property <color> text: #e8ecf3;
+    out property <color> text-dim: #8b95a7;
+    out property <color> text-faint: #5b6577;
+    out property <color> accent: #f5a524;
+    out property <color> accent-soft: #f5a52426;
+    out property <color> accent-line: #f5a52470;
+    out property <color> on-accent: #1a1205;
+    out property <color> live: #ef4444;
+}
+
+// Icone vettoriali (viewbox 24×24, solo tratto)
+global Icons {
+    out property <string> home: "M3 11 L12 4 L21 11 M5.5 9.5 V20 H18.5 V9.5 M10 20 V14 H14 V20";
+    out property <string> live: "M3 7 H21 V19 H3 Z M8 3 L12 7 L16 3";
+    out property <string> guide: "M3 5 H21 V19 H3 Z M3 10 H21 M3 14.5 H21 M9 5 V19";
+    out property <string> film: "M4 4 H20 V20 H4 Z M8 4 V20 M16 4 V20 M4 9 H8 M4 15 H8 M16 9 H20 M16 15 H20";
+    out property <string> series: "M4 9 H20 V20 H4 Z M6.5 6 H17.5 M9 3 H15";
+    out property <string> search: "M4 10.5 A6.5 6.5 0 1 0 17 10.5 A6.5 6.5 0 1 0 4 10.5 M15.5 15.5 L20.5 20.5";
+    out property <string> sliders: "M4 6 H20 M4 12 H20 M4 18 H20 M9 4 V8 M15 10 V14 M7 16 V20";
+    out property <string> star: "M12 3 L14.8 8.8 L21 9.6 L16.5 14 L17.6 20.2 L12 17.2 L6.4 20.2 L7.5 14 L3 9.6 L9.2 8.8 Z";
+    out property <string> play: "M7 4 L20 12 L7 20 Z";
+    out property <string> lock: "M6 11 H18 V20 H6 Z M8.5 11 V8 A3.5 3.5 0 0 1 15.5 8 V11";
+    out property <string> clock: "M3 12 A9 9 0 1 0 21 12 A9 9 0 1 0 3 12 M12 7 V12 L15.5 14";
+    out property <string> folder: "M3 6 H10 L12 8 H21 V19 H3 Z";
+    out property <string> back: "M15 5 L8 12 L15 19";
+    out property <string> chevron: "M6 9 L12 15 L18 9";
+    out property <string> plus: "M12 5 V19 M5 12 H19";
+}
+
+// ───────────────────────────── Dati ─────────────────────────────
+
+export struct Channel {
+    num: string,
+    name: string,
+    initials: string,
+    tint: color,
+    now: string,
+    start: string,
+    end: string,
+    progress: float,
+    next: string,
+    next-time: string,
+    desc: string,
+    hd: bool,
+    fav: bool,
+    locked: bool,
+}
+
+export struct Category { name: string, count: int, icon: string, locked: bool }
+export struct Resume { title: string, sub: string, progress: float, tint: color, kind: string }
+export struct Film { title: string, meta: string, rating: string, tint-a: color, tint-b: color, progress: float }
+export struct Program { title: string, start: int, dur: int }
+export struct GuideRow { num: string, name: string, initials: string, tint: color, progs: [Program] }
+
+// ─────────────────────────── Mattoncini ───────────────────────────
+
+component Icon inherits Path {
+    in property <color> tint: Theme.text-dim;
+    in property <bool> filled: false;
+    width: 18px;
+    height: 18px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: tint;
+    stroke-width: 1.8px;
+    fill: filled ? tint : transparent;
+}
+
+// Il logo: un quadrante di sintonia con la lancetta
+component Logo inherits HorizontalLayout {
+    spacing: 10px;
+    height: 36px;
+    alignment: start;
+    Rectangle {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        background: Theme.accent-soft;
+        border-width: 1px;
+        border-color: Theme.accent-line;
+        Path {
+            width: 24px;
+            height: 24px;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            commands: "M4 17 A8 8 0 0 1 20 17 M6.4 11.3 L5.2 10.4 M12 9 V7.4 M17.6 11.3 L18.8 10.4";
+            stroke: Theme.accent;
+            stroke-width: 1.8px;
+            fill: transparent;
+        }
+        Path {
+            width: 24px;
+            height: 24px;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            commands: "M12 17 L15.8 10.6";
+            stroke: Theme.text;
+            stroke-width: 2px;
+            fill: transparent;
+        }
+    }
+    Text {
+        text: "Sintonia";
+        font-size: 19px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        color: Theme.text;
+        vertical-alignment: center;
+    }
+}
+
+component Progress inherits Rectangle {
+    in property <float> value;
+    in property <color> tint: Theme.accent;
+    height: 4px;
+    border-radius: self.height / 2;
+    background: #ffffff1a;
+    Rectangle {
+        x: 0px;
+        width: parent.width * min(1.0, max(0.0, root.value));
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: root.tint;
+    }
+}
+
+// Logo finto del canale: iniziali su un quadrato colorato
+component ChannelBadge inherits Rectangle {
+    in property <string> initials;
+    in property <color> tint;
+    in property <length> size: 36px;
+    width: size;
+    height: size;
+    border-radius: size / 4;
+    background: @linear-gradient(135deg, tint 0%, tint.darker(0.45) 100%);
+    Text {
+        text: root.initials;
+        color: #ffffff;
+        font-size: root.size * 0.34;
+        font-weight: 800;
+    }
+}
+
+component Tag inherits Rectangle {
+    in property <string> label;
+    in property <color> tint: Theme.text-dim;
+    height: 18px;
+    width: t.preferred-width + 10px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: tint;
+    t := Text {
+        text: root.label;
+        font-size: 10px;
+        font-weight: 700;
+        color: root.tint;
+    }
+}
+
+component LiveBadge inherits Rectangle {
+    height: 22px;
+    width: 58px;
+    border-radius: 6px;
+    background: #ef444426;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 6px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: Theme.live;
+            }
+        }
+        Text {
+            text: "LIVE";
+            color: #fca5a5;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.8px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> primary;
+    callback clicked;
+    height: 36px;
+    horizontal-stretch: 0;
+    border-radius: 9px;
+    background: primary
+        ? (ta.has-hover ? Theme.accent.brighter(0.12) : Theme.accent)
+        : (ta.has-hover ? #ffffff24 : #ffffff12);
+    animate background { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 8px;
+        if root.icon != "": VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: root.icon;
+                width: 15px;
+                height: 15px;
+                tint: root.primary ? Theme.on-accent : Theme.text;
+                filled: root.icon == Icons.play || root.icon == Icons.star;
+            }
+        }
+        Text {
+            text: root.label;
+            color: root.primary ? Theme.on-accent : Theme.text;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component Pill inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked;
+    height: 32px;
+    width: t.preferred-width + 28px;
+    border-radius: 16px;
+    background: active ? Theme.text : (ta.has-hover ? Theme.surface-2 : Theme.surface);
+    border-width: active ? 0px : 1px;
+    border-color: Theme.line;
+    t := Text {
+        text: root.label;
+        color: root.active ? Theme.bg : Theme.text-dim;
+        font-size: 13px;
+        font-weight: root.active ? 700 : 500;
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component SearchBox inherits Rectangle {
+    width: 320px;
+    height: 38px;
+    border-radius: 19px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.text-faint : Theme.line;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 8px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: Icons.search;
+                width: 16px;
+                height: 16px;
+            }
+        }
+        Text {
+            text: "Cerca canali, film, serie…";
+            color: Theme.text-faint;
+            font-size: 13px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        VerticalLayout {
+            alignment: center;
+            Tag {
+                label: "CTRL F";
+                tint: Theme.text-faint;
+            }
+        }
+    }
+    ta := TouchArea { }
+}
+
+component ScreenHeader inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    height: 52px;
+    spacing: 18px;
+    VerticalLayout {
+        alignment: center;
+        spacing: 3px;
+        Text {
+            text: root.title;
+            font-size: 25px;
+            font-weight: 700;
+            color: Theme.text;
+        }
+        Text {
+            text: root.subtitle;
+            font-size: 12px;
+            color: Theme.text-dim;
+        }
+    }
+    Rectangle { horizontal-stretch: 1; }
+    VerticalLayout {
+        alignment: center;
+        SearchBox { }
+    }
+    Text {
+        text: "21:14";
+        font-size: 22px;
+        font-weight: 300;
+        color: Theme.text;
+        vertical-alignment: center;
+    }
+}
+
+component SectionTitle inherits HorizontalLayout {
+    in property <string> text;
+    in property <string> action;
+    height: 22px;
+    Text {
+        text: root.text;
+        font-size: 16px;
+        font-weight: 650;
+        color: Theme.text;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    if root.action != "": Text {
+        text: root.action;
+        font-size: 12px;
+        color: Theme.accent;
+        vertical-alignment: center;
+    }
+}
+
+// ───────────────────────────── Barra laterale ─────────────────────────────
+
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> active;
+    callback clicked;
+    height: 40px;
+    border-radius: 9px;
+    background: active ? Theme.accent-soft : (ta.has-hover ? Theme.surface-2 : transparent);
+    animate background { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 12px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: root.icon;
+                tint: root.active ? Theme.accent : Theme.text-dim;
+            }
+        }
+        Text {
+            text: root.label;
+            color: root.active ? Theme.text : Theme.text-dim;
+            font-size: 14px;
+            font-weight: root.active ? 650 : 450;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        x: 0px;
+        width: 3px;
+        height: root.active ? 18px : 0px;
+        border-radius: 1.5px;
+        background: Theme.accent;
+        animate height { duration: 160ms; easing: ease-out; }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component Sidebar inherits Rectangle {
+    in-out property <int> page;
+    width: 224px;
+    background: Theme.surface;
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: Theme.line;
+    }
+    VerticalLayout {
+        padding: 18px;
+        padding-top: 20px;
+        spacing: 4px;
+        Logo { }
+        Rectangle { height: 22px; }
+        for item[i] in [
+            { label: "Home", icon: Icons.home },
+            { label: "Live", icon: Icons.live },
+            { label: "Guida TV", icon: Icons.guide },
+            { label: "Film", icon: Icons.film },
+            { label: "Serie", icon: Icons.series },
+            { label: "Cerca", icon: Icons.search },
+        ]: NavItem {
+            label: item.label;
+            icon: item.icon;
+            active: root.page == i;
+            clicked => { root.page = i; }
+        }
+        Rectangle { vertical-stretch: 1; }
+        NavItem {
+            label: "Sorgenti";
+            icon: Icons.sliders;
+            active: root.page == 6;
+            clicked => { root.page = 6; }
+        }
+        Rectangle { height: 8px; }
+        // sorgente attiva
+        src := Rectangle {
+            height: 58px;
+            border-radius: 12px;
+            background: srcta.has-hover ? Theme.surface-2.brighter(0.1) : Theme.surface-2;
+            border-width: 1px;
+            border-color: Theme.line;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: #22c55e;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "Casa";
+                        color: Theme.text;
+                        font-size: 13px;
+                        font-weight: 650;
+                    }
+                    Text {
+                        text: "Xtream · 12.480 canali";
+                        color: Theme.text-faint;
+                        font-size: 11px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        commands: Icons.chevron;
+                        width: 14px;
+                        height: 14px;
+                    }
+                }
+            }
+            srcta := TouchArea {
+                clicked => { root.page = 6; }
+            }
+        }
+    }
+}
+
+// ───────────────────────────── Home ─────────────────────────────
+
+component ResumeCard inherits Rectangle {
+    in property <Resume> item;
+    callback clicked;
+    width: 296px;
+    height: 150px;
+    border-radius: 14px;
+    clip: true;
+    background: @linear-gradient(135deg, item.tint 0%, item.tint.darker(0.75) 100%);
+    Rectangle {
+        background: @linear-gradient(180deg, #00000000 25%, #000000d0 100%);
+    }
+    Rectangle {
+        x: 12px;
+        y: 12px;
+        height: 22px;
+        width: kt.preferred-width + 16px;
+        border-radius: 6px;
+        background: #00000070;
+        kt := Text {
+            text: root.item.kind;
+            font-size: 10px;
+            color: Theme.text;
+            font-weight: 800;
+            letter-spacing: 0.8px;
+        }
+    }
+    Rectangle {
+        y: 32px;
+        width: 46px;
+        height: 46px;
+        border-radius: 23px;
+        background: Theme.accent;
+        opacity: ta.has-hover ? 1 : 0;
+        animate opacity { duration: 150ms; }
+        Icon {
+            commands: Icons.play;
+            filled: true;
+            tint: Theme.on-accent;
+            width: 18px;
+            height: 18px;
+        }
+    }
+    VerticalLayout {
+        padding: 14px;
+        spacing: 3px;
+        alignment: end;
+        Text {
+            text: root.item.title;
+            font-size: 15px;
+            font-weight: 650;
+            color: #ffffff;
+            overflow: elide;
+        }
+        Text {
+            text: root.item.sub;
+            font-size: 12px;
+            color: #ffffffb0;
+        }
+        Rectangle { height: 6px; }
+        Progress { value: root.item.progress; }
+    }
+    border-width: ta.has-hover ? 2px : 0px;
+    border-color: Theme.accent;
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component FavTile inherits VerticalLayout {
+    in property <Channel> c;
+    callback clicked;
+    width: 86px;
+    spacing: 8px;
+    Rectangle {
+        height: 66px;
+        border-radius: 14px;
+        background: ta.has-hover ? Theme.surface-2 : Theme.surface;
+        border-width: 1px;
+        border-color: ta.has-hover ? Theme.accent : Theme.line;
+        animate border-color { duration: 120ms; }
+        ChannelBadge {
+            initials: root.c.initials;
+            tint: root.c.tint;
+            size: 40px;
+        }
+        ta := TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+    Text {
+        text: root.c.name;
+        font-size: 12px;
+        color: Theme.text-dim;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+}
+
+component NowRow inherits Rectangle {
+    in property <Channel> c;
+    in property <bool> last;
+    callback clicked;
+    height: 52px;
+    border-radius: 9px;
+    background: ta.has-hover ? #ffffff08 : transparent;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 16px;
+        spacing: 14px;
+        VerticalLayout {
+            alignment: center;
+            ChannelBadge {
+                initials: root.c.initials;
+                tint: root.c.tint;
+                size: 30px;
+            }
+        }
+        Text {
+            text: root.c.name;
+            width: 130px;
+            color: Theme.text;
+            font-size: 13px;
+            font-weight: 650;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.c.start;
+            width: 40px;
+            color: Theme.text-faint;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.c.now;
+            color: Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            min-width: 120px;
+        }
+        VerticalLayout {
+            alignment: center;
+            width: 150px;
+            Progress { value: root.c.progress; }
+        }
+        Text {
+            text: "dopo  " + root.c.next-time + "  " + root.c.next;
+            width: 220px;
+            color: Theme.text-dim;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+    if !root.last: Rectangle {
+        x: 56px;
+        y: parent.height - 1px;
+        width: parent.width - 72px;
+        height: 1px;
+        background: Theme.line;
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component HomeScreen inherits Rectangle {
+    in property <[Channel]> channels;
+    in property <[Resume]> resume;
+    callback play(int);
+    // alone ambrato in alto, come una spia accesa
+    Rectangle {
+        x: parent.width - 520px;
+        y: -260px;
+        width: 760px;
+        height: 520px;
+        background: @radial-gradient(circle, #f5a5241c 0%, transparent 65%);
+    }
+    VerticalLayout {
+        padding: 30px;
+        padding-top: 22px;
+        alignment: start;
+        ScreenHeader {
+            title: "Buonasera";
+            subtitle: "Sabato 17 ottobre · sorgente Casa";
+        }
+        Rectangle { height: 22px; }
+        SectionTitle { text: "Continua a guardare"; }
+        Rectangle { height: 12px; }
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: start;
+            for r[i] in root.resume: ResumeCard {
+                item: r;
+                clicked => { root.play(i == 0 ? 1 : 5); }
+            }
+        }
+        Rectangle { height: 26px; }
+        SectionTitle {
+            text: "Preferiti";
+            action: "Modifica";
+        }
+        Rectangle { height: 12px; }
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: start;
+            for idx in [0, 3, 5, 2, 8, 9, 6]: FavTile {
+                c: root.channels[idx];
+                clicked => { root.play(idx); }
+            }
+            // aggiungi preferito
+            VerticalLayout {
+                width: 86px;
+                spacing: 8px;
+                Rectangle {
+                    height: 66px;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: Theme.line;
+                    Icon { commands: Icons.plus; }
+                }
+                Text {
+                    text: "Aggiungi";
+                    font-size: 12px;
+                    color: Theme.text-faint;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+        Rectangle { height: 26px; }
+        SectionTitle {
+            text: "Ora in onda sui preferiti";
+            action: "Apri la guida";
+        }
+        Rectangle { height: 12px; }
+        Rectangle {
+            background: Theme.surface;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.line;
+            VerticalLayout {
+                padding: 6px;
+                for idx[k] in [3, 0, 5]: NowRow {
+                    c: root.channels[idx];
+                    last: k == 2;
+                    clicked => { root.play(idx); }
+                }
+            }
+        }
+    }
+}
+
+// ───────────────────────────── Live ─────────────────────────────
+
+component CategoryItem inherits Rectangle {
+    in property <Category> cat;
+    in property <bool> active;
+    callback clicked;
+    height: 38px;
+    border-radius: 8px;
+    background: active ? Theme.surface-2 : (ta.has-hover ? #ffffff08 : transparent);
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: root.cat.icon;
+                width: 15px;
+                height: 15px;
+                tint: root.active ? Theme.accent : Theme.text-faint;
+                filled: root.cat.icon == Icons.star;
+            }
+        }
+        Text {
+            text: root.cat.name;
+            color: root.active ? Theme.text : Theme.text-dim;
+            font-size: 13px;
+            font-weight: root.active ? 650 : 450;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        if root.cat.locked: VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: Icons.lock;
+                width: 13px;
+                height: 13px;
+                tint: Theme.text-faint;
+            }
+        }
+        Text {
+            text: root.cat.count;
+            color: Theme.text-faint;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component ChannelRow inherits Rectangle {
+    in property <Channel> c;
+    in property <bool> selected;
+    callback clicked;
+    callback activated;
+    height: 60px;
+    border-radius: 10px;
+    background: selected ? Theme.surface-2 : (ta.has-hover ? #ffffff08 : transparent);
+    border-width: selected ? 1px : 0px;
+    border-color: Theme.accent-line;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 14px;
+        spacing: 12px;
+        Text {
+            text: root.c.num;
+            width: 28px;
+            color: root.selected ? Theme.accent : Theme.text-faint;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            ChannelBadge {
+                initials: root.c.initials;
+                tint: root.c.tint;
+                size: 38px;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 7px;
+                Text {
+                    text: root.c.name;
+                    color: Theme.text;
+                    font-size: 14px;
+                    font-weight: 650;
+                    overflow: elide;
+                }
+                if root.c.hd: VerticalLayout {
+                    alignment: center;
+                    Tag { label: "HD"; tint: Theme.text-faint; }
+                }
+                if root.c.locked: VerticalLayout {
+                    alignment: center;
+                    Icon { commands: Icons.lock; width: 12px; height: 12px; tint: Theme.text-faint; }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text {
+                text: root.c.now;
+                color: Theme.text-dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+            Progress {
+                value: root.c.progress;
+                height: 3px;
+                tint: root.selected ? Theme.accent : Theme.text-faint;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            width: 18px;
+            Icon {
+                commands: Icons.star;
+                width: 16px;
+                height: 16px;
+                filled: root.c.fav;
+                tint: root.c.fav ? Theme.accent : (ta.has-hover ? Theme.text-faint : transparent);
+            }
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+        double-clicked => { root.activated(); }
+    }
+}
+
+component LiveScreen inherits Rectangle {
+    in property <[Channel]> channels;
+    in property <[Category]> categories;
+    in-out property <int> selected;
+    in-out property <int> category: 2;
+    callback play();
+    property <Channel> cur: root.channels[root.selected];
+    property <length> row-h: 64px;
+
+    function ensure-visible() {
+        if (root.selected * root.row-h + fl.viewport-y < 0px) {
+            fl.viewport-y = -root.selected * root.row-h;
+        } else if ((root.selected + 1) * root.row-h + fl.viewport-y > fl.height) {
+            fl.viewport-y = fl.height - (root.selected + 1) * root.row-h;
+        }
+    }
+
+    init => { fs.focus(); }
+
+    fs := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow) {
+                root.selected = max(0, root.selected - 1);
+                root.ensure-visible();
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.selected = min(root.channels.length - 1, root.selected + 1);
+                root.ensure-visible();
+                return accept;
+            }
+            if (event.text == Key.Return) {
+                root.play();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 30px;
+            padding-top: 22px;
+            spacing: 18px;
+            ScreenHeader {
+                title: "Live";
+                subtitle: root.channels.length + " canali in Italia · ordinati per numero";
+            }
+            HorizontalLayout {
+                spacing: 18px;
+                // categorie
+                VerticalLayout {
+                    width: 200px;
+                    spacing: 2px;
+                    Text {
+                        text: "CATEGORIE";
+                        color: Theme.text-faint;
+                        font-size: 11px;
+                        font-weight: 700;
+                        letter-spacing: 1.2px;
+                        height: 26px;
+                    }
+                    for cat[i] in root.categories: CategoryItem {
+                        cat: cat;
+                        active: root.category == i;
+                        clicked => { root.category = i; }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                }
+                // canali
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: Theme.surface;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: Theme.line;
+                    fl := Flickable {
+                        x: 6px;
+                        y: 6px;
+                        width: parent.width - 12px;
+                        height: parent.height - 12px;
+                        viewport-height: root.channels.length * root.row-h;
+                        for c[i] in root.channels: ChannelRow {
+                            y: i * root.row-h + 2px;
+                            width: fl.width;
+                            c: c;
+                            selected: i == root.selected;
+                            clicked => {
+                                root.selected = i;
+                                fs.focus();
+                            }
+                            activated => {
+                                root.selected = i;
+                                root.play();
+                            }
+                        }
+                    }
+                }
+                // anteprima
+                VerticalLayout {
+                    width: 380px;
+                    spacing: 14px;
+                    alignment: start;
+                    Rectangle {
+                        height: 214px;
+                        border-radius: 14px;
+                        clip: true;
+                        background: @linear-gradient(150deg, root.cur.tint.darker(0.25) 0%, #07090d 80%);
+                        Rectangle {
+                            background: @radial-gradient(circle, #ffffff12 0%, transparent 60%);
+                        }
+                        Text {
+                            text: "anteprima video";
+                            color: #ffffff30;
+                            font-size: 13px;
+                            letter-spacing: 1px;
+                        }
+                        Rectangle {
+                            x: 12px;
+                            y: 12px;
+                            width: 58px;
+                            height: 22px;
+                            LiveBadge { }
+                        }
+                        Rectangle {
+                            x: parent.width - self.width - 12px;
+                            y: parent.height - self.height - 12px;
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 18px;
+                            background: Theme.accent;
+                            Icon {
+                                commands: Icons.play;
+                                filled: true;
+                                tint: Theme.on-accent;
+                                width: 14px;
+                                height: 14px;
+                            }
+                            TouchArea {
+                                clicked => { root.play(); }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            ChannelBadge {
+                                initials: root.cur.initials;
+                                tint: root.cur.tint;
+                                size: 44px;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: root.cur.name;
+                                color: Theme.text;
+                                font-size: 17px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: "Canale " + root.cur.num + (root.cur.hd ? " · HD" : "");
+                                color: Theme.text-faint;
+                                font-size: 12px;
+                            }
+                        }
+                    }
+                    Rectangle {
+                        background: Theme.surface;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.line;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            HorizontalLayout {
+                                Text {
+                                    text: "ORA IN ONDA";
+                                    color: Theme.accent;
+                                    font-size: 10px;
+                                    font-weight: 800;
+                                    letter-spacing: 1px;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: root.cur.start + " – " + root.cur.end;
+                                    color: Theme.text-faint;
+                                    font-size: 11px;
+                                }
+                            }
+                            Text {
+                                text: root.cur.now;
+                                color: Theme.text;
+                                font-size: 15px;
+                                font-weight: 650;
+                                wrap: word-wrap;
+                            }
+                            Progress { value: root.cur.progress; }
+                            Text {
+                                text: root.cur.desc != "" ? root.cur.desc : "Nessuna descrizione nella guida per questo programma.";
+                                color: Theme.text-dim;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.line;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: "DOPO";
+                                    color: Theme.text-faint;
+                                    font-size: 10px;
+                                    font-weight: 800;
+                                    letter-spacing: 1px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: root.cur.next-time + "  " + root.cur.next;
+                                    color: Theme.text-dim;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        Chip {
+                            label: "Guarda";
+                            icon: Icons.play;
+                            primary: true;
+                            clicked => { root.play(); }
+                        }
+                        Chip {
+                            label: root.cur.fav ? "Nei preferiti" : "Preferito";
+                            icon: Icons.star;
+                        }
+                    }
+                }
+            }
+            Text {
+                text: "Invio o doppio clic  guarda   ·   ↑ ↓  scorri   ·   F  preferito   ·   Ctrl F  cerca";
+                color: Theme.text-faint;
+                font-size: 11px;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// ───────────────────────────── Guida TV ─────────────────────────────
+
+component GuideScreen inherits Rectangle {
+    in property <[GuideRow]> rows;
+    property <length> ppm: 4px; // pixel per minuto
+    property <length> chan-w: 200px;
+    property <length> head: 44px;
+    property <length> row-h: 64px;
+    property <int> now-min: 74; // 21:14
+
+    pure function hhmm(m: int) -> string {
+        return (20 + Math.floor(m / 60)) + ":" + (Math.mod(m, 60) < 10 ? "0" : "") + Math.mod(m, 60);
+    }
+
+    VerticalLayout {
+        padding: 30px;
+        padding-top: 22px;
+        spacing: 18px;
+        ScreenHeader {
+            title: "Guida TV";
+            subtitle: "Sabato 17 ottobre · 20:00 – 23:00";
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Pill { label: "Ieri"; }
+            Pill { label: "Oggi"; active: true; }
+            Pill { label: "Domani"; }
+            Pill { label: "Lun 19"; }
+            Pill { label: "Mar 20"; }
+        }
+        Rectangle {
+            background: Theme.surface;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.line;
+            clip: true;
+            // intestazione orari
+            Rectangle {
+                y: 0px;
+                height: root.head;
+                background: Theme.surface-2;
+                for t[i] in ["20:00", "20:30", "21:00", "21:30", "22:00", "22:30"]: Text {
+                    x: root.chan-w + i * 30 * root.ppm + 8px;
+                    text: t;
+                    color: Theme.text-dim;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                Text {
+                    x: 16px;
+                    text: "CANALE";
+                    color: Theme.text-faint;
+                    font-size: 10px;
+                    font-weight: 800;
+                    letter-spacing: 1px;
+                }
+            }
+            for row[r] in root.rows: Rectangle {
+                y: root.head + r * root.row-h;
+                height: root.row-h;
+                HorizontalLayout {
+                    x: 0px;
+                    width: root.chan-w;
+                    padding-left: 16px;
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        ChannelBadge {
+                            initials: row.initials;
+                            tint: row.tint;
+                            size: 32px;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: row.name;
+                            color: Theme.text;
+                            font-size: 13px;
+                            font-weight: 650;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: row.num;
+                            color: Theme.text-faint;
+                            font-size: 11px;
+                        }
+                    }
+                }
+                for p in row.progs: Rectangle {
+                    property <bool> on-air: p.start <= root.now-min && p.start + p.dur > root.now-min;
+                    x: root.chan-w + p.start * root.ppm + 2px;
+                    y: 6px;
+                    width: p.dur * root.ppm - 4px;
+                    height: root.row-h - 12px;
+                    border-radius: 8px;
+                    background: on-air ? Theme.accent-soft : (pta.has-hover ? Theme.surface-2.brighter(0.18) : Theme.surface-2);
+                    border-width: on-air ? 1px : 0px;
+                    border-color: Theme.accent-line;
+                    clip: true;
+                    VerticalLayout {
+                        padding-left: 10px;
+                        padding-right: 8px;
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: p.title;
+                            color: on-air ? Theme.text : Theme.text-dim;
+                            font-size: 12px;
+                            font-weight: on-air ? 650 : 500;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.hhmm(p.start) + " – " + root.hhmm(p.start + p.dur);
+                            color: Theme.text-faint;
+                            font-size: 10px;
+                            overflow: elide;
+                        }
+                    }
+                    pta := TouchArea { }
+                }
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.line;
+                }
+            }
+            // linea "adesso"
+            Rectangle {
+                x: root.chan-w + root.now-min * root.ppm - 1px;
+                y: root.head;
+                width: 2px;
+                height: parent.height - root.head;
+                background: Theme.accent;
+            }
+            Rectangle {
+                x: root.chan-w + root.now-min * root.ppm - self.width / 2;
+                y: (root.head - self.height) / 2;
+                width: 52px;
+                height: 22px;
+                border-radius: 11px;
+                background: Theme.accent;
+                Text {
+                    text: "21:14";
+                    color: Theme.on-accent;
+                    font-size: 11px;
+                    font-weight: 800;
+                }
+            }
+        }
+    }
+}
+
+// ───────────────────────────── Film e serie ─────────────────────────────
+
+component Poster inherits VerticalLayout {
+    in property <Film> f;
+    in property <length> pw;
+    in property <length> ph;
+    width: pw;
+    spacing: 8px;
+    Rectangle {
+        height: root.ph;
+        border-radius: 12px;
+        clip: true;
+        background: @linear-gradient(165deg, root.f.tint-a 0%, root.f.tint-b 100%);
+        border-width: ta.has-hover ? 2px : 0px;
+        border-color: Theme.accent;
+        Rectangle {
+            background: @linear-gradient(180deg, #00000000 45%, #000000b0 100%);
+        }
+        Text {
+            x: 14px;
+            y: parent.height - self.height - 16px;
+            width: parent.width - 28px;
+            text: root.f.title;
+            color: #ffffff;
+            font-size: 17px;
+            font-weight: 800;
+            wrap: word-wrap;
+        }
+        Rectangle {
+            x: parent.width - self.width - 10px;
+            y: 10px;
+            width: rt.preferred-width + 14px;
+            height: 22px;
+            border-radius: 6px;
+            background: #00000080;
+            rt := Text {
+                text: "★ " + root.f.rating;
+                color: Theme.accent;
+                font-size: 11px;
+                font-weight: 700;
+            }
+        }
+        if root.f.progress > 0: Progress {
+            x: 0px;
+            y: parent.height - 4px;
+            width: parent.width;
+            value: root.f.progress;
+            border-radius: 0px;
+        }
+        ta := TouchArea { }
+    }
+    Text {
+        text: root.f.title;
+        color: Theme.text;
+        font-size: 13px;
+        font-weight: 600;
+        overflow: elide;
+    }
+    Text {
+        text: root.f.meta;
+        color: Theme.text-faint;
+        font-size: 11px;
+        overflow: elide;
+    }
+}
+
+component PosterScreen inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <[Film]> items;
+    in property <[string]> genres;
+    property <int> genre: 0;
+    property <length> gap: 22px;
+    property <int> cols: max(1, Math.floor((fl.width + root.gap) / (root.pw + root.gap)));
+    property <length> pw: 150px;
+    property <length> ph: 225px;
+    property <length> cell-h: root.ph + 62px;
+    VerticalLayout {
+        padding: 30px;
+        padding-top: 22px;
+        spacing: 18px;
+        ScreenHeader {
+            title: root.title;
+            subtitle: root.subtitle;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            for g[i] in root.genres: Pill {
+                label: g;
+                active: root.genre == i;
+                clicked => { root.genre = i; }
+            }
+        }
+        fl := Flickable {
+            viewport-height: Math.ceil(root.items.length / root.cols) * root.cell-h;
+            for f[i] in root.items: Poster {
+                x: Math.mod(i, root.cols) * (root.pw + root.gap);
+                y: Math.floor(i / root.cols) * root.cell-h;
+                f: f;
+                pw: root.pw;
+                ph: root.ph;
+            }
+        }
+    }
+}
+
+// ───────────────────────────── Sorgenti ─────────────────────────────
+
+component Field inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <bool> password;
+    in-out property <string> value;
+    spacing: 6px;
+    Text {
+        text: root.label;
+        font-size: 12px;
+        color: Theme.text-dim;
+        font-weight: 600;
+    }
+    Rectangle {
+        height: 40px;
+        border-radius: 9px;
+        background: Theme.bg;
+        border-width: 1px;
+        border-color: ti.has-focus ? Theme.accent : Theme.line;
+        animate border-color { duration: 120ms; }
+        ti := TextInput {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            text <=> root.value;
+            color: Theme.text;
+            font-size: 14px;
+            vertical-alignment: center;
+            input-type: root.password ? InputType.password : InputType.text;
+            selection-background-color: Theme.accent-line;
+        }
+        if root.value == "": Text {
+            x: 12px;
+            text: root.placeholder;
+            color: Theme.text-faint;
+            font-size: 14px;
+        }
+    }
+}
+
+component Segmented inherits Rectangle {
+    in property <[string]> options;
+    in-out property <int> current;
+    height: 40px;
+    border-radius: 10px;
+    background: Theme.bg;
+    border-width: 1px;
+    border-color: Theme.line;
+    HorizontalLayout {
+        padding: 4px;
+        spacing: 4px;
+        for o[i] in root.options: Rectangle {
+            border-radius: 7px;
+            background: i == root.current ? Theme.surface-2 : (ta.has-hover ? #ffffff0a : transparent);
+            Text {
+                text: o;
+                color: i == root.current ? Theme.text : Theme.text-dim;
+                font-size: 13px;
+                font-weight: i == root.current ? 650 : 450;
+            }
+            ta := TouchArea {
+                clicked => { root.current = i; }
+            }
+        }
+    }
+}
+
+component SourceCard inherits Rectangle {
+    in property <string> name;
+    in property <string> detail;
+    in property <string> kind;
+    in property <bool> active;
+    height: 72px;
+    border-radius: 12px;
+    background: active ? Theme.surface-2 : Theme.surface;
+    border-width: 1px;
+    border-color: active ? Theme.accent-line : Theme.line;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 38px;
+                height: 38px;
+                border-radius: 10px;
+                background: Theme.bg;
+                Icon {
+                    commands: root.kind == "file" ? Icons.folder : Icons.live;
+                    tint: root.active ? Theme.accent : Theme.text-dim;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 3px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.name;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 650;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.text-faint;
+                font-size: 11px;
+            }
+        }
+        if root.active: VerticalLayout {
+            alignment: center;
+            Tag { label: "ATTIVA"; tint: Theme.accent; }
+        }
+    }
+}
+
+component SourceScreen inherits Rectangle {
+    property <int> kind: 1;
+    VerticalLayout {
+        padding: 30px;
+        padding-top: 22px;
+        spacing: 22px;
+        alignment: start;
+        ScreenHeader {
+            title: "Sorgenti";
+            subtitle: "Le tue playlist e i tuoi account. Sintonia non fornisce canali.";
+        }
+        HorizontalLayout {
+            spacing: 24px;
+            alignment: start;
+            VerticalLayout {
+                width: 320px;
+                spacing: 10px;
+                alignment: start;
+                Text {
+                    text: "SALVATE";
+                    color: Theme.text-faint;
+                    font-size: 11px;
+                    font-weight: 700;
+                    letter-spacing: 1.2px;
+                }
+                SourceCard {
+                    name: "Casa";
+                    detail: "Xtream Codes · 12.480 canali · EPG ok";
+                    active: true;
+                }
+                SourceCard {
+                    name: "Ufficio";
+                    detail: "Link M3U · aggiornata 2 ore fa";
+                }
+                SourceCard {
+                    name: "Archivio";
+                    detail: "File locale · lista.m3u8";
+                    kind: "file";
+                }
+            }
+            Rectangle {
+                width: 540px;
+                background: Theme.surface;
+                border-radius: 16px;
+                border-width: 1px;
+                border-color: Theme.line;
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 16px;
+                    Text {
+                        text: "Aggiungi sorgente";
+                        color: Theme.text;
+                        font-size: 18px;
+                        font-weight: 700;
+                    }
+                    Segmented {
+                        options: ["Link M3U", "Xtream Codes", "File locale"];
+                        current <=> root.kind;
+                    }
+                    Field {
+                        label: "Nome";
+                        value: "Casa";
+                    }
+                    if root.kind == 0: Field {
+                        label: "Indirizzo della playlist";
+                        placeholder: "http://…/lista.m3u8";
+                    }
+                    if root.kind == 1: Field {
+                        label: "Server";
+                        placeholder: "http://server:8080";
+                    }
+                    if root.kind == 1: HorizontalLayout {
+                        spacing: 12px;
+                        Field {
+                            label: "Utente";
+                            placeholder: "nome utente";
+                        }
+                        Field {
+                            label: "Password";
+                            placeholder: "••••••••";
+                            password: true;
+                        }
+                    }
+                    if root.kind == 2: Field {
+                        label: "File";
+                        placeholder: "Scegli un file .m3u o .m3u8";
+                    }
+                    Field {
+                        label: "Guida EPG (facoltativa)";
+                        placeholder: root.kind == 1 ? "automatica dal server" : "http://…/guida.xml.gz";
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: end;
+                        Chip { label: "Verifica"; }
+                        Chip { label: "Salva"; primary: true; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component PlaceholderScreen inherits Rectangle {
+    in property <string> title;
+    VerticalLayout {
+        padding: 30px;
+        padding-top: 22px;
+        alignment: start;
+        ScreenHeader {
+            title: root.title;
+            subtitle: "Una sola ricerca per canali, programmi, film ed episodi";
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        spacing: 10px;
+        Icon {
+            commands: Icons.search;
+            width: 40px;
+            height: 40px;
+            tint: Theme.text-faint;
+        }
+        Text {
+            text: "Scrivi per cercare in 12.480 canali e 3.200 titoli";
+            color: Theme.text-dim;
+            font-size: 14px;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// ───────────────────────────── Player ─────────────────────────────
+
+component PlayerScreen inherits Rectangle {
+    in property <[Channel]> channels;
+    in-out property <int> selected;
+    callback back();
+    property <Channel> c: root.channels[root.selected];
+    property <bool> overlay: true;
+    background: #000000;
+
+    init => { fs.focus(); }
+
+    fs := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow) {
+                root.selected = max(0, root.selected - 1);
+                root.overlay = true;
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.selected = min(root.channels.length - 1, root.selected + 1);
+                root.overlay = true;
+                return accept;
+            }
+            if (event.text == Key.Escape || event.text == Key.Backspace) {
+                root.back();
+                return accept;
+            }
+            if (event.text == " " || event.text == "i") {
+                root.overlay = !root.overlay;
+                return accept;
+            }
+            reject
+        }
+    }
+
+    // video finto (qui libmpv disegnerà con OpenGL sotto l'interfaccia)
+    Rectangle {
+        background: @linear-gradient(160deg, root.c.tint.darker(0.35) 0%, #05070a 75%);
+        animate background { duration: 300ms; }
+    }
+    Rectangle {
+        background: @radial-gradient(circle, #ffffff10 0%, transparent 60%);
+    }
+    Text {
+        text: root.c.name;
+        color: #ffffff1c;
+        font-size: 64px;
+        font-weight: 800;
+    }
+    TouchArea {
+        clicked => {
+            root.overlay = !root.overlay;
+            fs.focus();
+        }
+        double-clicked => { root.back(); }
+    }
+
+    // barra in alto
+    Rectangle {
+        y: 0px;
+        height: 96px;
+        opacity: root.overlay ? 1 : 0;
+        animate opacity { duration: 200ms; }
+        background: @linear-gradient(180deg, #000000b0 0%, #00000000 100%);
+        HorizontalLayout {
+            padding: 24px;
+            padding-bottom: 36px;
+            spacing: 12px;
+            Chip {
+                label: "Lista canali";
+                icon: Icons.back;
+                clicked => { root.back(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: "↑ ↓ zapping   ·   Spazio  mostra/nascondi   ·   Esc  torna alla lista";
+                color: #ffffff80;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    // pannello in basso
+    Rectangle {
+        x: 28px;
+        y: parent.height - self.height - 28px;
+        width: parent.width - 56px;
+        height: 156px;
+        border-radius: 18px;
+        background: #0b0e13e0;
+        border-width: 1px;
+        border-color: #ffffff14;
+        opacity: root.overlay ? 1 : 0;
+        animate opacity { duration: 200ms; }
+        VerticalLayout {
+            padding: 20px;
+            padding-left: 22px;
+            padding-right: 22px;
+            spacing: 14px;
+            HorizontalLayout {
+                spacing: 14px;
+                VerticalLayout {
+                    alignment: center;
+                    ChannelBadge {
+                        initials: root.c.initials;
+                        tint: root.c.tint;
+                        size: 46px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 3px;
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text {
+                            text: root.c.num;
+                            color: Theme.accent;
+                            font-size: 18px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.c.name;
+                            color: Theme.text;
+                            font-size: 18px;
+                            font-weight: 700;
+                        }
+                    }
+                    Text {
+                        text: root.c.now;
+                        color: Theme.text-dim;
+                        font-size: 13px;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "21:14";
+                    color: Theme.text;
+                    font-size: 20px;
+                    font-weight: 300;
+                    vertical-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    LiveBadge { }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Tag { label: "1080p"; }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Tag { label: "AC-3"; }
+                }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Text {
+                    text: root.c.start;
+                    color: Theme.text-dim;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Progress { value: root.c.progress; height: 5px; }
+                }
+                Text {
+                    text: root.c.end;
+                    color: Theme.text-dim;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "DOPO";
+                    color: Theme.text-faint;
+                    font-size: 10px;
+                    font-weight: 800;
+                    letter-spacing: 1px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.c.next-time + "  " + root.c.next;
+                    color: Theme.text-dim;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                Chip { label: "Audio"; }
+                Chip { label: "Sottotitoli"; }
+                Chip { label: "16:9"; }
+                Chip { label: "Info"; }
+            }
+        }
+    }
+}
+
+// ───────────────────────────── Finestra ─────────────────────────────
+
+export component MainWindow inherits Window {
+    title: "Sintonia";
+    preferred-width: 1320px;
+    preferred-height: 800px;
+    min-width: 1200px;
+    min-height: 740px;
+    background: Theme.bg;
+    default-font-family: "Segoe UI";
+
+    in-out property <int> page: 0;
+    in-out property <bool> playing: false;
+    in-out property <int> selected: 1;
+
+    in property <[Channel]> channels: [
+        { num: "001", name: "Canale Uno", initials: "C1", tint: #3b82f6, now: "Quiz: La Grande Sfida", start: "20:35", end: "21:40", progress: 0.6, next: "Film: Il Faro d'Inverno", next-time: "21:40", desc: "Sei concorrenti, dieci domande, un montepremi che cresce a ogni risposta giusta.", hd: true, fav: true },
+        { num: "002", name: "Canale Due", initials: "C2", tint: #8b5cf6, now: "Distretto Nord · ep. 3", start: "20:30", end: "21:30", progress: 0.73, next: "Talk: Fuori Onda", next-time: "21:30", desc: "Un furto in porto riapre un caso chiuso da anni. La squadra si divide.", hd: true },
+        { num: "003", name: "Notizie 24", initials: "N24", tint: #ef4444, now: "Edizione straordinaria", start: "21:00", end: "21:30", progress: 0.47, next: "Meteo e traffico", next-time: "21:30", hd: true, fav: true },
+        { num: "010", name: "Sport Arena", initials: "SA", tint: #22c55e, now: "Calcio · Campionato, 2° tempo", start: "20:45", end: "22:45", progress: 0.24, next: "Post partita", next-time: "22:45", desc: "Diretta dallo stadio, commento e statistiche in tempo reale.", hd: true, fav: true },
+        { num: "011", name: "Sport Arena 2", initials: "SA2", tint: #16a34a, now: "Tennis · Finale del torneo", start: "20:00", end: "22:00", progress: 0.62, next: "Basket notte", next-time: "22:00", hd: true },
+        { num: "020", name: "Cinema Prime", initials: "CP", tint: #f59e0b, now: "Film: Codice Aurora", start: "21:00", end: "23:05", progress: 0.11, next: "Film: Onde Corte", next-time: "23:05", desc: "Una crittografa scopre un messaggio nascosto in una vecchia trasmissione radio.", hd: true, fav: true },
+        { num: "021", name: "Cinema Classic", initials: "CC", tint: #d97706, now: "Film: Mezzanotte a Trieste", start: "20:15", end: "22:10", progress: 0.51, next: "Speciale registi", next-time: "22:10", fav: true },
+        { num: "030", name: "Documenta", initials: "DOC", tint: #14b8a6, now: "Oceani profondi", start: "21:05", end: "22:00", progress: 0.16, next: "Il pianeta di notte", next-time: "22:00", hd: true },
+        { num: "040", name: "Kids Planet", initials: "KP", tint: #ec4899, now: "Cartoni: Missione Luna", start: "21:00", end: "21:25", progress: 0.56, next: "Buonanotte storie", next-time: "21:25", fav: true, locked: true },
+        { num: "050", name: "Musica Live", initials: "ML", tint: #a855f7, now: "Concerto in diretta", start: "21:00", end: "23:00", progress: 0.12, next: "Classifica della settimana", next-time: "23:00", hd: true, fav: true },
+        { num: "060", name: "Viaggi HD", initials: "VHD", tint: #0ea5e9, now: "Islanda in sette giorni", start: "20:50", end: "21:45", progress: 0.44, next: "Strade d'Europa", next-time: "21:45", hd: true },
+        { num: "070", name: "Cucina+", initials: "C+", tint: #f97316, now: "Sfida ai fornelli", start: "20:30", end: "21:30", progress: 0.73, next: "Dolci di casa", next-time: "21:30" },
+        { num: "080", name: "Storia", initials: "ST", tint: #78716c, now: "Le grandi esplorazioni", start: "21:00", end: "22:00", progress: 0.23, next: "Archivi segreti", next-time: "22:00" },
+        { num: "090", name: "Meteo", initials: "M", tint: #64748b, now: "Previsioni nazionali", start: "21:00", end: "21:15", progress: 0.93, next: "Previsioni della notte", next-time: "21:15" },
+    ];
+
+    in property <[Category]> categories: [
+        { name: "Preferiti", count: 7, icon: Icons.star },
+        { name: "Recenti", count: 12, icon: Icons.clock },
+        { name: "Italia", count: 14, icon: Icons.live },
+        { name: "Sport", count: 46, icon: Icons.live },
+        { name: "Cinema", count: 38, icon: Icons.film },
+        { name: "Notizie", count: 21, icon: Icons.live },
+        { name: "Documentari", count: 17, icon: Icons.live },
+        { name: "Musica", count: 9, icon: Icons.live },
+        { name: "Bambini", count: 15, icon: Icons.live, locked: true },
+    ];
+
+    in property <[Resume]> resume: [
+        { title: "Canale Due", sub: "Distretto Nord · in diretta", progress: 0.73, tint: #7c3aed, kind: "LIVE" },
+        { title: "Il Giardino di Vetro", sub: "Film · 48 min rimasti", progress: 0.62, tint: #0f766e, kind: "FILM" },
+        { title: "Frequenza Zero", sub: "S2 · E4 · 31 min rimasti", progress: 0.35, tint: #b45309, kind: "SERIE" },
+    ];
+
+    in property <[Film]> films: [
+        { title: "Codice Aurora", meta: "2024 · 2h 05m · Thriller", rating: "7.4", tint-a: #1e3a8a, tint-b: #0b1023 },
+        { title: "Il Giardino di Vetro", meta: "2023 · 1h 52m · Dramma", rating: "7.9", tint-a: #0f766e, tint-b: #042f2e, progress: 0.62 },
+        { title: "Onde Corte", meta: "2022 · 1h 41m · Commedia", rating: "6.8", tint-a: #c2410c, tint-b: #2a0f05 },
+        { title: "Mezzanotte a Trieste", meta: "2021 · 1h 58m · Noir", rating: "7.2", tint-a: #334155, tint-b: #020617 },
+        { title: "L'Ultimo Segnale", meta: "2024 · 2h 12m · Fantascienza", rating: "8.1", tint-a: #6d28d9, tint-b: #120725 },
+        { title: "Il Faro d'Inverno", meta: "2020 · 1h 47m · Dramma", rating: "7.0", tint-a: #0369a1, tint-b: #04121f },
+        { title: "Strade di Ferro", meta: "2023 · 2h 20m · Azione", rating: "6.5", tint-a: #991b1b, tint-b: #1c0505 },
+        { title: "Nord Est", meta: "2022 · 1h 36m · Commedia", rating: "6.9", tint-a: #a16207, tint-b: #1f1403 },
+        { title: "La Cartografa", meta: "2024 · 1h 55m · Avventura", rating: "7.6", tint-a: #15803d, tint-b: #04140a },
+        { title: "Sotto la Pioggia", meta: "2019 · 1h 44m · Romantico", rating: "6.7", tint-a: #be185d, tint-b: #22040f },
+        { title: "Fuori Asse", meta: "2021 · 1h 39m · Animazione", rating: "7.8", tint-a: #0891b2, tint-b: #03181e },
+        { title: "Polvere e Rame", meta: "2023 · 2h 02m · Western", rating: "7.1", tint-a: #b45309, tint-b: #1c0d02 },
+    ];
+
+    in property <[Film]> series: [
+        { title: "Frequenza Zero", meta: "3 stagioni · Fantascienza", rating: "8.4", tint-a: #b45309, tint-b: #1c0d02, progress: 0.35 },
+        { title: "Distretto Nord", meta: "5 stagioni · Poliziesco", rating: "7.7", tint-a: #4338ca, tint-b: #0c0a24 },
+        { title: "Casa Moretti", meta: "2 stagioni · Commedia", rating: "7.0", tint-a: #be123c, tint-b: #22040b },
+        { title: "Le Isole", meta: "1 stagione · Dramma", rating: "7.9", tint-a: #0e7490, tint-b: #031a20 },
+        { title: "Turno di Notte", meta: "4 stagioni · Medico", rating: "7.3", tint-a: #475569, tint-b: #050a14 },
+        { title: "Il Cantiere", meta: "2 stagioni · Thriller", rating: "7.5", tint-a: #a16207, tint-b: #1a1203 },
+        { title: "Radio Libera", meta: "1 stagione · Storico", rating: "8.0", tint-a: #7e22ce, tint-b: #14052a },
+        { title: "Alta Quota", meta: "3 stagioni · Avventura", rating: "6.9", tint-a: #15803d, tint-b: #03140a },
+    ];
+
+    in property <[GuideRow]> guide: [
+        { num: "001", name: "Canale Uno", initials: "C1", tint: #3b82f6, progs: [
+            { title: "Telegiornale", start: 0, dur: 35 },
+            { title: "Quiz: La Grande Sfida", start: 35, dur: 65 },
+            { title: "Film: Il Faro d'Inverno", start: 100, dur: 80 } ] },
+        { num: "002", name: "Canale Due", initials: "C2", tint: #8b5cf6, progs: [
+            { title: "Distretto Nord · ep. 2", start: 0, dur: 30 },
+            { title: "Distretto Nord · ep. 3", start: 30, dur: 60 },
+            { title: "Talk: Fuori Onda", start: 90, dur: 60 },
+            { title: "Notizie", start: 150, dur: 30 } ] },
+        { num: "003", name: "Notizie 24", initials: "N24", tint: #ef4444, progs: [
+            { title: "Notiziario", start: 0, dur: 30 },
+            { title: "Approfondimento", start: 30, dur: 30 },
+            { title: "Edizione straordinaria", start: 60, dur: 30 },
+            { title: "Meteo e traffico", start: 90, dur: 15 },
+            { title: "Il punto della sera", start: 105, dur: 75 } ] },
+        { num: "010", name: "Sport Arena", initials: "SA", tint: #22c55e, progs: [
+            { title: "Pre partita", start: 0, dur: 45 },
+            { title: "Calcio · Campionato", start: 45, dur: 120 },
+            { title: "Post", start: 165, dur: 15 } ] },
+        { num: "020", name: "Cinema Prime", initials: "CP", tint: #f59e0b, progs: [
+            { title: "Prossimamente", start: 0, dur: 15 },
+            { title: "Corto d'autore", start: 15, dur: 45 },
+            { title: "Film: Codice Aurora", start: 60, dur: 120 } ] },
+        { num: "030", name: "Documenta", initials: "DOC", tint: #14b8a6, progs: [
+            { title: "Animali in città", start: 0, dur: 65 },
+            { title: "Oceani profondi", start: 65, dur: 55 },
+            { title: "Il pianeta di notte", start: 120, dur: 60 } ] },
+        { num: "040", name: "Kids Planet", initials: "KP", tint: #ec4899, progs: [
+            { title: "Cartoni a raffica", start: 0, dur: 60 },
+            { title: "Missione Luna", start: 60, dur: 25 },
+            { title: "Buonanotte storie", start: 85, dur: 35 },
+            { title: "Fine programmi", start: 120, dur: 60 } ] },
+        { num: "050", name: "Musica Live", initials: "ML", tint: #a855f7, progs: [
+            { title: "Videoclip", start: 0, dur: 60 },
+            { title: "Concerto in diretta", start: 60, dur: 120 } ] },
+    ];
+
+    if !root.playing: HorizontalLayout {
+        Sidebar { page <=> root.page; }
+        Rectangle {
+            horizontal-stretch: 1;
+            clip: true;
+            if root.page == 0: HomeScreen {
+                channels: root.channels;
+                resume: root.resume;
+                play(i) => {
+                    root.selected = i;
+                    root.playing = true;
+                }
+            }
+            if root.page == 1: LiveScreen {
+                channels: root.channels;
+                categories: root.categories;
+                selected <=> root.selected;
+                play => { root.playing = true; }
+            }
+            if root.page == 2: GuideScreen { rows: root.guide; }
+            if root.page == 3: PosterScreen {
+                title: "Film";
+                subtitle: "3.200 titoli dalla sorgente Casa";
+                items: root.films;
+                genres: ["Tutti", "Azione", "Commedia", "Dramma", "Thriller", "Animazione", "Fantascienza"];
+            }
+            if root.page == 4: PosterScreen {
+                title: "Serie";
+                subtitle: "640 serie dalla sorgente Casa";
+                items: root.series;
+                genres: ["Tutte", "In corso", "Poliziesco", "Commedia", "Dramma", "Fantascienza"];
+            }
+            if root.page == 5: PlaceholderScreen { title: "Cerca"; }
+            if root.page == 6: SourceScreen { }
+        }
+    }
+
+    if root.playing: PlayerScreen {
+        channels: root.channels;
+        selected <=> root.selected;
+        back => {
+            root.playing = false;
+            root.page = 1;
+        }
+    }
+}

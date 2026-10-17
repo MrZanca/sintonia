@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="it">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slint contro egui</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; the two mockups side by side, stacking on phones. */
+:root {
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --fg: #171a22;
+  --muted: #5b6273;
+  --line: #dde0e8;
+  --slint: #2f6bff;
+  --egui: #c2410c;
+  --good: #15803d;
+  --bad: #b91c1c;
+  --code-bg: #eef0f5;
+  --display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101219; --surface: #181b24; --fg: #e8eaf0; --muted: #9aa1b2; --line: #2a2f3c;
+    --slint: #7aa2ff; --egui: #fb923c; --good: #4ade80; --bad: #f87171; --code-bg: #1f2330;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101219; --surface: #181b24; --fg: #e8eaf0; --muted: #9aa1b2; --line: #2a2f3c;
+  --slint: #7aa2ff; --egui: #fb923c; --good: #4ade80; --bad: #f87171; --code-bg: #1f2330;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-block: 40px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 48px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 46px); font-weight: 700; }
+h2 { font-size: 24px; font-weight: 700; }
+h3 { font-size: 18px; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+.lede { color: var(--muted); font-size: 17px; margin-top: 12px; }
+.tag { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 16px; }
+.s { color: var(--slint); } .e { color: var(--egui); }
+
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 820px) { .pair { grid-template-columns: 1fr; } }
+.pair > * { min-width: 0; }
+figure { margin: 0; display: grid; gap: 10px; }
+figcaption { font-size: 13px; color: var(--muted); }
+figcaption b { color: var(--fg); }
+
+/* ---------- Slint-style mock (custom, polished look) ---------- */
+.mock { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); font-size: 12px; aspect-ratio: 16/10.5; max-width: 100%; display: grid; }
+.sl { background: linear-gradient(160deg, #141a2e, #0b0f1c); color: #e7ebf7; font-family: var(--body); grid-template-columns: 30% 1fr; }
+.sl-side { padding: 14px 10px; display: grid; align-content: start; gap: 4px; background: rgba(255,255,255,.03); }
+.sl-brand { font-family: var(--display); font-weight: 700; font-size: 15px; padding: 0 8px 10px; }
+.sl-cat { padding: 7px 10px; border-radius: 8px; color: #aab3cc; }
+.sl-cat.on { background: #2f6bff; color: #fff; box-shadow: 0 4px 14px rgba(47,107,255,.45); }
+.sl-main { padding: 14px; display: grid; grid-template-rows: auto 1fr; gap: 10px; min-width: 0; }
+.sl-search { background: rgba(255,255,255,.07); border-radius: 999px; padding: 7px 14px; color: #8d97b3; }
+.sl-list { display: grid; gap: 6px; align-content: start; }
+.sl-row { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; padding: 7px 9px; border-radius: 10px; background: rgba(255,255,255,.04); }
+.sl-row.focus { background: rgba(47,107,255,.18); outline: 2px solid #5b8cff; transform: scale(1.02); }
+.sl-logo { width: 34px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, #3b4a75, #26304d); display: grid; place-items: center; font-size: 9px; font-weight: 600; color: #cdd6f4; }
+.sl-name { font-weight: 600; }
+.sl-epg { color: #8d97b3; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sl-bar { height: 3px; border-radius: 3px; background: rgba(255,255,255,.12); margin-top: 3px; overflow: hidden; }
+.sl-bar i { display: block; height: 100%; background: #5b8cff; }
+.sl-num { color: #6f7a99; font-family: var(--mono); font-size: 10px; }
+
+/* ---------- egui-style mock (default immediate-mode look) ---------- */
+.eg { background: #1b1b1b; color: #8c8c8c; font-family: "Segoe UI", Ubuntu, "Helvetica Neue", Arial, sans-serif; font-size: 11.5px; grid-template-rows: auto 1fr; }
+.eg-top { background: #1b1b1b; border-bottom: 1px solid #3c3c3c; padding: 4px 8px; display: flex; gap: 14px; color: #c8c8c8; }
+.eg-body { display: grid; grid-template-columns: 30% 1fr; min-height: 0; }
+.eg-side { border-right: 1px solid #3c3c3c; padding: 8px; display: grid; align-content: start; gap: 3px; background: #1b1b1b; }
+.eg-h { color: #c8c8c8; }
+.eg-sel { padding: 1px 4px; border-radius: 2px; }
+.eg-sel.on { background: #005c80; color: #fff; }
+.eg-main { padding: 8px; display: grid; align-content: start; gap: 6px; min-width: 0; }
+.eg-input { background: #0a0a0a; border: 1px solid #3c3c3c; border-radius: 2px; padding: 2px 5px; color: #6a6a6a; }
+.eg-grid { display: grid; grid-template-columns: 26px 1fr auto; column-gap: 8px; row-gap: 3px; align-items: center; }
+.eg-grid > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.eg-btn { background: #3c3c3c; color: #c8c8c8; border-radius: 2px; padding: 0 6px; font-size: 10.5px; }
+.eg-hl { background: #005c80; color: #fff; }
+.eg-sep { height: 1px; background: #3c3c3c; margin: 2px 0; }
+.eg-strong { color: #e6e6e6; }
+
+/* ---------- table ---------- */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+td:first-child { font-weight: 600; width: 22%; }
+.w { font-weight: 600; }
+.w.s::before { content: "▲ "; } .w.e::before { content: "▲ "; }
+
+pre { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
+.k { color: var(--slint); } .c { color: var(--muted); } .ek { color: var(--egui); }
+
+.verdict { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--slint); border-radius: 10px; padding: 20px 22px; display: grid; gap: 10px; }
+ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 70ch; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="tag">App IPTV · scelta dell'interfaccia</div>
+    <h1><span class="s">Slint</span> contro <span class="e">egui</span></h1>
+    <p class="lede">Sono due modi di disegnare la finestra in Rust. Il motore video (libmpv) e tutta la logica restano identici: cambia solo come si vede l'app e quanta fatica costa costruirla.</p>
+  </header>
+
+  <section>
+    <h2>La stessa schermata, disegnata con l'uno e con l'altro</h2>
+    <p>Lista dei canali live con categorie, ricerca e "ora in onda". I disegni sono una ricostruzione fedele dell'aspetto tipico, non screenshot.</p>
+    <div class="pair">
+      <figure>
+        <div class="mock sl" role="img" aria-label="Schermata canali in stile Slint">
+          <div class="sl-side">
+            <div class="sl-brand">◉ IPTV</div>
+            <div class="sl-cat">★ Preferiti</div>
+            <div class="sl-cat">Recenti</div>
+            <div class="sl-cat on">Italia</div>
+            <div class="sl-cat">Sport</div>
+            <div class="sl-cat">Cinema</div>
+            <div class="sl-cat">Bambini 🔒</div>
+          </div>
+          <div class="sl-main">
+            <div class="sl-search">Cerca un canale…</div>
+            <div class="sl-list">
+              <div class="sl-row"><div class="sl-logo">CH1</div><div><div class="sl-name">Canale 1 HD</div><div class="sl-epg">20:30 Telegiornale</div><div class="sl-bar"><i style="width:70%"></i></div></div><span class="sl-num">001</span></div>
+              <div class="sl-row focus"><div class="sl-logo">CH2</div><div><div class="sl-name">Canale 2 HD</div><div class="sl-epg">21:00 Film della sera</div><div class="sl-bar"><i style="width:20%"></i></div></div><span class="sl-num">002</span></div>
+              <div class="sl-row"><div class="sl-logo">CH3</div><div><div class="sl-name">Canale 3</div><div class="sl-epg">20:45 Approfondimento</div><div class="sl-bar"><i style="width:45%"></i></div></div><span class="sl-num">003</span></div>
+              <div class="sl-row"><div class="sl-logo">CH4</div><div><div class="sl-name">Canale 4</div><div class="sl-epg">21:10 Serie TV</div><div class="sl-bar"><i style="width:8%"></i></div></div><span class="sl-num">004</span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b class="s">Slint.</b> Aspetto su misura: colori, angoli, animazione del focus, tutto deciso da noi. Sembra un prodotto.</figcaption>
+      </figure>
+      <figure>
+        <div class="mock eg" role="img" aria-label="Schermata canali in stile egui">
+          <div class="eg-top"><span>File</span><span>Sorgenti</span><span>Visualizza</span><span>Aiuto</span></div>
+          <div class="eg-body">
+            <div class="eg-side">
+              <div class="eg-h">⏷ Categorie</div>
+              <div class="eg-sel">☆ Preferiti</div>
+              <div class="eg-sel">Recenti</div>
+              <div class="eg-sel on">Italia</div>
+              <div class="eg-sel">Sport</div>
+              <div class="eg-sel">Cinema</div>
+              <div class="eg-sel">Bambini</div>
+              <div class="eg-sep"></div>
+              <div>⏵ Impostazioni</div>
+            </div>
+            <div class="eg-main">
+              <div class="eg-input">Cerca…</div>
+              <div class="eg-sep"></div>
+              <div class="eg-grid">
+                <span>001</span><span class="eg-strong">Canale 1 HD</span><span class="eg-btn">▶</span>
+                <span></span><span>20:30 Telegiornale</span><span></span>
+                <span class="eg-hl">002</span><span class="eg-hl">Canale 2 HD</span><span class="eg-btn">▶</span>
+                <span></span><span>21:00 Film della sera</span><span></span>
+                <span>003</span><span class="eg-strong">Canale 3</span><span class="eg-btn">▶</span>
+                <span></span><span>20:45 Approfondimento</span><span></span>
+                <span>004</span><span class="eg-strong">Canale 4</span><span class="eg-btn">▶</span>
+                <span></span><span>21:10 Serie TV</span><span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b class="e">egui.</b> Aspetto di serie: grigio, compatto, stile "pannello di controllo". Si personalizza, ma solo fino a un certo punto.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>Le differenze che contano per questa app</h2>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Tema</th><th class="s">Slint</th><th class="e">egui</th></tr></thead>
+        <tbody>
+          <tr><td>Come si scrive</td><td>Le schermate si descrivono in un linguaggio a parte (file <code>.slint</code>, simile a QML/CSS); la logica sta in Rust.</td><td>Tutto in Rust: la finestra si ridisegna da capo a ogni fotogramma con il codice ("immediate mode").</td></tr>
+          <tr><td>Aspetto</td><td><span class="w s">Su misura</span>, da prodotto finito, con animazioni.</td><td>Da strumento tecnico. Temi e colori si cambiano, la sensazione resta.</td></tr>
+          <tr><td>Uso da tastiera / telecomando</td><td><span class="w s">Focus e tasti</span> gestiti in modo esplicito: frecce, Invio, Esc dove vogliamo.</td><td>Tab tra i controlli c'è; la navigazione con le frecce "da TV" va scritta a mano.</td></tr>
+          <tr><td>Video di mpv dentro la finestra</td><td>Supportato: disegno OpenGL sotto l'interfaccia, con un esempio ufficiale.</td><td><span class="w e">Più diretto</span>: si dà a mpv un pezzo di OpenGL da riempire, molti progetti lo fanno già.</td></tr>
+          <tr><td>Liste da 50.000 canali</td><td>ListView disegna solo le righe visibili.</td><td>Idem con le righe virtuali della ScrollArea.</td></tr>
+          <tr><td>Anteprima mentre si disegna</td><td><span class="w s">Anteprima dal vivo</span> nell'editor: modifichi il file e vedi la schermata.</td><td>Si ricompila e si riavvia.</td></tr>
+          <tr><td>Curva di apprendimento</td><td>Due cose da imparare: Rust e il linguaggio Slint.</td><td><span class="w e">Solo Rust</span>, si parte in un pomeriggio.</td></tr>
+          <tr><td>Consumi</td><td>Ridisegna solo quello che cambia.</td><td>Ridisegna tutto a ogni fotogramma; col video sempre acceso conta poco.</td></tr>
+          <tr><td>Licenza</td><td>GPL-3, oppure gratuita "royalty-free" con l'obbligo di citare Slint, oppure commerciale a pagamento. Per il futuro modulo Premium chiuso serve la royalty-free.</td><td><span class="w e">MIT / Apache</span>: nessun vincolo, nemmeno per il Premium.</td></tr>
+          <tr><td>Chi c'è dietro</td><td>Un'azienda (SixtyFPS, ex sviluppatori Qt) che vive delle licenze commerciali.</td><td>Una comunità open source molto attiva.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Lo stesso pezzo di codice, per farti un'idea</h2>
+    <p>Una riga della lista canali. Non è codice dell'app: serve solo a mostrare lo stile di scrittura.</p>
+    <div class="pair">
+      <figure>
+<pre><span class="c">// channel_row.slint</span>
+<span class="k">component</span> ChannelRow <span class="k">inherits</span> Rectangle {
+    <span class="k">in</span> property &lt;string&gt; name;
+    <span class="k">in</span> property &lt;string&gt; now-playing;
+    <span class="k">callback</span> play();
+
+    border-radius: 10px;
+    background: fs.has-focus ? #2f6bff40 : #ffffff0a;
+    animate background { duration: 120ms; }
+
+    fs := FocusScope {
+        key-pressed(e) =&gt; {
+            <span class="k">if</span> (e.text == Key.Return) { root.play(); <span class="k">return</span> accept; }
+            reject
+        }
+    }
+    VerticalLayout {
+        Text { text: name; font-weight: 600; }
+        Text { text: now-playing; color: #8d97b3; }
+    }
+}</pre>
+        <figcaption><b class="s">Slint:</b> si descrive com'è fatta la riga, l'aspetto e il focus stanno nel file grafico.</figcaption>
+      </figure>
+      <figure>
+<pre><span class="c">// ogni fotogramma</span>
+<span class="ek">for</span> ch <span class="ek">in</span> &amp;visible_channels {
+    <span class="ek">let</span> selected = state.selected == ch.id;
+    <span class="ek">let</span> row = ui.selectable_label(
+        selected,
+        RichText::new(&amp;ch.name).strong(),
+    );
+    ui.label(ch.now_playing());
+    <span class="ek">if</span> row.clicked() || (selected
+        &amp;&amp; ui.input(|i| i.key_pressed(Key::Enter)))
+    {
+        player.play(&amp;ch.url);
+    }
+    ui.separator();
+}</pre>
+        <figcaption><b class="e">egui:</b> si scrive cosa disegnare, riga per riga, in puro Rust.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="verdict">
+    <div class="tag">Il mio consiglio</div>
+    <h3>Slint, se l'app deve piacere alla gente. egui, se ti basta che funzioni.</h3>
+    <ul>
+      <li>Vuoi distribuirla gratis e poi farci dei soldi: l'aspetto è metà del motivo per cui qualcuno la sceglie al posto di VLC. Con egui sembrerà sempre un programma fatto da un programmatore per programmatori.</li>
+      <li>Con Slint paghi due cose: un linguaggio in più da imparare e il vincolo di citare Slint (o comprare la licenza) quando arriverà il modulo Premium chiuso.</li>
+      <li>egui vince se l'obiettivo è arrivare prima possibile a un prototipo che riproduce i canali, o se l'app resta un tuo strumento personale.</li>
+      <li>Il rischio vero di Slint è l'integrazione del video di mpv. Per questo nel piano è la prima milestone: se lì si incaglia, si passa a egui perdendo poco, perché la logica sta in un pezzo separato.</li>
+    </ul>
+  </section>
+</div>

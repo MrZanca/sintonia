@@ -1,0 +1,9 @@
+/target/
+/bozza-grafica/target/
+# libmpv e altre librerie scaricate: non vanno nel repository
+/vendor/
+# playlist/EPG di prova dell'autore: mai nel repository
+/test-data/
+*.m3u
+*.m3u8
+*.xml.gz
