@@ -1,22 +1,28 @@
 //! Sintonia: player IPTV per PC.
 //!
-//! M0: la finestra della bozza grafica con il video di libmpv dentro (finestra principale e mini
-//! player). I canali sono ancora quelli finti della bozza, collegati a flussi pubblici di prova
-//! (vedi [`demo`]).
+//! Avvio: cartelle dei dati, chiave dell'archivio dal portachiavi, servizio (I/O su tokio),
+//! player (libmpv), finestre Slint. La logica dell'interfaccia sta in [`app`], il video in [`video`].
 
 // Niente console in release su Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod demo;
+mod app;
+mod channels;
+mod settings;
 mod video;
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
-use std::time::Duration;
 
+use sintonia_core::crypto::Cipher;
+use sintonia_core::secrets::{self, SecretsError};
+use sintonia_core::service::{Service, ServiceConfig, ServiceError};
 use sintonia_player::{Player, PlayerConfig, PlayerError};
-use slint::{ComponentHandle, Model, PhysicalPosition};
+use slint::ComponentHandle;
 
+use crate::app::App;
+use crate::settings::Language;
 use crate::video::VideoRouter;
 
 /// Il codice generato da `ui/app.slint`.
@@ -32,9 +38,6 @@ mod ui {
 }
 pub use ui::*;
 
-/// Attesa prima di aprire un canale quando si scorre l'elenco.
-const ZAP_DELAY: Duration = Duration::from_millis(350);
-
 #[derive(Debug, thiserror::Error)]
 enum AppError {
     #[error("interfaccia: {0}")]
@@ -45,6 +48,12 @@ enum AppError {
     Notifier(#[from] slint::SetRenderingNotifierError),
     #[error("{0}")]
     Player(#[from] PlayerError),
+    #[error("{0}")]
+    Service(#[from] ServiceError),
+    #[error("{0}")]
+    Secrets(#[from] SecretsError),
+    #[error("cartella dei dati non trovata")]
+    NoDataDir,
 }
 
 fn main() -> ExitCode {
@@ -55,6 +64,34 @@ fn main() -> ExitCode {
         Err(err) => {
             log::error!("{err}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// Cartelle di Sintonia: `%APPDATA%\Sintonia` (archivio) e `%LOCALAPPDATA%\Sintonia` (cache).
+fn data_dirs() -> Result<(PathBuf, PathBuf), AppError> {
+    let dirs = directories::ProjectDirs::from("", "", "Sintonia").ok_or(AppError::NoDataDir)?;
+    Ok((
+        dirs.data_dir().to_path_buf(),
+        dirs.cache_dir().to_path_buf(),
+    ))
+}
+
+/// Se la chiave è nuova, un archivio vecchio non sarebbe più leggibile: lo si mette da parte.
+fn set_aside_old_database(database: &Path) {
+    if !database.exists() {
+        return;
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let aside = database.with_file_name(format!("archivio-{stamp}.vecchio"));
+    log::warn!("chiave dell'archivio nuova: l'archivio precedente viene messo da parte");
+    for suffix in ["", "-wal", "-shm"] {
+        let from = PathBuf::from(format!("{}{suffix}", database.display()));
+        if from.exists() {
+            let to = PathBuf::from(format!("{}{suffix}", aside.display()));
+            if let Err(err) = std::fs::rename(&from, &to) {
+                log::error!("archivio non spostato: {err}");
+            }
         }
     }
 }
@@ -73,8 +110,25 @@ fn run() -> Result<(), AppError> {
         env!("CARGO_PKG_VERSION")
     );
 
+    let (data_dir, cache_dir) = data_dirs()?;
+    let database = data_dir.join("archivio.db");
+    let (key, created) = secrets::database_key()?;
+    if created {
+        set_aside_old_database(&database);
+    }
+
     let main = MainWindow::new()?;
     let pip = PipWindow::new()?;
+
+    let service = Service::start(
+        ServiceConfig {
+            database,
+            cache_dir,
+            cipher: Cipher::new(&key),
+            user_agent: format!("Sintonia/{}", env!("CARGO_PKG_VERSION")),
+        },
+        app::forward_service_event,
+    )?;
 
     let config = PlayerConfig {
         log_level: if log::log_enabled!(target: "mpv", log::Level::Debug) {
@@ -89,106 +143,7 @@ fn run() -> Result<(), AppError> {
     router.install_main(&main)?;
     router.install_pip(&pip)?;
 
-    let stream_override = demo::override_from_env();
-    let url_for = {
-        let stream_override = stream_override.clone();
-        move |index: usize| demo::stream_for(index, stream_override.as_deref())
-    };
-
-    // cambio di canale (zapping, scelta dall'elenco, Guarda)
-    {
-        let router = Rc::clone(&router);
-        let url_for = url_for.clone();
-        main.on_tune(move |index| {
-            if let Ok(index) = usize::try_from(index) {
-                router.tune(index, url_for(index), ZAP_DELAY);
-            }
-        });
-    }
-
-    {
-        let main_weak = main.as_weak();
-        main.on_toggle_fullscreen(move || {
-            if let Some(main) = main_weak.upgrade() {
-                let window = main.window();
-                window.set_fullscreen(!window.is_fullscreen());
-            }
-        });
-    }
-
-    // mini player: si apre in basso a destra della finestra principale
-    {
-        let pip_weak = pip.as_weak();
-        let main_weak = main.as_weak();
-        let router = Rc::clone(&router);
-        main.on_request_pip(move |ch| {
-            let (Some(pip), Some(main)) = (pip_weak.upgrade(), main_weak.upgrade()) else {
-                return;
-            };
-            if let Some(index) = main.get_channels().iter().position(|c| c.num == ch.num) {
-                // se è un altro canale, il cambio lo fa il gestore `changed selected`
-                main.set_selected(index as i32);
-            }
-            pip.set_num(ch.num);
-            pip.set_name(ch.name);
-            pip.set_now(ch.now);
-            pip.set_tint(ch.tint);
-            if let Err(err) = pip.show() {
-                log::error!("apertura del mini player: {err}");
-                return;
-            }
-            let (pos, size) = (main.window().position(), main.window().size());
-            let scale = pip.window().scale_factor();
-            pip.window().set_position(PhysicalPosition::new(
-                pos.x + size.width as i32 - (400.0 * scale) as i32,
-                pos.y + size.height as i32 - (260.0 * scale) as i32,
-            ));
-            router.move_to_pip();
-        });
-    }
-    {
-        let router = Rc::clone(&router);
-        main.on_close_pip(move || router.move_to_main());
-    }
-
-    // trascinamento: la finestra senza cornice si sposta con il mouse
-    {
-        let pip_weak = pip.as_weak();
-        pip.on_moved(move |dx, dy| {
-            if let Some(pip) = pip_weak.upgrade() {
-                let window = pip.window();
-                let (scale, pos) = (window.scale_factor(), window.position());
-                window.set_position(PhysicalPosition::new(
-                    pos.x + (dx * scale) as i32,
-                    pos.y + (dy * scale) as i32,
-                ));
-            }
-        });
-    }
-    // «chiudi»: chiude il mini player e ferma la riproduzione
-    {
-        let router = Rc::clone(&router);
-        pip.on_dismiss(move || {
-            router.stop();
-            router.move_to_main();
-        });
-    }
-    // «espandi»: riprende il canale a tutto schermo nella finestra principale
-    {
-        let main_weak = main.as_weak();
-        let router = Rc::clone(&router);
-        pip.on_expand(move || {
-            let Some(main) = main_weak.upgrade() else {
-                return;
-            };
-            router.move_to_main();
-            main.set_playing(true);
-            main.window().set_minimized(false);
-            if let Err(err) = main.show() {
-                log::error!("{err}");
-            }
-        });
-    }
+    let app = App::new(&main, &pip, service, Rc::clone(&router), Language::system());
 
     // chiudere la finestra principale chiude l'app, anche con il mini player aperto
     main.window().on_close_requested(|| {
@@ -198,14 +153,9 @@ fn run() -> Result<(), AppError> {
         slint::CloseRequestResponse::HideWindow
     });
 
-    // all'avvio l'anteprima della Home mostra il canale selezionato
-    if let Ok(index) = usize::try_from(main.get_selected()) {
-        router.tune(index, url_for(index), Duration::ZERO);
-    }
-
     main.show()?;
     slint::run_event_loop()?;
-    router.stop();
+    app.shutdown();
     pip.hide()?;
     main.hide()?;
     Ok(())

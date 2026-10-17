@@ -7,3 +7,7 @@
 *.m3u
 *.m3u8
 *.xml.gz
+
+# playlist di prova dell'utente (contengono credenziali)
+/Liste M3U/
+/dist/

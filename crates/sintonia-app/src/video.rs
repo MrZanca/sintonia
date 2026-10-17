@@ -26,7 +26,8 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use glow::HasContext;
-use sintonia_player::{EndReason, Player, PlayerEvent, RenderContext};
+use sintonia_core::db::StreamInfo;
+use sintonia_player::{Backoff, EndReason, LoadOptions, Player, PlayerEvent, RenderContext};
 use slint::{ComponentHandle, GraphicsAPI, RenderingState};
 
 use crate::{MainWindow, PipWindow, Video};
@@ -45,6 +46,7 @@ mod state {
     pub const PLAYING: i32 = 2;
     pub const BUFFERING: i32 = 3;
     pub const ERROR: i32 = 4;
+    pub const RECONNECTING: i32 = 5;
 }
 
 /// Accesso uniforme alle due finestre.
@@ -95,11 +97,15 @@ pub struct VideoRouter {
     hide_pip_after_release: Cell<bool>,
     /// mpv ha (ri)avviato la riproduzione: il prossimo fotogramma disegnato rende `ready` vero.
     accept_frames: Cell<bool>,
-    /// Canale in riproduzione (indice) e se la riproduzione è ferma o fallita.
-    current: Cell<Option<usize>>,
+    /// Canale in riproduzione e il suo flusso (serve per riconnettersi).
+    current: Cell<Option<i64>>,
+    stream: RefCell<Option<StreamInfo>>,
+    /// Fermato dall'utente (o mai partito): niente riconnessione.
     stopped: Cell<bool>,
-    /// Attesa prima di aprire un canale durante lo zapping.
-    tune_timer: slint::Timer,
+    /// Riconnessione automatica (impostazione).
+    reconnect: Cell<bool>,
+    backoff: RefCell<Backoff>,
+    retry_timer: slint::Timer,
 }
 
 impl std::fmt::Debug for VideoRouter {
@@ -122,8 +128,11 @@ impl VideoRouter {
             hide_pip_after_release: Cell::new(false),
             accept_frames: Cell::new(false),
             current: Cell::new(None),
+            stream: RefCell::new(None),
             stopped: Cell::new(true),
-            tune_timer: slint::Timer::default(),
+            reconnect: Cell::new(true),
+            backoff: RefCell::new(Backoff::default()),
+            retry_timer: slint::Timer::default(),
         });
         ROUTER.with(|r| *r.borrow_mut() = Rc::downgrade(&router));
         router
@@ -145,40 +154,92 @@ impl VideoRouter {
         install(self, pip)
     }
 
-    /// Apre un canale. Con `delay` aspetta un attimo, così scorrendo l'elenco non si apre ogni
-    /// canale attraversato.
-    pub fn tune(self: &Rc<Self>, index: usize, url: String, delay: Duration) {
-        if self.current.get() == Some(index) && !self.stopped.get() {
-            self.tune_timer.stop();
-            return;
-        }
-        let weak = Rc::downgrade(self);
-        let open = move || {
-            if let Some(router) = weak.upgrade() {
-                router.current.set(Some(index));
-                router.stopped.set(false);
-                if let Err(err) = router.player.load(&url) {
-                    log::error!("{err}");
-                    router.set_state(state::ERROR);
-                }
-            }
-        };
-        if delay.is_zero() {
-            self.tune_timer.stop();
-            open();
+    pub fn player(&self) -> &Player {
+        &self.player
+    }
+
+    /// Il canale in riproduzione (anche durante una riconnessione), `None` se fermo.
+    pub fn playing_channel(&self) -> Option<i64> {
+        if self.stopped.get() {
+            None
         } else {
-            self.tune_timer
-                .start(slint::TimerMode::SingleShot, delay, open);
+            self.current.get()
+        }
+    }
+
+    /// Accende o spegne la riconnessione automatica.
+    pub fn set_reconnect(&self, enabled: bool) {
+        self.reconnect.set(enabled);
+    }
+
+    /// Apre un canale già risolto (indirizzo e intestazioni dalla playlist).
+    pub fn play(&self, channel_id: i64, stream: StreamInfo) {
+        self.retry_timer.stop();
+        self.backoff.borrow_mut().reset();
+        self.set_attempt(0);
+        self.current.set(Some(channel_id));
+        self.stopped.set(false);
+        *self.stream.borrow_mut() = Some(stream);
+        self.load_current();
+    }
+
+    fn load_current(&self) {
+        let stream = self.stream.borrow();
+        let Some(stream) = stream.as_ref() else {
+            return;
+        };
+        let options = LoadOptions {
+            user_agent: stream.user_agent.clone(),
+            referrer: stream.referrer.clone(),
+        };
+        if let Err(err) = self.player.load_with(&stream.url, &options) {
+            log::error!("{err}");
+            self.set_state(state::ERROR);
         }
     }
 
     /// Ferma la riproduzione.
     pub fn stop(&self) {
-        self.tune_timer.stop();
+        self.retry_timer.stop();
         self.stopped.set(true);
+        self.current.set(None);
+        *self.stream.borrow_mut() = None;
+        self.set_attempt(0);
         if let Err(err) = self.player.stop() {
             log::error!("{err}");
         }
+    }
+
+    /// Il flusso è caduto: riprova dopo un'attesa crescente, o si arrende.
+    fn retry_or_fail(self: &Rc<Self>) {
+        if self.stopped.get() || !self.reconnect.get() || self.stream.borrow().is_none() {
+            self.stopped.set(true);
+            self.set_state(state::ERROR);
+            return;
+        }
+        let next = self.backoff.borrow_mut().next_delay();
+        let Some(delay) = next else {
+            log::warn!(
+                "riconnessione abbandonata dopo {} tentativi",
+                Backoff::MAX_ATTEMPTS
+            );
+            self.stopped.set(true);
+            self.set_state(state::ERROR);
+            return;
+        };
+        let attempt = self.backoff.borrow().attempts();
+        log::info!("riconnessione {attempt} tra {}s", delay.as_secs());
+        self.set_attempt(i32::try_from(attempt).unwrap_or(i32::MAX));
+        self.set_state(state::RECONNECTING);
+        let weak = Rc::downgrade(self);
+        self.retry_timer
+            .start(slint::TimerMode::SingleShot, delay, move || {
+                if let Some(router) = weak.upgrade() {
+                    if !router.stopped.get() {
+                        router.load_current();
+                    }
+                }
+            });
     }
 
     /// Sposta il video nel mini player (che deve essere già visibile o in apertura).
@@ -240,6 +301,16 @@ impl VideoRouter {
         }
     }
 
+    /// Imposta `Video.attempt` in tutte e due le finestre.
+    fn set_attempt(&self, value: i32) {
+        if let Some(main) = self.main.upgrade() {
+            main.global::<Video>().set_attempt(value);
+        }
+        if let Some(pip) = self.pip.upgrade() {
+            pip.global::<Video>().set_attempt(value);
+        }
+    }
+
     /// Nasconde il video (torna il segnaposto) in tutte e due le finestre.
     fn clear_ready(&self) {
         if let Some(main) = self.main.upgrade() {
@@ -250,16 +321,21 @@ impl VideoRouter {
         }
     }
 
-    fn on_player_event(&self, event: PlayerEvent) {
+    fn on_player_event(self: &Rc<Self>, event: PlayerEvent) {
         log::debug!("evento del player: {event:?}");
         match event {
             PlayerEvent::Loading => {
                 self.accept_frames.set(false);
                 self.clear_ready();
-                self.set_state(state::LOADING);
+                // durante una riconnessione resta la scritta «Riconnessione…»
+                if self.backoff.borrow().attempts() == 0 {
+                    self.set_state(state::LOADING);
+                }
             }
             PlayerEvent::Playing => {
                 self.accept_frames.set(true);
+                self.backoff.borrow_mut().reset();
+                self.set_attempt(0);
                 self.set_state(state::PLAYING);
                 if let Some(holder) = self.holder.get() {
                     self.request_redraw(holder);
@@ -271,17 +347,18 @@ impl VideoRouter {
                 self.accept_frames.set(false);
                 self.clear_ready();
                 match reason {
+                    // per la TV in diretta anche la «fine» del flusso vuol dire che è caduto
                     EndReason::Error(message) => {
                         log::warn!("riproduzione interrotta: {message}");
-                        self.stopped.set(true);
-                        self.set_state(state::ERROR);
+                        self.retry_or_fail();
                     }
-                    EndReason::Eof => {
-                        self.stopped.set(true);
-                        self.set_state(state::IDLE);
-                    }
+                    EndReason::Eof => self.retry_or_fail(),
                     // un nuovo `load` sostituisce il flusso: lo stato lo decide il Loading che segue
-                    EndReason::Stopped => {}
+                    EndReason::Stopped => {
+                        if self.stopped.get() {
+                            self.set_state(state::IDLE);
+                        }
+                    }
                 }
             }
             PlayerEvent::Idle => {
