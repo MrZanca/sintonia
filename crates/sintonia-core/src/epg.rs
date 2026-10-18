@@ -607,7 +607,10 @@ mod tests {
         ];
         let matcher = Matcher::new(channels.iter().map(|(id, n)| (id.as_str(), n.as_slice())));
         assert_eq!(matcher.find(Some("exact.IT"), "altro"), Some("Exact.it"));
-        assert_eq!(matcher.find(Some("Tele1.it"), "x"), Some("Tele.1.HD..101.it"));
+        assert_eq!(
+            matcher.find(Some("Tele1.it"), "x"),
+            Some("Tele.1.HD..101.it")
+        );
         assert_eq!(matcher.find(None, "Rete 5 HD"), Some("Rete.5.it"));
         assert_eq!(matcher.find(Some(""), "Tele 1"), Some("Tele.1.HD..101.it"));
         assert_eq!(matcher.find(Some("Nessuno.it"), "Nessuno"), None);
