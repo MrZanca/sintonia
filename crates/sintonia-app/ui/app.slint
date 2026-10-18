@@ -125,12 +125,14 @@ component Dock inherits Rectangle {
             stroke: #ffffff1c;
             stroke-width: 1px;
         }
-        for i in 51: Rectangle {
-            x: 20px + i * root.dw / 50 - 0.5px;
+        // scala: dieci intervalli per voce; tacca lunga al centro di ogni voce (dove si ferma la
+        // lancetta), media sul confine tra due voci, corte in mezzo
+        for i in 41: Rectangle {
+            x: 20px + i * root.dw / 40 - 0.5px;
             y: parent.height - self.height - 9px;
             width: 1px;
-            height: Math.mod(i, 10) == 5 ? 7px : (Math.mod(i, 5) == 0 ? 4px : 2px);
-            background: Theme.faint;
+            height: Math.mod(i, 10) == 5 ? 7px : (Math.mod(i, 10) == 0 ? 4px : 2px);
+            background: Math.mod(i, 10) == 5 ? Theme.dim : Theme.faint;
         }
         Rectangle {
             x: 20px + root.current * root.sw + root.sw / 2 - 11px;
@@ -257,6 +259,11 @@ component ChannelList inherits Rectangle {
         } else if ((root.cursor + 1) * root.row-h + fl.content-y > fl.height) {
             fl.content-y = fl.height - (root.cursor + 1) * root.row-h;
         }
+    }
+    // porta la riga del cursore al centro (quando si apre l'elenco)
+    public function center() {
+        let target = root.cursor * root.row-h - (fl.height - root.row-h) / 2;
+        fl.content-y = -max(0px, min(target, root.count * root.row-h - fl.height));
     }
     public function to-top() {
         fl.content-y = 0px;
@@ -556,9 +563,12 @@ component LiveScreen inherits Rectangle {
     callback toggle-fav(int);
     // cambia quando la ricerca in alto passa il controllo all'elenco
     in property <int> focus-tick;
+    // cambia quando l'elenco deve mostrare al centro il canale in riproduzione
+    in property <int> reveal-tick;
     property <ChannelItem> cur: root.channels[root.cursor];
 
     changed focus-tick => { fs.focus(); }
+    changed reveal-tick => { list.center(); }
     function move(delta: int) {
         if (root.channels.length == 0) { return; }
         root.cursor = max(0, min(root.channels.length - 1, root.cursor + delta));
@@ -817,19 +827,21 @@ component SourceRow inherits Rectangle {
         HorizontalLayout {
             spacing: 8px;
             alignment: start;
-            if !root.s.active: Btn {
+            // durante la conferma dell'eliminazione restano solo «Conferma» e «Annulla»
+            // (con tutti i pulsanti la riga non starebbe nella colonna)
+            if !root.s.active && !root.confirm: Btn {
                 label: @tr("Use");
                 height: 30px;
                 enabled: !root.working;
                 clicked => { root.activate(); }
             }
-            Btn {
+            if !root.confirm: Btn {
                 label: @tr("Refresh");
                 height: 30px;
                 enabled: !root.working;
                 clicked => { root.refresh(); }
             }
-            Btn {
+            if !root.confirm: Btn {
                 label: @tr("Guide");
                 height: 30px;
                 enabled: !root.working;
@@ -849,8 +861,14 @@ component SourceRow inherits Rectangle {
                         root.confirm = false;
                     } else {
                         root.confirm = true;
+                        root.editing = false;
                     }
                 }
+            }
+            if root.confirm: Btn {
+                label: @tr("Cancel");
+                height: 30px;
+                clicked => { root.confirm = false; }
             }
         }
         if root.editing: Rectangle { height: 4px; }
@@ -1220,7 +1238,7 @@ component PlayerScreen inherits Rectangle {
     // Le informazioni sul video spariscono dopo qualche secondo senza movimenti del mouse o tasti;
     // restano finché il puntatore è sopra i pulsanti o l'elenco canali è aperto.
     hide-timer := Timer {
-        interval: 3s;
+        interval: 5s;
         running: false;
         triggered => {
             self.stop();
@@ -1244,7 +1262,7 @@ component PlayerScreen inherits Rectangle {
     function toggle-drawer() {
         root.drawer = !root.drawer;
         if (root.drawer) {
-            dl.ensure-visible();
+            dl.center();
         }
     }
     function move(delta: int) {
@@ -1887,8 +1905,12 @@ export component MainWindow inherits Window {
     callback playing-changed(bool);
     changed playing => { root.playing-changed(root.playing); }
     changed page => {
+        root.page-changed(root.page);
         if (root.page == 2) { root.guide-opened(); }
     }
+    // cresce quando gli elenchi devono mostrare al centro quello che si sta guardando
+    in property <int> reveal-tick;
+    callback page-changed(int);
 
     // apre il player sul canale in onda
     public function watch-current() {
@@ -1956,6 +1978,7 @@ export component MainWindow inherits Window {
             }
             if root.page == 1: LiveScreen {
                 focus-tick: root.live-focus-tick;
+                reveal-tick: root.reveal-tick;
                 channels: root.channels;
                 categories: root.categories;
                 category: root.category;
@@ -2013,6 +2036,7 @@ export component MainWindow inherits Window {
                 episodes: root.media-episodes;
                 episode-cursor <=> root.media-episode-cursor;
                 focus-tick: root.media-focus-tick;
+                reveal-tick: root.reveal-tick;
                 pick-mode(m) => { root.media-pick-mode(m); }
                 pick-category(i) => { root.media-pick-category(i); }
                 open(i) => { root.media-open(i); }
@@ -2083,9 +2107,9 @@ export component MainWindow inherits Window {
         paused: root.paused;
         next-countdown: root.next-countdown;
         next-label: root.next-label;
+        // la pagina sotto il player non cambia mentre si guarda: chiudendolo si torna lì
         back => {
             root.playing = false;
-            root.page = root.on-demand ? 3 : 1;
         }
         home => {
             root.playing = false;
@@ -2094,7 +2118,6 @@ export component MainWindow inherits Window {
         pip => {
             root.request-pip(-1);
             root.playing = false;
-            root.page = root.on-demand ? 3 : 1;
         }
         toggle-pause => { root.toggle-pause(); }
         seek(s) => { root.seek(s); }

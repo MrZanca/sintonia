@@ -239,6 +239,13 @@ pub struct App {
     /// Sorgenti (con i dati della guida) e aggiornamenti della guida in corso o falliti.
     sources: RefCell<Vec<SourceInfo>>,
     epg_status: RefCell<HashMap<i64, EpgUi>>,
+
+    // elenchi che si aprono su quello che si sta guardando
+    /// Ultimo film o serie riprodotto (tipo e chiave).
+    last_media: RefCell<Option<(ItemKind, String)>>,
+    /// Alla prossima lista di episodi, cursore sull'episodio corrente.
+    reveal_episode: Cell<bool>,
+    reveal_timer: slint::Timer,
 }
 
 /// Stato dell'aggiornamento della guida di una sorgente, finché non riesce.
@@ -350,6 +357,9 @@ impl App {
             guide_timer: slint::Timer::default(),
             sources: RefCell::new(Vec::new()),
             epg_status: RefCell::new(HashMap::new()),
+            last_media: RefCell::new(None),
+            reveal_episode: Cell::new(false),
+            reveal_timer: slint::Timer::default(),
         });
         APP.with(|a| *a.borrow_mut() = Rc::downgrade(&app));
         {
@@ -969,11 +979,11 @@ impl App {
         main.set_playing(true);
     }
 
-    /// Chiude il player (dopo la fine di un film, o «Annulla» sul prossimo episodio).
+    /// Chiude il player (dopo la fine di un film, o «Annulla» sul prossimo episodio) e torna
+    /// alla pagina da cui era stato aperto.
     fn leave_player(&self) {
         let Some(main) = self.main() else { return };
         if main.get_playing() {
-            main.set_page(if main.get_on_demand() { 3 } else { 1 });
             main.set_playing(false);
         } else if self.pip.upgrade().is_some_and(|p| p.window().is_visible()) {
             self.stop_playback();
@@ -1030,6 +1040,7 @@ impl App {
         }
         *self.detail.borrow_mut() = Some(detail);
         main.set_media_episode_cursor(0);
+        self.reveal_episode.set(true);
         main.set_media_detail(if kind == ItemKind::Movie { 1 } else { 2 });
         self.refresh_detail_info();
         self.refresh_episodes();
@@ -1240,7 +1251,67 @@ impl App {
                 }
             })
             .collect();
+        // all'apertura della scheda: cursore sull'episodio che si sta guardando (o l'ultimo visto)
+        let current = items.iter().position(|e| e.current);
         main.set_media_episodes(ModelRc::new(VecModel::from(items)));
+        if let Some(index) = current {
+            if self.reveal_episode.replace(false) {
+                main.set_media_episode_cursor(count_i32(index));
+                self.reveal_later();
+            }
+        }
+    }
+
+    /// Fra un attimo (quando la pagina ha le sue misure) gli elenchi mostrano al centro il
+    /// cursore, cioè quello che si sta guardando.
+    fn reveal_later(&self) {
+        let main = self.main.clone();
+        self.reveal_timer.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_millis(80),
+            move || {
+                if let Some(main) = main.upgrade() {
+                    main.set_reveal_tick(main.get_reveal_tick().wrapping_add(1));
+                    if main.get_page() == 2 {
+                        main.set_guide_scroll_tick(main.get_guide_scroll_tick().wrapping_add(1));
+                    }
+                }
+            },
+        );
+    }
+
+    /// Una pagina si apre: il cursore va su quello che si sta guardando (se è nell'elenco).
+    fn on_page_changed(&self, page: i32) {
+        let Some(main) = self.main() else { return };
+        match page {
+            1 => {
+                if let Some(row) = self.current.get().and_then(|id| self.channels.row_of(id)) {
+                    main.set_cursor(count_i32(row));
+                }
+            }
+            3 => self.point_at_last_media(),
+            _ => {}
+        }
+        self.reveal_later();
+    }
+
+    /// In Film e serie: la scheda giusta (film o serie) e il cursore sull'ultimo riprodotto.
+    fn point_at_last_media(&self) {
+        let Some(main) = self.main() else { return };
+        if self.detail.borrow().is_some() {
+            return;
+        }
+        let Some((kind, key)) = self.last_media.borrow().clone() else {
+            return;
+        };
+        let mode = if kind == ItemKind::Movie { 0 } else { 1 };
+        if mode != self.media_mode.get() {
+            self.show_media_mode(mode);
+        }
+        let model = self.media_model();
+        if let Some(row) = model.id_of_key(&key).and_then(|id| model.row_of(id)) {
+            main.set_media_cursor(count_i32(row));
+        }
     }
 
     fn close_detail(&self) {
@@ -1406,6 +1477,7 @@ impl App {
                     });
                 } else {
                     self.start_progress_timer();
+                    *self.last_media.borrow_mut() = Some((now.kind, now.key.clone()));
                 }
                 *self.now.borrow_mut() = Some(now);
             }
@@ -1956,6 +2028,7 @@ impl App {
 
         // Guida
         main.on_guide_opened(on(|app| app.open_guide()));
+        main.on_page_changed(with_app!(|app, page: i32| app.on_page_changed(page)));
         main.on_guide_pick_day(with_app!(|app, index: i32| app.pick_guide_day(index)));
         main.on_guide_watch(with_app!(|app, row: i32| {
             if let Some((id, _)) = row_index(row).and_then(|r| app.channels.entry_at(r)) {
@@ -2277,6 +2350,10 @@ impl App {
             if !main.get_on_demand() {
                 if let Some(id) = self.current.get() {
                     self.play_channel(id);
+                    // l'elenco canali del player si apre sul canale in onda
+                    if let Some(row) = self.channels.row_of(id) {
+                        main.set_cursor(count_i32(row));
+                    }
                 }
             }
         } else if main.get_on_demand() && !pip_open {

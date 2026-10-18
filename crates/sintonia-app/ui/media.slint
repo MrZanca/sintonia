@@ -116,6 +116,11 @@ export component PosterGrid inherits Rectangle {
             fl.content-y = fl.height - top - root.cell-h;
         }
     }
+    // porta la riga del cursore al centro
+    public function center() {
+        let top = floor(root.cursor / root.cols) * root.cell-h - (fl.height - root.cell-h) / 2;
+        fl.content-y = -max(0px, min(top, ceil(root.count / root.cols) * root.cell-h - fl.height));
+    }
     public function to-top() {
         fl.content-y = 0px;
     }
@@ -241,6 +246,10 @@ component EpisodeList inherits Rectangle {
             fl.content-y = fl.height - (root.cursor + 1) * root.row-h;
         }
     }
+    public function center() {
+        let target = root.cursor * root.row-h - (fl.height - root.row-h) / 2;
+        fl.content-y = -max(0px, min(target, root.model.length * root.row-h - fl.height));
+    }
     fl := Flickable {
         content-height: root.model.length * root.row-h;
         for e[i] in root.model: EpisodeRow {
@@ -265,6 +274,7 @@ export component DetailScreen inherits Rectangle {
     in-out property <int> season;
     in property <[EpisodeItem]> episodes;
     in-out property <int> cursor;
+    in property <int> reveal-tick;
     callback back();
     callback play(bool);
     callback resume-series();
@@ -278,6 +288,7 @@ export component DetailScreen inherits Rectangle {
         ep-list.ensure-visible();
     }
     init => { fs.focus(); }
+    changed reveal-tick => { ep-list.center(); }
 
     fs := FocusScope {
         key-pressed(event) => {
@@ -409,6 +420,7 @@ export component MediaScreen inherits Rectangle {
     in property <[EpisodeItem]> episodes;
     in-out property <int> episode-cursor;
     in property <int> focus-tick;
+    in property <int> reveal-tick;
     callback pick-mode(int);
     callback pick-category(int);
     callback open(int);
@@ -427,6 +439,9 @@ export component MediaScreen inherits Rectangle {
     }
     init => { fs.focus(); }
     changed focus-tick => { fs.focus(); }
+    changed reveal-tick => {
+        if (root.detail == 0) { grid.center(); }
+    }
     changed category => { grid.to-top(); }
     changed mode => { grid.to-top(); }
     changed detail => {
@@ -503,6 +518,7 @@ export component MediaScreen inherits Rectangle {
         season <=> root.season;
         episodes: root.episodes;
         cursor <=> root.episode-cursor;
+        reveal-tick: root.reveal-tick;
         back => { root.back(); }
         play(from-start) => { root.play(from-start); }
         resume-series => { root.resume-series(); }

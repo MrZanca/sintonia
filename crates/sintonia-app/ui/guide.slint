@@ -102,7 +102,9 @@ export component GuideScreen inherits Rectangle {
     function scroll-to-now() {
         let target = root.now-min >= 0 ? root.now-min - 30 : 19 * 60;
         grid.content-x = max(min(0px, grid.width - grid.content-width), -max(0, target) * root.ppm);
-        root.ensure-visible();
+        // il canale del cursore (all'apertura quello in riproduzione) al centro
+        let top = root.cursor * root.row-h - (grid.height - root.row-h) / 2;
+        grid.content-y = -max(0px, min(top, root.count * root.row-h - grid.height));
     }
 
     init => { fs.focus(); root.scroll-to-now(); }
