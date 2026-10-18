@@ -98,9 +98,16 @@ pub struct VideoRouter {
     hide_pip_after_release: Cell<bool>,
     /// mpv ha (ri)avviato la riproduzione: il prossimo fotogramma disegnato rende `ready` vero.
     accept_frames: Cell<bool>,
-    /// Canale in riproduzione e il suo flusso (serve per riconnettersi).
-    current: Cell<Option<i64>>,
+    /// Flusso in riproduzione (serve per riconnettersi).
     stream: RefCell<Option<StreamInfo>>,
+    /// Film o episodio: alla fine si ferma invece di riconnettersi.
+    on_demand: Cell<bool>,
+    /// Da dove partire al prossimo caricamento (secondi).
+    start_secs: Cell<Option<u32>>,
+    /// Ultima posizione letta: dopo un errore un film riparte da lì.
+    last_position: Cell<f64>,
+    /// Chiamata quando un film o un episodio arriva alla fine.
+    on_finished: RefCell<Option<Box<dyn Fn()>>>,
     /// Fermato dall'utente (o mai partito): niente riconnessione.
     stopped: Cell<bool>,
     /// Riconnessione automatica (impostazione).
@@ -130,8 +137,11 @@ impl VideoRouter {
             holder: Cell::new(None),
             hide_pip_after_release: Cell::new(false),
             accept_frames: Cell::new(false),
-            current: Cell::new(None),
             stream: RefCell::new(None),
+            on_demand: Cell::new(false),
+            start_secs: Cell::new(None),
+            last_position: Cell::new(0.0),
+            on_finished: RefCell::new(None),
             stopped: Cell::new(true),
             reconnect: Cell::new(true),
             backoff: RefCell::new(Backoff::default()),
@@ -162,13 +172,23 @@ impl VideoRouter {
         &self.player
     }
 
-    /// Il canale in riproduzione (anche durante una riconnessione), `None` se fermo.
-    pub fn playing_channel(&self) -> Option<i64> {
-        if self.stopped.get() {
-            None
-        } else {
-            self.current.get()
+    /// C'è qualcosa in riproduzione (anche durante una riconnessione).
+    pub fn is_active(&self) -> bool {
+        !self.stopped.get()
+    }
+
+    /// Imposta cosa fare quando un film o un episodio finisce.
+    pub fn set_on_finished(&self, f: impl Fn() + 'static) {
+        *self.on_finished.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Posizione corrente in secondi (e la ricorda per una eventuale ripresa dopo un errore).
+    pub fn position(&self) -> Option<f64> {
+        let position = self.player.position();
+        if let Some(p) = position {
+            self.last_position.set(p);
         }
+        position
     }
 
     /// Accende o spegne la riconnessione automatica.
@@ -176,14 +196,20 @@ impl VideoRouter {
         self.reconnect.set(enabled);
     }
 
-    /// Apre un canale già risolto (indirizzo e intestazioni dalla playlist).
-    pub fn play(&self, channel_id: i64, stream: StreamInfo) {
+    /// Apre un flusso già risolto; `start`: secondi da cui partire (film ed episodi).
+    pub fn play(&self, stream: StreamInfo, on_demand: bool, start: Option<u32>) {
         self.retry_timer.stop();
         self.backoff.borrow_mut().reset();
         self.set_attempt(0);
-        self.current.set(Some(channel_id));
         self.stopped.set(false);
+        self.on_demand.set(on_demand);
+        self.start_secs.set(start);
+        self.last_position.set(start.map_or(0.0, f64::from));
         *self.stream.borrow_mut() = Some(stream);
+        // la pausa di mpv vale per il core, non per il file: un contenuto nuovo parte sempre
+        if let Err(err) = self.player.set_paused(false) {
+            log::warn!("{err}");
+        }
         self.load_current();
     }
 
@@ -195,6 +221,7 @@ impl VideoRouter {
         let options = LoadOptions {
             user_agent: stream.user_agent.clone(),
             referrer: stream.referrer.clone(),
+            start_secs: self.start_secs.get(),
         };
         if let Err(err) = self.player.load_with(&stream.url, &options) {
             log::error!("{err}");
@@ -206,7 +233,7 @@ impl VideoRouter {
     pub fn stop(&self) {
         self.retry_timer.stop();
         self.stopped.set(true);
-        self.current.set(None);
+        self.on_demand.set(false);
         *self.stream.borrow_mut() = None;
         self.set_attempt(0);
         if let Err(err) = self.player.stop() {
@@ -240,6 +267,11 @@ impl VideoRouter {
             .start(slint::TimerMode::SingleShot, delay, move || {
                 if let Some(router) = weak.upgrade() {
                     if !router.stopped.get() {
+                        if router.on_demand.get() {
+                            // un film riprende da dove si era interrotto
+                            let at = router.last_position.get().max(0.0).floor() as u32;
+                            router.start_secs.set((at > 0).then_some(at));
+                        }
                         router.load_current();
                     }
                 }
@@ -358,6 +390,13 @@ impl VideoRouter {
                     EndReason::Error(message) => {
                         log::warn!("riproduzione interrotta: {message}");
                         self.retry_or_fail();
+                    }
+                    EndReason::Eof if self.on_demand.get() => {
+                        self.stopped.set(true);
+                        self.set_state(state::IDLE);
+                        if let Some(finished) = self.on_finished.borrow().as_ref() {
+                            finished();
+                        }
                     }
                     EndReason::Eof => self.retry_or_fail(),
                     // un nuovo `load` sostituisce il flusso: lo stato lo decide il Loading che segue

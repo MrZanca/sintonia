@@ -1,8 +1,12 @@
 //! Segreti nel portachiavi del sistema (Gestione credenziali di Windows, Portachiavi di macOS,
 //! Secret Service su Linux).
 //!
-//! Per ora c'è un solo segreto: la chiave che cifra gli indirizzi nel database. Le credenziali
-//! Xtream (M2) passeranno da qui.
+//! Due tipi di segreti: la chiave che cifra l'archivio ([`database_key`]) e le password degli
+//! account Xtream ([`SecretStore`], una voce per sorgente). Il resto del codice usa il tratto
+//! [`SecretStore`], così i test possono usare [`MemorySecrets`] senza toccare il sistema.
+
+use std::collections::HashMap;
+use std::sync::{Mutex, PoisonError};
 
 use crate::crypto::{key_from_hex, key_to_hex, Cipher, CryptoError, KEY_LEN};
 
@@ -39,5 +43,104 @@ pub fn database_key() -> Result<([u8; KEY_LEN], bool), SecretsError> {
             Ok((key, true))
         }
         Err(err) => Err(err.into()),
+    }
+}
+
+/// Nome della voce con la password di una sorgente.
+pub fn source_password_name(source_id: i64) -> String {
+    format!("sorgente-{source_id}")
+}
+
+/// Un deposito di segreti (testo) per nome.
+pub trait SecretStore: Send + Sync + std::fmt::Debug {
+    /// Legge un segreto (`None` se non c'è).
+    fn get(&self, name: &str) -> Result<Option<String>, SecretsError>;
+    /// Salva un segreto.
+    fn set(&self, name: &str, value: &str) -> Result<(), SecretsError>;
+    /// Elimina un segreto (nessun errore se non c'era).
+    fn delete(&self, name: &str) -> Result<(), SecretsError>;
+}
+
+/// Il portachiavi del sistema.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemKeyring;
+
+impl SecretStore for SystemKeyring {
+    fn get(&self, name: &str) -> Result<Option<String>, SecretsError> {
+        match keyring::Entry::new(SERVICE, name)?.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn set(&self, name: &str, value: &str) -> Result<(), SecretsError> {
+        keyring::Entry::new(SERVICE, name)?.set_password(value)?;
+        Ok(())
+    }
+
+    fn delete(&self, name: &str) -> Result<(), SecretsError> {
+        match keyring::Entry::new(SERVICE, name)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+/// Segreti in memoria, per i test e gli strumenti di sviluppo.
+#[derive(Default)]
+pub struct MemorySecrets {
+    values: Mutex<HashMap<String, String>>,
+}
+
+impl std::fmt::Debug for MemorySecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MemorySecrets(..)")
+    }
+}
+
+impl SecretStore for MemorySecrets {
+    fn get(&self, name: &str) -> Result<Option<String>, SecretsError> {
+        Ok(self
+            .values
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .cloned())
+    }
+
+    fn set(&self, name: &str, value: &str) -> Result<(), SecretsError> {
+        self.values
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name.to_owned(), value.to_owned());
+        Ok(())
+    }
+
+    fn delete(&self, name: &str) -> Result<(), SecretsError> {
+        self.values
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(name);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_secrets_round_trip() {
+        let secrets = MemorySecrets::default();
+        let name = source_password_name(7);
+        assert_eq!(name, "sorgente-7");
+        assert_eq!(secrets.get(&name).unwrap(), None);
+        secrets.set(&name, "segreta").unwrap();
+        assert_eq!(secrets.get(&name).unwrap().as_deref(), Some("segreta"));
+        secrets.delete(&name).unwrap();
+        secrets.delete(&name).unwrap();
+        assert_eq!(secrets.get(&name).unwrap(), None);
+        assert!(!format!("{secrets:?}").contains("segreta"));
     }
 }

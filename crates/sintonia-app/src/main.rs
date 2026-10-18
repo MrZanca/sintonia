@@ -8,16 +8,18 @@
 
 mod app;
 mod awake;
-mod channels;
+mod catalog;
+mod images;
 mod settings;
 mod video;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use sintonia_core::crypto::Cipher;
-use sintonia_core::secrets::{self, SecretsError};
+use sintonia_core::secrets::{self, SecretsError, SystemKeyring};
 use sintonia_core::service::{Service, ServiceConfig, ServiceError};
 use sintonia_player::{Player, PlayerConfig, PlayerError};
 use slint::ComponentHandle;
@@ -126,6 +128,7 @@ fn run() -> Result<(), AppError> {
             database,
             cache_dir,
             cipher: Cipher::new(&key),
+            secrets: Arc::new(SystemKeyring),
             user_agent: format!("Sintonia/{}", env!("CARGO_PKG_VERSION")),
         },
         app::forward_service_event,

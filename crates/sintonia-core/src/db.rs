@@ -1,18 +1,24 @@
-//! Archivio SQLite: sorgenti, canali, impostazioni, ricerca full-text (FTS5).
+//! Archivio SQLite: sorgenti, canali, film, serie, preferiti, cronologia, impostazioni, ricerca
+//! full-text (FTS5).
 //!
-//! Gli indirizzi (della playlist e di ogni canale) sono cifrati con [`Cipher`]: possono contenere
-//! utente e password del fornitore. In chiaro restano solo i dati che servono a mostrare e cercare
-//! i canali (nome, categoria, logo).
+//! Gli indirizzi (della playlist e di ogni canale M3U) e le credenziali Xtream (server e utente)
+//! sono cifrati con [`Cipher`]; la password Xtream non sta qui ma nel portachiavi
+//! ([`crate::secrets`]). In chiaro restano solo i dati che servono a mostrare e cercare.
+//!
+//! Ogni contenuto ha una **chiave stabile** che sopravvive agli aggiornamenti della sorgente:
+//! per i canali M3U è un hash (con un sale dell'installazione) dell'indirizzo, per Xtream
+//! l'identificativo del server. Preferiti e cronologia si appoggiano a questa chiave.
 
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use sha2::{Digest, Sha256};
 
 use crate::crypto::{Cipher, CryptoError};
 use crate::m3u::Entry;
 use crate::redact::redact_url;
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 /// Errori dell'archivio.
 #[derive(Debug, thiserror::Error)]
@@ -23,7 +29,7 @@ pub enum StoreError {
     /// Un valore cifrato non si decifra.
     #[error(transparent)]
     Crypto(#[from] CryptoError),
-    /// La sorgente o il canale non esiste più.
+    /// La sorgente o il contenuto non esiste più.
     #[error("elemento non trovato")]
     NotFound,
     /// L'operazione è stata interrotta (chiusura dell'app o panic).
@@ -38,6 +44,8 @@ pub enum SourceKind {
     M3uUrl,
     /// Playlist M3U da un file sul PC.
     M3uFile,
+    /// Account Xtream Codes.
+    Xtream,
 }
 
 impl SourceKind {
@@ -45,6 +53,7 @@ impl SourceKind {
         match self {
             Self::M3uUrl => "m3u-url",
             Self::M3uFile => "m3u-file",
+            Self::Xtream => "xtream",
         }
     }
 
@@ -52,6 +61,7 @@ impl SourceKind {
         match text {
             "m3u-url" => Some(Self::M3uUrl),
             "m3u-file" => Some(Self::M3uFile),
+            "xtream" => Some(Self::Xtream),
             _ => None,
         }
     }
@@ -74,19 +84,27 @@ pub struct SourceInfo {
     pub active: bool,
     /// Canali all'ultimo aggiornamento.
     pub channel_count: u32,
+    /// Film all'ultimo aggiornamento (Xtream).
+    pub movie_count: u32,
+    /// Serie all'ultimo aggiornamento (Xtream).
+    pub series_count: u32,
     /// Ultimo aggiornamento (secondi Unix).
     pub refreshed_at: Option<i64>,
+    /// Scadenza dell'account Xtream (secondi Unix), se nota.
+    pub expires: Option<i64>,
 }
 
-/// Dati per creare una sorgente.
+/// Dati di una sorgente (nuova, o letta per aggiornarla).
 #[derive(Clone, PartialEq, Eq)]
 pub struct NewSource {
     /// Nome.
     pub name: String,
     /// Tipo.
     pub kind: SourceKind,
-    /// Indirizzo o percorso (sensibile).
+    /// Indirizzo della playlist, percorso del file o server Xtream (sensibile).
     pub location: String,
+    /// Utente Xtream.
+    pub username: Option<String>,
     /// User-agent per la playlist.
     pub user_agent: Option<String>,
 }
@@ -101,11 +119,53 @@ impl std::fmt::Debug for NewSource {
     }
 }
 
+/// Un canale da salvare (da una playlist M3U o da Xtream).
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct ChannelInput {
+    /// Chiave stabile.
+    pub key: String,
+    /// Numero mostrato.
+    pub number: u32,
+    /// Nome.
+    pub name: String,
+    /// Categoria.
+    pub group: String,
+    /// Identificativo per la guida.
+    pub tvg_id: Option<String>,
+    /// Nome per la guida.
+    pub tvg_name: Option<String>,
+    /// Logo.
+    pub logo: Option<String>,
+    /// Indirizzo (M3U); `None` per Xtream, dove si costruisce al momento.
+    pub url: Option<String>,
+    /// User-agent del canale.
+    pub user_agent: Option<String>,
+    /// Referrer del canale.
+    pub referrer: Option<String>,
+    /// Radio.
+    pub radio: bool,
+    /// Protetto secondo la playlist.
+    pub drm: bool,
+    /// Identificativo Xtream del flusso.
+    pub xtream_id: Option<i64>,
+}
+
+impl std::fmt::Debug for ChannelInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChannelInput")
+            .field("name", &self.name)
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Un canale nell'elenco (senza indirizzo).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ChannelRow {
     /// Identificativo (cambia quando la sorgente si aggiorna).
     pub id: i64,
+    /// Chiave stabile (non cambia con gli aggiornamenti).
+    pub key: String,
     /// Numero mostrato.
     pub number: u32,
     /// Nome.
@@ -122,7 +182,133 @@ pub struct ChannelRow {
     pub drm: bool,
 }
 
-/// Quello che serve al player per aprire un canale.
+/// Un film (Xtream).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MovieRow {
+    /// Identificativo nell'archivio.
+    pub id: i64,
+    /// Identificativo Xtream.
+    pub xtream_id: i64,
+    /// Titolo.
+    pub name: String,
+    /// Categoria.
+    pub group: String,
+    /// Locandina.
+    pub cover: Option<String>,
+    /// Voto su 10.
+    pub rating: Option<f32>,
+    /// Anno.
+    pub year: Option<String>,
+    /// Aggiunto il.
+    pub added: Option<i64>,
+    /// Estensione del file.
+    pub container: Option<String>,
+}
+
+impl MovieRow {
+    /// Chiave stabile.
+    pub fn key(&self) -> String {
+        format!("m{}", self.xtream_id)
+    }
+}
+
+/// Una serie (Xtream).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SeriesRow {
+    /// Identificativo nell'archivio.
+    pub id: i64,
+    /// Identificativo Xtream.
+    pub xtream_id: i64,
+    /// Titolo.
+    pub name: String,
+    /// Categoria.
+    pub group: String,
+    /// Locandina.
+    pub cover: Option<String>,
+    /// Voto su 10.
+    pub rating: Option<f32>,
+    /// Anno.
+    pub year: Option<String>,
+    /// Trama.
+    pub plot: Option<String>,
+    /// Genere.
+    pub genre: Option<String>,
+}
+
+impl SeriesRow {
+    /// Chiave stabile.
+    pub fn key(&self) -> String {
+        format!("s{}", self.xtream_id)
+    }
+}
+
+/// Tipo di contenuto per preferiti e cronologia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ItemKind {
+    /// Canale live.
+    Live,
+    /// Film.
+    Movie,
+    /// Serie (preferiti) o episodio (cronologia).
+    Series,
+}
+
+impl ItemKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Movie => "movie",
+            Self::Series => "series",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "live" => Some(Self::Live),
+            "movie" => Some(Self::Movie),
+            "series" => Some(Self::Series),
+            _ => None,
+        }
+    }
+}
+
+/// Una voce della cronologia («Riprendi»).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HistoryEntry {
+    /// Tipo.
+    pub kind: Option<ItemKind>,
+    /// Chiave del contenuto (per una serie: la chiave della serie).
+    pub key: String,
+    /// Titolo mostrato.
+    pub title: String,
+    /// Riga sotto il titolo (categoria, «S2 · E4»…).
+    pub subtitle: String,
+    /// Immagine.
+    pub cover: Option<String>,
+    /// Secondi visti.
+    pub position: f64,
+    /// Durata in secondi (0 se live o sconosciuta).
+    pub duration: f64,
+    /// Ultima visione (secondi Unix).
+    pub watched_at: i64,
+    /// Per le serie: episodio da riprendere (identificativo, stagione, numero, estensione).
+    pub episode: Option<EpisodeRef>,
+}
+
+/// Riferimento a un episodio di una serie Xtream.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EpisodeRef {
+    /// Identificativo del flusso.
+    pub id: i64,
+    /// Stagione.
+    pub season: u32,
+    /// Numero.
+    pub number: u32,
+    /// Estensione del file.
+    pub container: String,
+}
+
+/// Quello che serve al player per aprire un contenuto.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StreamInfo {
     /// Indirizzo in chiaro: non va mai nei log.
@@ -141,11 +327,26 @@ impl std::fmt::Debug for StreamInfo {
     }
 }
 
+/// Dove trovare il flusso di un canale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelStream {
+    /// Indirizzo completo (M3U).
+    Url(StreamInfo),
+    /// Canale Xtream: l'indirizzo si costruisce con le credenziali della sorgente.
+    Xtream {
+        /// Sorgente.
+        source_id: i64,
+        /// Identificativo del flusso.
+        xtream_id: i64,
+    },
+}
+
 /// L'archivio.
 #[derive(Debug)]
 pub struct Store {
     conn: Connection,
     cipher: Cipher,
+    salt: String,
 }
 
 impl Store {
@@ -166,48 +367,69 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if version < 1 {
-            conn.execute_batch(
-                "BEGIN;
-                CREATE TABLE sources(
-                    id INTEGER PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    location BLOB NOT NULL,
-                    display TEXT NOT NULL,
-                    user_agent TEXT,
-                    epg_urls BLOB,
-                    active INTEGER NOT NULL DEFAULT 0,
-                    channel_count INTEGER NOT NULL DEFAULT 0,
-                    refreshed_at INTEGER
-                );
-                CREATE TABLE channels(
-                    id INTEGER PRIMARY KEY,
-                    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-                    position INTEGER NOT NULL,
-                    number INTEGER NOT NULL,
-                    name TEXT NOT NULL,
-                    group_name TEXT NOT NULL,
-                    tvg_id TEXT,
-                    tvg_name TEXT,
-                    logo TEXT,
-                    url BLOB NOT NULL,
-                    user_agent TEXT,
-                    referrer TEXT,
-                    radio INTEGER NOT NULL DEFAULT 0,
-                    drm INTEGER NOT NULL DEFAULT 0
-                );
-                CREATE INDEX channels_by_source ON channels(source_id, position);
-                CREATE VIRTUAL TABLE channels_fts USING fts5(
-                    name, group_name,
-                    content='channels', content_rowid='id',
-                    tokenize='unicode61 remove_diacritics 2'
-                );
-                CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                COMMIT;",
-            )?;
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            conn.execute_batch(SCHEMA_V1)?;
+            conn.pragma_update(None, "user_version", 1)?;
         }
-        Ok(Self { conn, cipher })
+        let mut store = Self {
+            conn,
+            cipher,
+            salt: String::new(),
+        };
+        store.salt = store.load_salt()?;
+        if version < 2 {
+            store.migrate_v2()?;
+        }
+        Ok(store)
+    }
+
+    /// Sale dell'installazione per le chiavi stabili (creato al primo avvio).
+    fn load_salt(&self) -> Result<String, StoreError> {
+        if let Some(salt) = self.setting("salt")? {
+            return Ok(salt);
+        }
+        let salt: String = Cipher::generate_key()?
+            .iter()
+            .take(16)
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        self.set_setting("salt", &salt)?;
+        Ok(salt)
+    }
+
+    /// Chiave stabile di un canale M3U: hash dell'indirizzo con il sale (non rivela l'indirizzo).
+    pub fn m3u_key(&self, url: &str) -> String {
+        let digest = Sha256::digest(format!("{}\n{url}", self.salt).as_bytes());
+        let hex: String = digest.iter().take(12).map(|b| format!("{b:02x}")).collect();
+        format!("u{hex}")
+    }
+
+    fn migrate_v2(&mut self) -> Result<(), StoreError> {
+        let tx = self.conn.transaction()?;
+        tx.execute_batch(SCHEMA_V2)?;
+        // chiavi stabili dei canali M3U già salvati
+        let rows: Vec<(i64, Vec<u8>)> = {
+            let mut stmt = tx.prepare("SELECT id, url FROM channels")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        {
+            let mut update = tx.prepare("UPDATE channels SET stable_key = ?2 WHERE id = ?1")?;
+            for (id, blob) in rows {
+                let key = match self.cipher.decrypt(&blob) {
+                    Ok(url) => {
+                        let digest = Sha256::digest(format!("{}\n{url}", self.salt).as_bytes());
+                        let hex: String =
+                            digest.iter().take(12).map(|b| format!("{b:02x}")).collect();
+                        format!("u{hex}")
+                    }
+                    Err(_) => format!("x{id}"),
+                };
+                update.execute(params![id, key])?;
+            }
+        }
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        tx.commit()?;
+        Ok(())
     }
 
     // ───────────── sorgenti ─────────────
@@ -220,8 +442,15 @@ impl Store {
                 || source.location.clone(),
                 |n| n.to_string_lossy().into_owned(),
             ),
+            SourceKind::Xtream => redact_url(&source.location)
+                .trim_end_matches("/…")
+                .to_owned(),
         };
-        let location = self.cipher.encrypt(&source.location)?;
+        let secret = match &source.username {
+            Some(user) => format!("{}\n{user}", source.location),
+            None => source.location.clone(),
+        };
+        let location = self.cipher.encrypt(&secret)?;
         let tx = self.conn.transaction()?;
         let has_active: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM sources WHERE active = 1)",
@@ -248,7 +477,8 @@ impl Store {
     /// Tutte le sorgenti, in ordine di creazione.
     pub fn sources(&self) -> Result<Vec<SourceInfo>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, kind, display, user_agent, active, channel_count, refreshed_at
+            "SELECT id, name, kind, display, user_agent, active, channel_count, movie_count,
+                    series_count, refreshed_at, expires
              FROM sources ORDER BY id",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -260,7 +490,10 @@ impl Store {
                 user_agent: r.get(4)?,
                 active: r.get(5)?,
                 channel_count: r.get(6)?,
-                refreshed_at: r.get(7)?,
+                movie_count: r.get(7)?,
+                series_count: r.get(8)?,
+                refreshed_at: r.get(9)?,
+                expires: r.get(10)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -274,7 +507,7 @@ impl Store {
             .optional()?)
     }
 
-    /// Indirizzo o percorso in chiaro, con il tipo e l'eventuale user-agent.
+    /// Dati della sorgente in chiaro (indirizzo, utente Xtream), con il tipo e l'user-agent.
     pub fn source_location(&self, id: i64) -> Result<NewSource, StoreError> {
         let (name, kind, location, user_agent): (String, String, Vec<u8>, Option<String>) = self
             .conn
@@ -285,12 +518,47 @@ impl Store {
             )
             .optional()?
             .ok_or(StoreError::NotFound)?;
+        let kind = SourceKind::parse(&kind).unwrap_or(SourceKind::M3uUrl);
+        let secret = self.cipher.decrypt(&location)?;
+        let (location, username) = match (kind, secret.split_once('\n')) {
+            (SourceKind::Xtream, Some((server, user))) => {
+                (server.to_owned(), Some(user.to_owned()))
+            }
+            _ => (secret, None),
+        };
         Ok(NewSource {
             name,
-            kind: SourceKind::parse(&kind).unwrap_or(SourceKind::M3uUrl),
-            location: self.cipher.decrypt(&location)?,
+            kind,
+            location,
+            username,
             user_agent,
         })
+    }
+
+    /// Estensione dei canali live e scadenza dell'account Xtream.
+    pub fn set_account_info(
+        &self,
+        id: i64,
+        live_ext: &str,
+        expires: Option<i64>,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sources SET live_ext = ?2, expires = ?3 WHERE id = ?1",
+            params![id, live_ext, expires],
+        )?;
+        Ok(())
+    }
+
+    /// Estensione dei canali live di una sorgente Xtream ("m3u8" se mai verificata).
+    pub fn live_extension(&self, id: i64) -> Result<String, StoreError> {
+        let ext: Option<String> = self
+            .conn
+            .query_row("SELECT live_ext FROM sources WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .ok_or(StoreError::NotFound)?;
+        Ok(ext.unwrap_or_else(|| "m3u8".to_owned()))
     }
 
     /// Indirizzi della guida dichiarati dalla playlist della sorgente.
@@ -316,20 +584,20 @@ impl Store {
     /// Rende `id` la sorgente in uso.
     pub fn set_active_source(&mut self, id: i64) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
-        let found = tx.execute("UPDATE sources SET active = (id = ?1)", [id])?;
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM sources WHERE id = ?1)",
             [id],
             |r| r.get(0),
         )?;
-        if found == 0 || !exists {
+        if !exists {
             return Err(StoreError::NotFound);
         }
+        tx.execute("UPDATE sources SET active = (id = ?1)", [id])?;
         tx.commit()?;
         Ok(())
     }
 
-    /// Elimina una sorgente e i suoi canali. Se era in uso passa alla prima rimasta.
+    /// Elimina una sorgente e tutto ciò che le appartiene. Se era in uso passa alla prima rimasta.
     pub fn delete_source(&mut self, id: i64) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM sources WHERE id = ?1", [id])?;
@@ -339,19 +607,49 @@ impl Store {
                AND NOT EXISTS(SELECT 1 FROM sources WHERE active = 1)",
             [],
         )?;
-        tx.execute(
-            "INSERT INTO channels_fts(channels_fts) VALUES ('rebuild')",
-            [],
-        )?;
+        rebuild_fts(&tx)?;
         tx.commit()?;
         Ok(())
     }
 
-    /// Sostituisce i canali di una sorgente con quelli appena letti.
+    /// Sostituisce i canali di una sorgente M3U con quelli appena letti.
     pub fn replace_channels(
         &mut self,
         source_id: i64,
         entries: &[Entry],
+        epg_urls: &[String],
+        now: i64,
+    ) -> Result<u32, StoreError> {
+        let inputs: Vec<ChannelInput> = entries
+            .iter()
+            .enumerate()
+            .map(|(position, e)| ChannelInput {
+                key: self.m3u_key(&e.url),
+                number: e
+                    .number
+                    .unwrap_or_else(|| u32::try_from(position + 1).unwrap_or(u32::MAX)),
+                name: e.name.clone(),
+                group: e.group.clone().unwrap_or_default(),
+                tvg_id: e.tvg_id.clone(),
+                tvg_name: e.tvg_name.clone(),
+                logo: e.logo.clone(),
+                url: Some(e.url.clone()),
+                user_agent: e.user_agent.clone(),
+                referrer: e.referrer.clone(),
+                radio: e.radio,
+                drm: e.drm,
+                xtream_id: None,
+            })
+            .collect();
+        self.replace_catalog(source_id, &inputs, None, epg_urls, now)
+    }
+
+    /// Sostituisce tutto il catalogo di una sorgente: canali e, per Xtream, film e serie.
+    pub fn replace_catalog(
+        &mut self,
+        source_id: i64,
+        channels: &[ChannelInput],
+        vod: Option<(&[MovieRow], &[SeriesRow])>,
         epg_urls: &[String],
         now: i64,
     ) -> Result<u32, StoreError> {
@@ -360,112 +658,403 @@ impl Store {
         } else {
             Some(self.cipher.encrypt(&epg_urls.join("\n"))?)
         };
+        let encrypted: Vec<Vec<u8>> = channels
+            .iter()
+            .map(|c| match &c.url {
+                Some(url) => self.cipher.encrypt(url),
+                None => Ok(Vec::new()),
+            })
+            .collect::<Result<_, _>>()?;
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM channels WHERE source_id = ?1", [source_id])?;
         {
             let mut insert = tx.prepare(
                 "INSERT INTO channels(source_id, position, number, name, group_name, tvg_id,
-                    tvg_name, logo, url, user_agent, referrer, radio, drm)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    tvg_name, logo, url, user_agent, referrer, radio, drm, stable_key, xtream_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             )?;
-            for (position, entry) in entries.iter().enumerate() {
-                let position = u32::try_from(position).unwrap_or(u32::MAX);
+            for (position, (c, url)) in channels.iter().zip(&encrypted).enumerate() {
                 insert.execute(params![
                     source_id,
-                    position,
-                    entry.number.unwrap_or(position.saturating_add(1)),
-                    entry.name,
-                    entry.group.as_deref().unwrap_or_default(),
-                    entry.tvg_id,
-                    entry.tvg_name,
-                    entry.logo,
-                    self.cipher.encrypt(&entry.url)?,
-                    entry.user_agent,
-                    entry.referrer,
-                    entry.radio,
-                    entry.drm,
+                    u32::try_from(position).unwrap_or(u32::MAX),
+                    c.number,
+                    c.name,
+                    c.group,
+                    c.tvg_id,
+                    c.tvg_name,
+                    c.logo,
+                    url,
+                    c.user_agent,
+                    c.referrer,
+                    c.radio,
+                    c.drm,
+                    c.key,
+                    c.xtream_id,
                 ])?;
             }
         }
-        let count = u32::try_from(entries.len()).unwrap_or(u32::MAX);
+        let (movie_count, series_count) = match vod {
+            Some((movies, series)) => {
+                insert_vod(&tx, source_id, movies, series)?;
+                (movies.len(), series.len())
+            }
+            None => (0, 0),
+        };
+        let count = u32::try_from(channels.len()).unwrap_or(u32::MAX);
         let changed = tx.execute(
-            "UPDATE sources SET channel_count = ?2, refreshed_at = ?3, epg_urls = ?4 WHERE id = ?1",
-            params![source_id, count, now, epg],
+            "UPDATE sources SET channel_count = ?2, refreshed_at = ?3, epg_urls = ?4,
+                movie_count = ?5, series_count = ?6
+             WHERE id = ?1",
+            params![
+                source_id,
+                count,
+                now,
+                epg,
+                u32::try_from(movie_count).unwrap_or(u32::MAX),
+                u32::try_from(series_count).unwrap_or(u32::MAX)
+            ],
         )?;
         if changed == 0 {
             return Err(StoreError::NotFound);
         }
-        tx.execute(
-            "INSERT INTO channels_fts(channels_fts) VALUES ('rebuild')",
-            [],
-        )?;
+        rebuild_fts(&tx)?;
         tx.commit()?;
         Ok(count)
     }
 
-    // ───────────── canali ─────────────
+    // ───────────── canali, film, serie ─────────────
 
     /// I canali di una sorgente nell'ordine della playlist.
     pub fn channels(&self, source_id: i64) -> Result<Vec<ChannelRow>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, number, name, group_name, logo, tvg_id, radio, drm
+            "SELECT id, stable_key, number, name, group_name, logo, tvg_id, radio, drm
              FROM channels WHERE source_id = ?1 ORDER BY position",
         )?;
         let rows = stmt.query_map([source_id], |r| {
             Ok(ChannelRow {
                 id: r.get(0)?,
-                number: r.get(1)?,
-                name: r.get(2)?,
-                group: r.get(3)?,
-                logo: r.get(4)?,
-                tvg_id: r.get(5)?,
-                radio: r.get(6)?,
-                drm: r.get(7)?,
+                key: r.get(1)?,
+                number: r.get(2)?,
+                name: r.get(3)?,
+                group: r.get(4)?,
+                logo: r.get(5)?,
+                tvg_id: r.get(6)?,
+                radio: r.get(7)?,
+                drm: r.get(8)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Indirizzo (decifrato) e intestazioni di un canale.
-    pub fn stream(&self, channel_id: i64) -> Result<StreamInfo, StoreError> {
-        let (url, user_agent, referrer): (Vec<u8>, Option<String>, Option<String>) = self
+    /// I film di una sorgente.
+    pub fn movies(&self, source_id: i64) -> Result<Vec<MovieRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, xtream_id, name, group_name, cover, rating, year, added, container
+             FROM movies WHERE source_id = ?1 ORDER BY position",
+        )?;
+        let rows = stmt.query_map([source_id], |r| {
+            Ok(MovieRow {
+                id: r.get(0)?,
+                xtream_id: r.get(1)?,
+                name: r.get(2)?,
+                group: r.get(3)?,
+                cover: r.get(4)?,
+                rating: r.get(5)?,
+                year: r.get(6)?,
+                added: r.get(7)?,
+                container: r.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Le serie di una sorgente.
+    pub fn series(&self, source_id: i64) -> Result<Vec<SeriesRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, xtream_id, name, group_name, cover, rating, year, plot, genre
+             FROM series WHERE source_id = ?1 ORDER BY position",
+        )?;
+        let rows = stmt.query_map([source_id], |r| {
+            Ok(SeriesRow {
+                id: r.get(0)?,
+                xtream_id: r.get(1)?,
+                name: r.get(2)?,
+                group: r.get(3)?,
+                cover: r.get(4)?,
+                rating: r.get(5)?,
+                year: r.get(6)?,
+                plot: r.get(7)?,
+                genre: r.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Dove trovare il flusso di un canale.
+    pub fn channel_stream(&self, channel_id: i64) -> Result<ChannelStream, StoreError> {
+        let (source_id, url, user_agent, referrer, xtream_id): (
+            i64,
+            Vec<u8>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+        ) = self
             .conn
             .query_row(
-                "SELECT url, user_agent, referrer FROM channels WHERE id = ?1",
+                "SELECT source_id, url, user_agent, referrer, xtream_id FROM channels WHERE id = ?1",
                 [channel_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()?
             .ok_or(StoreError::NotFound)?;
-        Ok(StreamInfo {
-            url: self.cipher.decrypt(&url)?,
-            user_agent,
-            referrer,
-        })
+        match xtream_id {
+            Some(xtream_id) if url.is_empty() => Ok(ChannelStream::Xtream {
+                source_id,
+                xtream_id,
+            }),
+            _ => Ok(ChannelStream::Url(StreamInfo {
+                url: self.cipher.decrypt(&url)?,
+                user_agent,
+                referrer,
+            })),
+        }
     }
 
-    /// Ricerca istantanea su nome e categoria nella sorgente: ogni parola è un prefisso
-    /// ("rai sp" trova "Rai Sport"). Accenti e maiuscole non contano.
+    /// Indirizzo (decifrato) e intestazioni di un canale M3U.
+    pub fn stream(&self, channel_id: i64) -> Result<StreamInfo, StoreError> {
+        match self.channel_stream(channel_id)? {
+            ChannelStream::Url(info) => Ok(info),
+            ChannelStream::Xtream { .. } => Err(StoreError::NotFound),
+        }
+    }
+
+    /// Sorgente, identificativo Xtream ed estensione di un film.
+    pub fn movie_ref(&self, movie_id: i64) -> Result<(i64, MovieRow), StoreError> {
+        self.conn
+            .query_row(
+                "SELECT source_id, id, xtream_id, name, group_name, cover, rating, year, added, container
+                 FROM movies WHERE id = ?1",
+                [movie_id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        MovieRow {
+                            id: r.get(1)?,
+                            xtream_id: r.get(2)?,
+                            name: r.get(3)?,
+                            group: r.get(4)?,
+                            cover: r.get(5)?,
+                            rating: r.get(6)?,
+                            year: r.get(7)?,
+                            added: r.get(8)?,
+                            container: r.get(9)?,
+                        },
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)
+    }
+
+    /// Sorgente e dati di una serie.
+    pub fn series_ref(&self, series_row_id: i64) -> Result<(i64, SeriesRow), StoreError> {
+        self.conn
+            .query_row(
+                "SELECT source_id, id, xtream_id, name, group_name, cover, rating, year, plot, genre
+                 FROM series WHERE id = ?1",
+                [series_row_id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        SeriesRow {
+                            id: r.get(1)?,
+                            xtream_id: r.get(2)?,
+                            name: r.get(3)?,
+                            group: r.get(4)?,
+                            cover: r.get(5)?,
+                            rating: r.get(6)?,
+                            year: r.get(7)?,
+                            plot: r.get(8)?,
+                            genre: r.get(9)?,
+                        },
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)
+    }
+
+    /// Ricerca istantanea su nome e categoria: ogni parola è un prefisso ("rai sp" trova
+    /// "Rai Sport"). Accenti e maiuscole non contano.
     pub fn search(&self, source_id: i64, query: &str, limit: u32) -> Result<Vec<i64>, StoreError> {
+        self.search_in("channels", source_id, query, limit)
+    }
+
+    /// Come [`Self::search`], sui film.
+    pub fn search_movies(
+        &self,
+        source_id: i64,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<i64>, StoreError> {
+        self.search_in("movies", source_id, query, limit)
+    }
+
+    /// Come [`Self::search`], sulle serie.
+    pub fn search_series(
+        &self,
+        source_id: i64,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<i64>, StoreError> {
+        self.search_in("series", source_id, query, limit)
+    }
+
+    fn search_in(
+        &self,
+        table: &str,
+        source_id: i64,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<i64>, StoreError> {
         let Some(expr) = fts_query(query) else {
             return Ok(Vec::new());
         };
-        let mut stmt = self.conn.prepare(
-            "SELECT c.id FROM channels_fts f JOIN channels c ON c.id = f.rowid
-             WHERE channels_fts MATCH ?1 AND c.source_id = ?2
-             ORDER BY c.position LIMIT ?3",
-        )?;
+        // `table` è sempre una costante del codice, mai un dato dell'utente
+        let sql = format!(
+            "SELECT c.id FROM {table}_fts f JOIN {table} c ON c.id = f.rowid
+             WHERE {table}_fts MATCH ?1 AND c.source_id = ?2
+             ORDER BY c.position LIMIT ?3"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let ids = stmt.query_map(params![expr, source_id, limit], |r| r.get(0))?;
         Ok(ids.collect::<Result<_, _>>()?)
     }
 
+    // ───────────── preferiti e cronologia ─────────────
+
+    /// Preferiti della sorgente: (tipo, chiave), i più recenti prima.
+    pub fn favorites(&self, source_id: i64) -> Result<Vec<(ItemKind, String)>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, key FROM favorites WHERE source_id = ?1 ORDER BY added_at DESC, rowid DESC",
+        )?;
+        let rows = stmt.query_map([source_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (kind, key) = row?;
+            if let Some(kind) = ItemKind::parse(&kind) {
+                out.push((kind, key));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Aggiunge o toglie un preferito.
+    pub fn set_favorite(
+        &self,
+        source_id: i64,
+        kind: ItemKind,
+        key: &str,
+        favorite: bool,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        if favorite {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO favorites(source_id, kind, key, added_at) VALUES (?1, ?2, ?3, ?4)",
+                params![source_id, kind.as_str(), key, now],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM favorites WHERE source_id = ?1 AND kind = ?2 AND key = ?3",
+                params![source_id, kind.as_str(), key],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Salva (o aggiorna) una voce della cronologia.
+    pub fn save_history(&self, source_id: i64, entry: &HistoryEntry) -> Result<(), StoreError> {
+        let kind = entry.kind.unwrap_or(ItemKind::Live);
+        let episode = entry
+            .episode
+            .as_ref()
+            .map(|e| format!("{}|{}|{}|{}", e.id, e.season, e.number, e.container));
+        self.conn.execute(
+            "INSERT INTO history(source_id, kind, key, title, subtitle, cover, position, duration,
+                watched_at, episode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(source_id, kind, key) DO UPDATE SET
+                title = excluded.title, subtitle = excluded.subtitle, cover = excluded.cover,
+                position = excluded.position, duration = excluded.duration,
+                watched_at = excluded.watched_at, episode = excluded.episode",
+            params![
+                source_id,
+                kind.as_str(),
+                entry.key,
+                entry.title,
+                entry.subtitle,
+                entry.cover,
+                entry.position,
+                entry.duration,
+                entry.watched_at,
+                episode
+            ],
+        )?;
+        // la cronologia resta corta: le 200 voci più recenti per sorgente
+        self.conn.execute(
+            "DELETE FROM history WHERE source_id = ?1 AND rowid NOT IN (
+                SELECT rowid FROM history WHERE source_id = ?1 ORDER BY watched_at DESC LIMIT 200)",
+            [source_id],
+        )?;
+        Ok(())
+    }
+
+    /// Toglie una voce dalla cronologia (per esempio un film finito).
+    pub fn remove_history(
+        &self,
+        source_id: i64,
+        kind: ItemKind,
+        key: &str,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "DELETE FROM history WHERE source_id = ?1 AND kind = ?2 AND key = ?3",
+            params![source_id, kind.as_str(), key],
+        )?;
+        Ok(())
+    }
+
+    /// Cronologia della sorgente, le più recenti prima.
+    pub fn history(&self, source_id: i64, limit: u32) -> Result<Vec<HistoryEntry>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, key, title, subtitle, cover, position, duration, watched_at, episode
+             FROM history WHERE source_id = ?1 ORDER BY watched_at DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![source_id, limit], |r| {
+            let episode: Option<String> = r.get(8)?;
+            Ok(HistoryEntry {
+                kind: ItemKind::parse(&r.get::<_, String>(0)?),
+                key: r.get(1)?,
+                title: r.get(2)?,
+                subtitle: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                cover: r.get(4)?,
+                position: r.get(5)?,
+                duration: r.get(6)?,
+                watched_at: r.get(7)?,
+                episode: episode.as_deref().and_then(parse_episode_ref),
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     // ───────────── impostazioni ─────────────
 
-    /// Tutte le impostazioni salvate.
+    /// Tutte le impostazioni salvate (tranne quelle interne).
     pub fn settings(&self) -> Result<Vec<(String, String)>, StoreError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT key, value FROM settings ORDER BY key")?;
+            .prepare("SELECT key, value FROM settings WHERE key <> 'salt' ORDER BY key")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
@@ -489,6 +1078,179 @@ impl Store {
         )?;
         Ok(())
     }
+}
+
+const SCHEMA_V1: &str = "BEGIN;
+    CREATE TABLE sources(
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        location BLOB NOT NULL,
+        display TEXT NOT NULL,
+        user_agent TEXT,
+        epg_urls BLOB,
+        active INTEGER NOT NULL DEFAULT 0,
+        channel_count INTEGER NOT NULL DEFAULT 0,
+        refreshed_at INTEGER
+    );
+    CREATE TABLE channels(
+        id INTEGER PRIMARY KEY,
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        number INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        group_name TEXT NOT NULL,
+        tvg_id TEXT,
+        tvg_name TEXT,
+        logo TEXT,
+        url BLOB NOT NULL,
+        user_agent TEXT,
+        referrer TEXT,
+        radio INTEGER NOT NULL DEFAULT 0,
+        drm INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX channels_by_source ON channels(source_id, position);
+    CREATE VIRTUAL TABLE channels_fts USING fts5(
+        name, group_name,
+        content='channels', content_rowid='id',
+        tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    COMMIT;";
+
+/// Versione 2: Xtream (film, serie), chiavi stabili, preferiti, cronologia.
+const SCHEMA_V2: &str = "
+    ALTER TABLE sources ADD COLUMN movie_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sources ADD COLUMN series_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sources ADD COLUMN live_ext TEXT;
+    ALTER TABLE sources ADD COLUMN expires INTEGER;
+    ALTER TABLE channels ADD COLUMN stable_key TEXT NOT NULL DEFAULT '';
+    ALTER TABLE channels ADD COLUMN xtream_id INTEGER;
+    CREATE TABLE movies(
+        id INTEGER PRIMARY KEY,
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        xtream_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        group_name TEXT NOT NULL,
+        cover TEXT,
+        rating REAL,
+        year TEXT,
+        added INTEGER,
+        container TEXT
+    );
+    CREATE INDEX movies_by_source ON movies(source_id, position);
+    CREATE VIRTUAL TABLE movies_fts USING fts5(
+        name, group_name, content='movies', content_rowid='id',
+        tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TABLE series(
+        id INTEGER PRIMARY KEY,
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        xtream_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        group_name TEXT NOT NULL,
+        cover TEXT,
+        rating REAL,
+        year TEXT,
+        plot TEXT,
+        genre TEXT
+    );
+    CREATE INDEX series_by_source ON series(source_id, position);
+    CREATE VIRTUAL TABLE series_fts USING fts5(
+        name, group_name, content='series', content_rowid='id',
+        tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TABLE favorites(
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        key TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY(source_id, kind, key)
+    );
+    CREATE TABLE history(
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        subtitle TEXT,
+        cover TEXT,
+        position REAL NOT NULL DEFAULT 0,
+        duration REAL NOT NULL DEFAULT 0,
+        watched_at INTEGER NOT NULL,
+        episode TEXT,
+        PRIMARY KEY(source_id, kind, key)
+    );
+";
+
+fn insert_vod(
+    tx: &Transaction<'_>,
+    source_id: i64,
+    movies: &[MovieRow],
+    series: &[SeriesRow],
+) -> Result<(), StoreError> {
+    tx.execute("DELETE FROM movies WHERE source_id = ?1", [source_id])?;
+    tx.execute("DELETE FROM series WHERE source_id = ?1", [source_id])?;
+    let mut insert = tx.prepare(
+        "INSERT INTO movies(source_id, position, xtream_id, name, group_name, cover, rating, year,
+            added, container)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?;
+    for (position, m) in movies.iter().enumerate() {
+        insert.execute(params![
+            source_id,
+            u32::try_from(position).unwrap_or(u32::MAX),
+            m.xtream_id,
+            m.name,
+            m.group,
+            m.cover,
+            m.rating,
+            m.year,
+            m.added,
+            m.container
+        ])?;
+    }
+    let mut insert = tx.prepare(
+        "INSERT INTO series(source_id, position, xtream_id, name, group_name, cover, rating, year,
+            plot, genre)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?;
+    for (position, s) in series.iter().enumerate() {
+        insert.execute(params![
+            source_id,
+            u32::try_from(position).unwrap_or(u32::MAX),
+            s.xtream_id,
+            s.name,
+            s.group,
+            s.cover,
+            s.rating,
+            s.year,
+            s.plot,
+            s.genre
+        ])?;
+    }
+    Ok(())
+}
+
+fn rebuild_fts(tx: &Transaction<'_>) -> Result<(), StoreError> {
+    for table in ["channels_fts", "movies_fts", "series_fts"] {
+        tx.execute(
+            &format!("INSERT INTO {table}({table}) VALUES ('rebuild')"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn parse_episode_ref(text: &str) -> Option<EpisodeRef> {
+    let mut parts = text.splitn(4, '|');
+    Some(EpisodeRef {
+        id: parts.next()?.parse().ok()?,
+        season: parts.next()?.parse().ok()?,
+        number: parts.next()?.parse().ok()?,
+        container: parts.next()?.to_owned(),
+    })
 }
 
 /// Trasforma il testo cercato in un'espressione FTS5 sicura: parole come prefissi, in AND.
@@ -516,6 +1278,7 @@ mod tests {
                 name: name.into(),
                 kind: SourceKind::M3uUrl,
                 location: "http://prov.example/get.php?username=mario&password=segreta".into(),
+                username: None,
                 user_agent: None,
             })
             .unwrap()
@@ -550,7 +1313,29 @@ mod tests {
     }
 
     #[test]
-    fn channels_round_trip_with_encrypted_urls() {
+    fn xtream_source_keeps_server_and_user_encrypted() {
+        let mut store = store();
+        let id = store
+            .add_source(&NewSource {
+                name: "Casa".into(),
+                kind: SourceKind::Xtream,
+                location: "http://tv.example:8080".into(),
+                username: Some("mario".into()),
+                user_agent: None,
+            })
+            .unwrap();
+        let info = &store.sources().unwrap()[0];
+        assert_eq!(info.display, "http://tv.example:8080");
+        let back = store.source_location(id).unwrap();
+        assert_eq!(back.location, "http://tv.example:8080");
+        assert_eq!(back.username.as_deref(), Some("mario"));
+        store.set_account_info(id, "ts", Some(42)).unwrap();
+        assert_eq!(store.live_extension(id).unwrap(), "ts");
+        assert_eq!(store.sources().unwrap()[0].expires, Some(42));
+    }
+
+    #[test]
+    fn channels_round_trip_with_encrypted_urls_and_stable_keys() {
         let mut store = store();
         let id = source(&mut store, "Casa");
         let list = parse_str(LIST);
@@ -564,6 +1349,8 @@ mod tests {
         assert_eq!(rows.len(), 3);
         assert_eq!((rows[0].number, rows[1].number, rows[2].number), (7, 2, 3));
         assert_eq!(rows[2].group, "");
+        assert!(rows[0].key.starts_with('u') && rows[0].key != rows[1].key);
+        assert!(!rows[0].key.contains("live"));
         let stream = store.stream(rows[2].id).unwrap();
         assert_eq!(stream.url, "http://h/live/u/p/3.ts");
         assert_eq!(stream.user_agent.as_deref(), Some("UA"));
@@ -579,6 +1366,123 @@ mod tests {
             .unwrap();
         assert_eq!(leaked, 0);
         assert_eq!(store.sources().unwrap()[0].channel_count, 3);
+
+        // dopo un aggiornamento gli id possono cambiare (o essere riusati per altri canali):
+        // l'identità vera è la chiave, che resta la stessa
+        store
+            .replace_channels(id, &list.entries[1..], &[], 200)
+            .unwrap();
+        let again = store.channels(id).unwrap();
+        assert_eq!(again[0].key, rows[1].key);
+    }
+
+    #[test]
+    fn xtream_catalog_and_streams() {
+        let mut store = store();
+        let id = source(&mut store, "X");
+        let live = [ChannelInput {
+            key: "l5".into(),
+            number: 1,
+            name: "Uno".into(),
+            group: "News".into(),
+            xtream_id: Some(5),
+            ..ChannelInput::default()
+        }];
+        let movies = [MovieRow {
+            xtream_id: 77,
+            name: "Film à".into(),
+            group: "Azione".into(),
+            container: Some("mkv".into()),
+            ..MovieRow::default()
+        }];
+        let series = [SeriesRow {
+            xtream_id: 9,
+            name: "Serie".into(),
+            group: "Drama".into(),
+            ..SeriesRow::default()
+        }];
+        store
+            .replace_catalog(id, &live, Some((&movies, &series)), &[], 1)
+            .unwrap();
+        let channel = &store.channels(id).unwrap()[0];
+        assert_eq!(
+            store.channel_stream(channel.id).unwrap(),
+            ChannelStream::Xtream {
+                source_id: id,
+                xtream_id: 5
+            }
+        );
+        let movie = &store.movies(id).unwrap()[0];
+        assert_eq!(movie.key(), "m77");
+        assert_eq!(
+            store.movie_ref(movie.id).unwrap().1.container.as_deref(),
+            Some("mkv")
+        );
+        assert_eq!(store.search_movies(id, "film a", 10).unwrap(), [movie.id]);
+        let serie = &store.series(id).unwrap()[0];
+        assert_eq!(store.search_series(id, "drama", 10).unwrap(), [serie.id]);
+        let info = &store.sources().unwrap()[0];
+        assert_eq!((info.movie_count, info.series_count), (1, 1));
+    }
+
+    #[test]
+    fn favorites_and_history() {
+        let mut store = store();
+        let id = source(&mut store, "A");
+        store
+            .set_favorite(id, ItemKind::Live, "u1", true, 1)
+            .unwrap();
+        store
+            .set_favorite(id, ItemKind::Movie, "m2", true, 2)
+            .unwrap();
+        store
+            .set_favorite(id, ItemKind::Live, "u1", true, 3)
+            .unwrap();
+        assert_eq!(
+            store.favorites(id).unwrap(),
+            [
+                (ItemKind::Movie, "m2".to_owned()),
+                (ItemKind::Live, "u1".to_owned())
+            ]
+        );
+        store
+            .set_favorite(id, ItemKind::Live, "u1", false, 4)
+            .unwrap();
+        assert_eq!(store.favorites(id).unwrap().len(), 1);
+
+        let entry = HistoryEntry {
+            kind: Some(ItemKind::Series),
+            key: "s9".into(),
+            title: "Serie".into(),
+            subtitle: "S1 · E2".into(),
+            position: 120.5,
+            duration: 1500.0,
+            watched_at: 10,
+            episode: Some(EpisodeRef {
+                id: 33,
+                season: 1,
+                number: 2,
+                container: "mkv".into(),
+            }),
+            ..HistoryEntry::default()
+        };
+        store.save_history(id, &entry).unwrap();
+        store
+            .save_history(
+                id,
+                &HistoryEntry {
+                    position: 300.0,
+                    watched_at: 11,
+                    ..entry.clone()
+                },
+            )
+            .unwrap();
+        let history = store.history(id, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].position, 300.0);
+        assert_eq!(history[0].episode, entry.episode);
+        store.remove_history(id, ItemKind::Series, "s9").unwrap();
+        assert!(store.history(id, 10).unwrap().is_empty());
     }
 
     #[test]
@@ -605,26 +1509,71 @@ mod tests {
         let list = parse_str(LIST);
         store.replace_channels(a, &list.entries, &[], 1).unwrap();
         store
+            .set_favorite(a, ItemKind::Live, "u1", true, 1)
+            .unwrap();
+        store
             .replace_channels(a, &list.entries[..1], &[], 2)
             .unwrap();
         assert_eq!(store.channels(a).unwrap().len(), 1);
         store.delete_source(a).unwrap();
         assert!(store.channels(a).unwrap().is_empty());
+        assert!(store.favorites(a).unwrap().is_empty());
         assert_eq!(store.active_source().unwrap(), Some(b));
         assert!(store.search(b, "rai", 5).unwrap().is_empty());
         assert!(matches!(
             store.set_active_source(a),
             Err(StoreError::NotFound)
         ));
+        assert_eq!(
+            store.active_source().unwrap(),
+            Some(b),
+            "sorgente inesistente: niente cambia"
+        );
     }
 
     #[test]
-    fn settings_upsert() {
+    fn settings_upsert_and_salt_is_hidden() {
         let store = store();
         store.set_setting("lingua", "it").unwrap();
         store.set_setting("lingua", "en").unwrap();
         assert_eq!(store.setting("lingua").unwrap().as_deref(), Some("en"));
         assert_eq!(store.settings().unwrap().len(), 1);
+        assert!(store.setting("salt").unwrap().is_some());
+    }
+
+    #[test]
+    fn version_1_archives_are_migrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v1.db");
+        let cipher = Cipher::new(&[4; 32]);
+        {
+            // un archivio come lo scriveva M1
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.execute(
+                "INSERT INTO sources(id, name, kind, location, display, active, channel_count)
+                 VALUES (1, 'Vecchia', 'm3u-file', ?1, 'lista.m3u', 1, 1)",
+                [cipher.encrypt("C:/lista.m3u").unwrap()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO channels(source_id, position, number, name, group_name, url)
+                 VALUES (1, 0, 1, 'Uno', 'News', ?1)",
+                [cipher.encrypt("http://h/1.ts").unwrap()],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path, cipher).unwrap();
+        let rows = store.channels(1).unwrap();
+        assert_eq!(rows[0].key, store.m3u_key("http://h/1.ts"));
+        assert_eq!(store.sources().unwrap()[0].name, "Vecchia");
+        assert!(store.movies(1).unwrap().is_empty());
+        let version: i32 = store
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]

@@ -87,6 +87,8 @@ pub struct LoadOptions {
     pub user_agent: Option<String>,
     /// Referrer richiesto dal canale.
     pub referrer: Option<String>,
+    /// Secondo da cui partire (per riprendere un film o un episodio).
+    pub start_secs: Option<u32>,
 }
 
 impl fmt::Debug for LoadOptions {
@@ -168,6 +170,9 @@ fn load_options_string(options: &LoadOptions) -> String {
     }
     if let Some(referrer) = &options.referrer {
         parts.push(format!("referrer={}", quote_option(referrer)));
+    }
+    if let Some(start) = options.start_secs.filter(|s| *s > 0) {
+        parts.push(format!("start={start}"));
     }
     parts.join(",")
 }
@@ -500,6 +505,38 @@ impl Player {
         self.set_property("pausa", "pause", if paused { "yes" } else { "no" })
     }
 
+    /// In pausa adesso.
+    pub fn is_paused(&self) -> bool {
+        self.property("pause").as_deref() == Some("yes")
+    }
+
+    /// Posizione corrente in secondi (se c'è un flusso).
+    pub fn position(&self) -> Option<f64> {
+        self.property("time-pos")
+            .and_then(|p| p.parse().ok())
+            .filter(|p: &f64| p.is_finite())
+    }
+
+    /// Durata in secondi (assente per la TV in diretta).
+    pub fn duration(&self) -> Option<f64> {
+        self.property("duration")
+            .and_then(|p| p.parse().ok())
+            .filter(|d: &f64| d.is_finite() && *d > 0.0)
+    }
+
+    /// Salta avanti (positivo) o indietro (negativo) di `seconds`.
+    pub fn seek_relative(&self, seconds: f64) -> Result<(), PlayerError> {
+        self.command("salto", &["seek", &format!("{seconds:.1}"), "relative"])
+    }
+
+    /// Va al secondo `seconds` dall'inizio.
+    pub fn seek_absolute(&self, seconds: f64) -> Result<(), PlayerError> {
+        self.command(
+            "salto",
+            &["seek", &format!("{:.1}", seconds.max(0.0)), "absolute"],
+        )
+    }
+
     /// Imposta una proprietà di mpv (per esempio `video-aspect-override`).
     pub fn set_option(&self, name: &str, value: &str) -> Result<(), PlayerError> {
         self.set_property("impostazione", name, value)
@@ -671,10 +708,11 @@ mod tests {
         let options = LoadOptions {
             user_agent: Some("Mozilla/5.0 (a, b=c)".into()),
             referrer: Some("https://r.example/".into()),
+            start_secs: Some(90),
         };
         assert_eq!(
             load_options_string(&options),
-            "user-agent=%20%Mozilla/5.0 (a, b=c),referrer=%18%https://r.example/"
+            "user-agent=%20%Mozilla/5.0 (a, b=c),referrer=%18%https://r.example/,start=90"
         );
         assert_eq!(load_options_string(&LoadOptions::default()), "");
     }
@@ -683,7 +721,7 @@ mod tests {
     fn load_options_debug_hides_values() {
         let options = LoadOptions {
             user_agent: Some("segreto".into()),
-            referrer: None,
+            ..LoadOptions::default()
         };
         assert!(!format!("{options:?}").contains("segreto"));
     }
