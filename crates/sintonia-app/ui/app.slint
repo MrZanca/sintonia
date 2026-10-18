@@ -106,11 +106,14 @@ global Texts {
 // Rettangolo a super-ellisse: gli angoli sono curve continue (squircle), non archi di cerchio.
 // Le coordinate sono intere, in centesimi di pixel: convertendo un numero decimale in testo Slint
 // usa il separatore della lingua (in italiano la virgola) e il percorso non sarebbe più valido.
+// La curva occupa al massimo il 40% del lato corto: negli elementi piccoli (pulsanti, etichette)
+// il raggio si riduce da solo e tra i due angoli resta sempre un tratto dritto. Con il 50% gli
+// angoli si toccavano e le estremità risultavano deformate.
 component Sq inherits Path {
     in property <length> r: 20px;
     property <int> w: round(root.width / 1px * 100);
     property <int> h: round(root.height / 1px * 100);
-    property <int> p: round(min(root.r / 1px * 150, min(root.w, root.h) / 2));
+    property <int> p: round(min(root.r / 1px * 150, min(root.w, root.h) * 0.4));
     property <int> q: round(root.p / 4);
     viewbox-width: root.w;
     viewbox-height: root.h;
@@ -170,6 +173,7 @@ global Icons {
 component IconBtn inherits Rectangle {
     in property <string> icon;
     in property <length> size: 44px;
+    out property <bool> hovered: ta.has-hover;
     callback clicked;
     width: root.size;
     height: root.size;
@@ -187,6 +191,7 @@ component Btn inherits Rectangle {
     in property <bool> primary;
     in property <bool> danger;
     in property <bool> enabled: true;
+    out property <bool> hovered: ta.has-hover;
     callback clicked;
     height: 38px;
     horizontal-stretch: 0;
@@ -1373,6 +1378,29 @@ component PlayerScreen inherits Rectangle {
     property <bool> drawer: false;
     background: #000000;
 
+    // Le informazioni sul video spariscono dopo qualche secondo senza movimenti del mouse o tasti;
+    // restano finché il puntatore è sopra i pulsanti o l'elenco canali è aperto.
+    hide-timer := Timer {
+        interval: 3s;
+        running: false;
+        triggered => {
+            self.stop();
+            if (root.drawer || root.controls-hovered) {
+                self.start();
+            } else {
+                root.overlay = false;
+            }
+        }
+    }
+    function show-overlay() {
+        root.overlay = true;
+        // `restart()` funziona solo con il timer già avviato: stop + start lo riparte da zero
+        hide-timer.stop();
+        hide-timer.start();
+    }
+    property <bool> controls-hovered: back-btn.hovered || home-btn.hovered || pip-btn.hovered
+        || audio-btn.hovered || sub-btn.hovered || aspect-btn.hovered;
+
     function toggle-drawer() {
         root.drawer = !root.drawer;
         if (root.drawer) {
@@ -1383,16 +1411,19 @@ component PlayerScreen inherits Rectangle {
         root.cursor = max(0, min(root.channels.length - 1, root.cursor + delta));
         dl.ensure-visible();
     }
-    init => { fs.focus(); }
+    init => {
+        fs.focus();
+        root.show-overlay();
+    }
 
     fs := FocusScope {
         key-pressed(event) => {
             if (event.text == Key.UpArrow) {
-                if (root.drawer) { root.move(-1); } else { root.zap(-1); root.overlay = true; }
+                if (root.drawer) { root.move(-1); } else { root.zap(-1); root.show-overlay(); }
                 return accept;
             }
             if (event.text == Key.DownArrow) {
-                if (root.drawer) { root.move(1); } else { root.zap(1); root.overlay = true; }
+                if (root.drawer) { root.move(1); } else { root.zap(1); root.show-overlay(); }
                 return accept;
             }
             if (event.text == Key.Return) {
@@ -1412,7 +1443,7 @@ component PlayerScreen inherits Rectangle {
                 return accept;
             }
             if (event.text == " ") {
-                root.overlay = !root.overlay;
+                if (root.overlay) { root.overlay = false; } else { root.show-overlay(); }
                 return accept;
             }
             reject
@@ -1432,37 +1463,40 @@ component PlayerScreen inherits Rectangle {
     VideoView { }
     if Texts.status(Video.state, Video.attempt) != "": StatusPill { }
     TouchArea {
+        // senza informazioni a video sparisce anche il puntatore
+        mouse-cursor: root.overlay || root.drawer ? MouseCursor.default : MouseCursor.none;
         pointer-event(e) => {
+            if (e.kind == PointerEventKind.move) {
+                root.show-overlay();
+            }
             if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
                 root.toggle-drawer();
                 fs.focus();
             }
         }
         clicked => {
-            if (root.drawer) { root.drawer = false; } else { root.overlay = !root.overlay; }
+            if (root.drawer) {
+                root.drawer = false;
+            } else if (root.overlay) {
+                root.overlay = false;
+            } else {
+                root.show-overlay();
+            }
             fs.focus();
         }
         double-clicked => { root.toggle-fullscreen(); }
     }
 
-    // in alto a sinistra: indietro e home
+    // in alto a sinistra: indietro e home (non cliccabili quando sono nascosti)
     HorizontalLayout {
         x: 36px;
         y: 28px;
         spacing: 10px;
         opacity: root.overlay && !root.drawer ? 1 : 0;
-        animate opacity { duration: 200ms; }
-        IconBtn { icon: Icons.back; clicked => { root.back(); } }
-        IconBtn { icon: Icons.home; clicked => { root.home(); } }
-    }
-    Text {
-        x: 36px;
-        y: 88px;
-        text: @tr("Right-click the video: channel list  ·  P: mini player  ·  F: full screen");
-        color: #ffffff80;
-        font-size: 13px;
-        opacity: root.overlay && !root.drawer ? 1 : 0;
-        animate opacity { duration: 200ms; }
+        visible: self.opacity > 0.01;
+        animate opacity { duration: 250ms; }
+        back-btn := IconBtn { icon: Icons.back; clicked => { root.back(); } }
+        home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
     }
 
     // barra in basso
@@ -1470,7 +1504,8 @@ component PlayerScreen inherits Rectangle {
         y: parent.height - self.height;
         height: 190px;
         opacity: root.overlay ? 1 : 0;
-        animate opacity { duration: 200ms; }
+        visible: self.opacity > 0.01;
+        animate opacity { duration: 250ms; }
         background: @linear-gradient(180deg, #00000000 0%, #000000d0 100%);
         HorizontalLayout {
             padding: 40px;
@@ -1511,22 +1546,22 @@ component PlayerScreen inherits Rectangle {
                 alignment: end;
                 HorizontalLayout {
                     spacing: 10px;
-                    IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
-                    Btn {
+                    pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
+                    audio-btn := Btn {
                         label: @tr("Audio");
                         clicked => {
                             root.load-tracks();
                             audio-popup.show();
                         }
                     }
-                    Btn {
+                    sub-btn := Btn {
                         label: @tr("Subtitles");
                         clicked => {
                             root.load-tracks();
                             sub-popup.show();
                         }
                     }
-                    Btn {
+                    aspect-btn := Btn {
                         label: root.aspect == 1 ? "16:9" : (root.aspect == 2 ? "4:3" : (root.aspect == 3 ? @tr("Fill") : @tr("Auto")));
                         clicked => { root.cycle-aspect(); }
                     }
@@ -1657,34 +1692,51 @@ export component PipWindow inherits Window {
     callback expand();
     callback dismiss();
     callback moved(length, length);
+    // ridimensionamento con una maniglia d'angolo: 0 alto-sinistra, 1 alto-destra,
+    // 2 basso-sinistra, 3 basso-destra; Rust mantiene le proporzioni 16:9
+    callback resize(int, length, length);
+    // rotellina: positivo ingrandisce
+    callback resize-step(float);
     title: "Sintonia mini player";
     no-frame: true;
     always-on-top: true;
     background: transparent;
     preferred-width: 360px;
     preferred-height: 203px;
-    min-width: 360px;
-    max-width: 360px;
-    min-height: 203px;
-    max-height: 203px;
+    min-width: 240px;
+    min-height: 135px;
     default-font-family: "Bahnschrift";
+
+    // comandi visibili solo con il mouse sopra il mini player
+    property <bool> controls: area.has-hover || expand-btn.hovered || close-btn.hovered
+        || h0.has-hover || h1.has-hover || h2.has-hover || h3.has-hover;
 
     Sq { r: 24px; fill: @linear-gradient(145deg, root.tint.darker(0.2) 0%, #090a10 90%); }
     Sq { r: 24px; fill: @radial-gradient(circle, #ffffff1a 0%, transparent 70%); }
     if !Video.ready && Texts.status(Video.state, Video.attempt) == "": Text {
         text: root.name;
         color: #ffffff22;
-        font-size: 40px;
+        font-size: min(40px, root.width / 9);
         font-weight: 800;
     }
     VideoView { r: 24px; }
-    Sq { r: 24px; fill: @linear-gradient(180deg, #00000000 50%, #000000b0 100%); }
+    Sq {
+        r: 24px;
+        fill: @linear-gradient(180deg, #00000000 50%, #000000b0 100%);
+        opacity: root.controls ? 1 : 0;
+        animate opacity { duration: 200ms; }
+    }
     if Texts.status(Video.state, Video.attempt) != "": StatusPill { small: true; }
-    TouchArea {
+    area := TouchArea {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.move && self.pressed) {
                 root.moved(self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
             }
+        }
+        double-clicked => { root.expand(); }
+        scroll-event(e) => {
+            root.resize-step(e.delta-y / 1px);
+            accept
         }
     }
     Rectangle {
@@ -1692,6 +1744,8 @@ export component PipWindow inherits Window {
         y: 14px;
         height: 26px;
         width: min(pl.preferred-width + 32px, root.width - 120px);
+        opacity: root.controls ? 1 : 0;
+        animate opacity { duration: 200ms; }
         Sq { r: 13px; fill: #000000a0; }
         Rectangle {
             x: 11px;
@@ -1716,8 +1770,45 @@ export component PipWindow inherits Window {
         width: 80px;
         spacing: 6px;
         alignment: end;
-        IconBtn { icon: Icons.expand; size: 34px; clicked => { root.expand(); } }
-        IconBtn { icon: Icons.close; size: 34px; clicked => { root.dismiss(); } }
+        opacity: root.controls ? 1 : 0;
+        visible: self.opacity > 0.01;
+        animate opacity { duration: 200ms; }
+        expand-btn := IconBtn { icon: Icons.expand; size: 34px; clicked => { root.expand(); } }
+        close-btn := IconBtn { icon: Icons.close; size: 34px; clicked => { root.dismiss(); } }
+    }
+
+    // maniglie d'angolo (invisibili, con il cursore di ridimensionamento)
+    h0 := TouchArea {
+        x: 0px;
+        y: 0px;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: MouseCursor.nw-resize;
+        moved => { root.resize(0, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+    }
+    h1 := TouchArea {
+        x: root.width - 16px;
+        y: 0px;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: MouseCursor.ne-resize;
+        moved => { root.resize(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+    }
+    h2 := TouchArea {
+        x: 0px;
+        y: root.height - 16px;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: MouseCursor.sw-resize;
+        moved => { root.resize(2, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+    }
+    h3 := TouchArea {
+        x: root.width - 16px;
+        y: root.height - 16px;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: MouseCursor.se-resize;
+        moved => { root.resize(3, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
     }
 }
 

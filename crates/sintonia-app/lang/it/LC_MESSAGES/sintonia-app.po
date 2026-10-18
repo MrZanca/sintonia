@@ -178,9 +178,6 @@ msgstr "Aggiorna"
 msgid "Results for “{}”: {}"
 msgstr "Risultati per «{}»: {}"
 
-msgid "Right-click the video: channel list  ·  P: mini player  ·  F: full screen"
-msgstr "Clic destro sul video: elenco canali  ·  P: mini player  ·  F: schermo intero"
-
 msgid "Save"
 msgstr "Salva"
 

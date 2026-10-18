@@ -30,6 +30,7 @@ use sintonia_core::db::StreamInfo;
 use sintonia_player::{Backoff, EndReason, LoadOptions, Player, PlayerEvent, RenderContext};
 use slint::{ComponentHandle, GraphicsAPI, RenderingState};
 
+use crate::awake::KeepAwake;
 use crate::{MainWindow, PipWindow, Video};
 
 /// Le finestre che possono mostrare il video.
@@ -106,6 +107,8 @@ pub struct VideoRouter {
     reconnect: Cell<bool>,
     backoff: RefCell<Backoff>,
     retry_timer: slint::Timer,
+    /// Schermo sempre acceso mentre c'è qualcosa in riproduzione.
+    keep_awake: KeepAwake,
 }
 
 impl std::fmt::Debug for VideoRouter {
@@ -133,6 +136,7 @@ impl VideoRouter {
             reconnect: Cell::new(true),
             backoff: RefCell::new(Backoff::default()),
             retry_timer: slint::Timer::default(),
+            keep_awake: KeepAwake::default(),
         });
         ROUTER.with(|r| *r.borrow_mut() = Rc::downgrade(&router));
         router
@@ -293,6 +297,9 @@ impl VideoRouter {
 
     /// Imposta `Video.state` in tutte e due le finestre.
     fn set_state(&self, value: i32) {
+        // fermo o in errore lo schermo può spegnersi; negli altri stati si sta guardando
+        self.keep_awake
+            .set(!matches!(value, state::IDLE | state::ERROR));
         if let Some(main) = self.main.upgrade() {
             main.global::<Video>().set_state(value);
         }
@@ -595,10 +602,10 @@ impl WindowVideo {
 }
 
 /// Raggio della super-ellisse in pixel fisici, con lo stesso limite del componente `Sq`:
-/// `p = min(1.5 r, min(w, h) / 2)`.
+/// `p = min(1.5 r, 0.4 min(w, h))`.
 fn mask_corner(radius_px: f32, width: i32, height: i32) -> f32 {
-    let half = width.min(height) as f32 / 2.0;
-    (radius_px * 1.5).min(half).max(0.0)
+    let limit = width.min(height) as f32 * 0.4;
+    (radius_px * 1.5).min(limit).max(0.0)
 }
 
 /// Errori OpenGL (testo di glow o del driver).
@@ -1044,9 +1051,9 @@ mod tests {
 
     #[test]
     fn corner_matches_sq_component() {
-        // Sq: p = min(r * 1.5, min(w, h) / 2)
+        // Sq: p = min(r * 1.5, min(w, h) * 0.4)
         assert_eq!(mask_corner(22.0, 466, 262), 33.0);
-        assert_eq!(mask_corner(100.0, 120, 80), 40.0);
+        assert_eq!(mask_corner(100.0, 120, 80), 32.0);
         assert_eq!(mask_corner(0.0, 100, 100), 0.0);
     }
 

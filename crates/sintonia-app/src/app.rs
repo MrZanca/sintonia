@@ -23,6 +23,24 @@ const PREVIEW_DELAY: Duration = Duration::from_millis(700);
 const SEARCH_DELAY: Duration = Duration::from_millis(150);
 /// Categorie mostrate nella Home.
 const HOME_CATEGORIES: usize = 5;
+/// Mini player: larghezza iniziale, minima e massima (pixel logici) e proporzioni.
+const PIP_WIDTH: f32 = 360.0;
+const PIP_MIN_WIDTH: f32 = 240.0;
+const PIP_MAX_WIDTH: f32 = 1600.0;
+const PIP_RATIO: f32 = 9.0 / 16.0;
+/// Margine del mini player dal bordo della finestra principale, all'apertura.
+const PIP_MARGIN: f32 = 40.0;
+/// Spostamento di uno scatto della rotellina, come lo riporta Slint (pixel logici).
+const WHEEL_NOTCH: f32 = 60.0;
+
+/// Punto che resta fermo quando il mini player cambia dimensione.
+#[derive(Debug, Clone, Copy)]
+enum PipAnchor {
+    /// L'angolo opposto a quello trascinato (`left`/`top`: lato dell'angolo trascinato).
+    Corner { left: bool, top: bool },
+    /// Il centro (rotellina del mouse).
+    Center,
+}
 
 thread_local! {
     static APP: RefCell<Weak<App>> = const { RefCell::new(Weak::new()) };
@@ -63,6 +81,8 @@ pub struct App {
     aspect: Cell<i32>,
     /// Lo schermo intero l'ha acceso l'apertura del player (e la chiusura lo spegne).
     auto_fullscreen: Cell<bool>,
+    /// Salva la dimensione del mini player poco dopo l'ultimo ridimensionamento.
+    pip_save_timer: slint::Timer,
 }
 
 impl std::fmt::Debug for App {
@@ -110,6 +130,7 @@ impl App {
             clock_timer: slint::Timer::default(),
             aspect: Cell::new(0),
             auto_fullscreen: Cell::new(false),
+            pip_save_timer: slint::Timer::default(),
         });
         APP.with(|a| *a.borrow_mut() = Rc::downgrade(&app));
         app.apply_language(language);
@@ -487,6 +508,24 @@ impl App {
                 }
             });
         }
+        pip.on_resize(with_app!(|app, corner: i32, dx: f32, dy: f32| {
+            let (left, top) = (corner == 0 || corner == 2, corner == 0 || corner == 1);
+            // la larghezza segue il movimento più ampio, l'altezza resta in proporzione
+            let from_x = if left { -dx } else { dx };
+            let from_y = (if top { -dy } else { dy }) / PIP_RATIO;
+            let delta = if from_x.abs() >= from_y.abs() {
+                from_x
+            } else {
+                from_y
+            };
+            app.resize_pip(|w| w + delta, PipAnchor::Corner { left, top });
+        }));
+        pip.on_resize_step(with_app!(|app, delta: f32| {
+            // +10% per scatto della rotellina (uno scatto vale 60 px); più scatti possono
+            // arrivare in un solo evento
+            let factor = 1.1f32.powf(delta / WHEEL_NOTCH).clamp(0.5, 2.0);
+            app.resize_pip(|w| w * factor, PipAnchor::Center);
+        }));
         // «chiudi»: chiude il mini player e ferma la riproduzione
         pip.on_dismiss(on(|app| {
             app.router.stop();
@@ -577,17 +616,67 @@ impl App {
             .or(self.current.get());
         let Some(id) = id else { return };
         self.play_channel(id);
+        let width = self
+            .settings
+            .borrow()
+            .pip_width
+            .unwrap_or(PIP_WIDTH)
+            .clamp(PIP_MIN_WIDTH, PIP_MAX_WIDTH);
+        pip.window()
+            .set_size(slint::LogicalSize::new(width, width * PIP_RATIO));
         if let Err(err) = pip.show() {
             log::error!("apertura del mini player: {err}");
             return;
         }
+        // in basso a destra della finestra principale
         let (pos, size) = (main.window().position(), main.window().size());
         let scale = pip.window().scale_factor();
+        let margin = PIP_MARGIN * scale;
         pip.window().set_position(PhysicalPosition::new(
-            pos.x + size.width as i32 - (400.0 * scale) as i32,
-            pos.y + size.height as i32 - (260.0 * scale) as i32,
+            pos.x + size.width as i32 - ((width + PIP_MARGIN) * scale) as i32,
+            pos.y + size.height as i32 - (width * PIP_RATIO * scale + margin) as i32,
         ));
         self.router.move_to_pip();
+    }
+
+    /// Cambia la larghezza del mini player (l'altezza segue in 16:9) tenendo fermo `anchor`.
+    fn resize_pip(self: &Rc<Self>, new_width: impl FnOnce(f32) -> f32, anchor: PipAnchor) {
+        let Some(pip) = self.pip.upgrade() else {
+            return;
+        };
+        let window = pip.window();
+        let scale = window.scale_factor();
+        let size = window.size().to_logical(scale);
+        let width = new_width(size.width).clamp(PIP_MIN_WIDTH, PIP_MAX_WIDTH);
+        let height = width * PIP_RATIO;
+        let (dw, dh) = (width - size.width, height - size.height);
+        if dw.abs() < 0.5 {
+            return;
+        }
+        let pos = window.position();
+        window.set_size(slint::LogicalSize::new(width, height));
+        let (shift_x, shift_y) = match anchor {
+            PipAnchor::Corner { left, top } => {
+                (if left { dw } else { 0.0 }, if top { dh } else { 0.0 })
+            }
+            PipAnchor::Center => (dw / 2.0, dh / 2.0),
+        };
+        if shift_x != 0.0 || shift_y != 0.0 {
+            window.set_position(PhysicalPosition::new(
+                pos.x - (shift_x * scale).round() as i32,
+                pos.y - (shift_y * scale).round() as i32,
+            ));
+        }
+        let weak = Rc::downgrade(self);
+        self.pip_save_timer.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_millis(600),
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    app.save_setting("pip_width", &format!("{width:.0}"));
+                }
+            },
+        );
     }
 
     fn on_playing_changed(&self, playing: bool) {

@@ -49,7 +49,7 @@ impl Language {
 }
 
 /// Le impostazioni in memoria.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub language: Language,
     pub reconnect: bool,
@@ -58,6 +58,8 @@ pub struct Settings {
     pub user_agent: Option<String>,
     /// Nome dell'ultimo canale visto (gli identificativi cambiano a ogni aggiornamento).
     pub last_channel: Option<String>,
+    /// Larghezza del mini player (pixel logici).
+    pub pip_width: Option<f32>,
 }
 
 impl Settings {
@@ -68,6 +70,7 @@ impl Settings {
             fullscreen_start: false,
             user_agent: None,
             last_channel: None,
+            pip_width: None,
         }
     }
 
@@ -97,6 +100,7 @@ impl Settings {
                     .map(str::to_owned);
             }
             "last_channel" => self.last_channel = Some(value.to_owned()),
+            "pip_width" => self.pip_width = value.parse().ok().filter(|w: &f32| w.is_finite()),
             _ => {}
         }
     }
