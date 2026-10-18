@@ -1,0 +1,513 @@
+// Sintonia: Film e serie (account Xtream Codes).
+// Le immagini delle locandine arrivano da Rust già ritagliate a super-ellisse (angoli trasparenti),
+// perché Slint non ritaglia un'immagine con un percorso.
+
+import { PosterItem, CategoryItem, EpisodeItem, DetailInfo, Theme, Texts, Sq, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, EmptyState, CategoryList } from "common.slint";
+
+// Barra di avanzamento sottile
+component Bar inherits Rectangle {
+    in property <float> value;
+    in property <color> tint: Theme.ink;
+    height: 4px;
+    Sq { r: 2px; fill: #ffffff2a; }
+    Sq {
+        x: 0px;
+        width: max(4px, parent.width * min(1.0, max(0.0, root.value)));
+        height: parent.height;
+        r: 2px;
+        fill: root.tint;
+    }
+}
+
+// Una locandina con titolo e anno sotto
+component PosterCard inherits Rectangle {
+    in property <PosterItem> p;
+    in property <bool> active;
+    in property <length> poster-h;
+    callback clicked;
+    Rectangle {
+        y: 0px;
+        height: root.poster-h;
+        Sq { r: 18px; fill: root.p.tint.darker(0.3); }
+        if !root.p.has-cover: Text {
+            x: 14px;
+            y: 14px;
+            width: parent.width - 28px;
+            text: root.p.title;
+            color: #ffffffd0;
+            font-size: 17px;
+            font-weight: 800;
+            wrap: word-wrap;
+        }
+        if root.p.has-cover: Image {
+            width: 100%;
+            height: 100%;
+            source: root.p.cover;
+            image-fit: fill;
+        }
+        Sq { r: 18px; fill: @linear-gradient(180deg, #00000000 60%, #000000a0 100%); }
+        if root.p.rating != "": Rectangle {
+            x: 10px;
+            y: parent.height - self.height - 12px;
+            width: rt.preferred-width + 18px;
+            height: 22px;
+            Sq { r: 11px; fill: #000000a8; }
+            rt := Text {
+                text: "★ " + root.p.rating;
+                color: Theme.ink;
+                font-size: 11px;
+                font-weight: 600;
+            }
+        }
+        if root.p.fav: Text {
+            x: parent.width - 26px;
+            y: 10px;
+            text: "★";
+            color: Theme.needle;
+            font-size: 16px;
+        }
+        if root.p.progress > 0: Bar {
+            x: 12px;
+            y: parent.height - 7px;
+            width: parent.width - 24px;
+            value: root.p.progress;
+            tint: Theme.needle;
+        }
+        Ring { r: 18px; on: root.active || ta.has-hover; }
+        ta := TouchArea { clicked => { root.clicked(); } }
+    }
+    Text {
+        y: root.poster-h + 8px;
+        width: parent.width;
+        text: root.p.title;
+        color: Theme.ink;
+        font-size: 13px;
+        font-weight: 600;
+        overflow: elide;
+    }
+    Text {
+        y: root.poster-h + 26px;
+        width: parent.width;
+        text: root.p.meta;
+        color: Theme.dim;
+        font-size: 11px;
+        overflow: elide;
+    }
+}
+
+// Griglia virtualizzata: disegna solo le righe visibili (regge decine di migliaia di titoli)
+export component PosterGrid inherits Rectangle {
+    in property <[PosterItem]> model;
+    in-out property <int> cursor;
+    callback open(int);
+    property <length> pw: 150px;
+    property <length> ph: 225px;
+    property <length> gap: 18px;
+    property <length> cell-h: root.ph + 52px;
+    out property <int> cols: max(1, floor((root.width + root.gap) / (root.pw + root.gap)));
+    property <int> count: root.model.length;
+    clip: true;
+
+    public function ensure-visible() {
+        let top = floor(root.cursor / root.cols) * root.cell-h;
+        if (top + fl.content-y < 0px) {
+            fl.content-y = -top;
+        } else if (top + root.cell-h + fl.content-y > fl.height) {
+            fl.content-y = fl.height - top - root.cell-h;
+        }
+    }
+    public function to-top() {
+        fl.content-y = 0px;
+    }
+
+    fl := Flickable {
+        content-height: ceil(root.count / root.cols) * root.cell-h;
+        property <int> first-row: max(0, floor(-self.content-y / root.cell-h));
+        property <int> shown: (ceil(self.height / root.cell-h) + 1) * root.cols;
+        for i in fl.shown: PosterCard {
+            property <int> grid-row: fl.first-row + floor(i / root.cols);
+            property <int> index: self.grid-row * root.cols + Math.mod(i, root.cols);
+            visible: self.index < root.count;
+            x: Math.mod(i, root.cols) * (root.pw + root.gap);
+            y: self.grid-row * root.cell-h;
+            width: root.pw;
+            height: root.cell-h;
+            poster-h: root.ph;
+            p: root.model[self.index];
+            active: self.index == root.cursor;
+            clicked => {
+                root.cursor = self.index;
+                root.open(self.index);
+            }
+        }
+    }
+}
+
+// Copertina grande della scheda
+component Cover inherits Rectangle {
+    in property <DetailInfo> d;
+    width: 260px;
+    height: 390px;
+    Sq { r: 24px; fill: root.d.tint.darker(0.3); }
+    if !root.d.has-cover: Text {
+        x: 20px;
+        y: 20px;
+        width: parent.width - 40px;
+        text: root.d.title;
+        color: #ffffffd0;
+        font-size: 24px;
+        font-weight: 800;
+        wrap: word-wrap;
+    }
+    if root.d.has-cover: Image {
+        width: 100%;
+        height: 100%;
+        source: root.d.cover;
+        image-fit: fill;
+    }
+}
+
+component EpisodeRow inherits Rectangle {
+    in property <EpisodeItem> e;
+    in property <bool> active;
+    callback clicked;
+    height: 58px;
+    Sq {
+        width: 100%;
+        height: 100%;
+        r: 18px;
+        fill: root.active ? #ffffff26 : (ta.has-hover ? #ffffff10 : Theme.glass);
+        stroke: root.active ? Theme.ink : transparent;
+        stroke-width: 2px;
+    }
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        padding-left: 18px;
+        padding-right: 18px;
+        spacing: 16px;
+        Text {
+            text: root.e.number;
+            width: 34px;
+            color: root.e.current ? Theme.needle : Theme.faint;
+            font-size: 22px;
+            font-weight: 300;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.e.title;
+                color: Theme.ink;
+                font-size: 15px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            // la barra ha una larghezza fissa: in un suo contenitore, così il titolo resta largo
+            if root.e.progress > 0: HorizontalLayout {
+                alignment: start;
+                Bar {
+                    width: 160px;
+                    value: root.e.progress;
+                    tint: Theme.needle;
+                }
+            }
+        }
+        Text {
+            text: root.e.duration;
+            color: Theme.dim;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Elenco degli episodi di una stagione (poche decine: un `for` basta)
+component EpisodeList inherits Rectangle {
+    in property <[EpisodeItem]> model;
+    in-out property <int> cursor;
+    callback play(int);
+    property <length> row-h: 64px;
+    clip: true;
+    public function ensure-visible() {
+        if (root.cursor * root.row-h + fl.content-y < 0px) {
+            fl.content-y = -root.cursor * root.row-h;
+        } else if ((root.cursor + 1) * root.row-h + fl.content-y > fl.height) {
+            fl.content-y = fl.height - (root.cursor + 1) * root.row-h;
+        }
+    }
+    fl := Flickable {
+        content-height: root.model.length * root.row-h;
+        for e[i] in root.model: EpisodeRow {
+            x: 0px;
+            y: i * root.row-h;
+            width: fl.width;
+            e: e;
+            active: i == root.cursor;
+            clicked => {
+                root.cursor = i;
+                root.play(i);
+            }
+        }
+    }
+}
+
+// Scheda di un film o di una serie
+export component DetailScreen inherits Rectangle {
+    in property <bool> series;
+    in property <DetailInfo> d;
+    in property <[string]> seasons;
+    in-out property <int> season;
+    in property <[EpisodeItem]> episodes;
+    in-out property <int> cursor;
+    callback back();
+    callback play(bool);
+    callback resume-series();
+    callback play-episode(int);
+    callback toggle-fav();
+    callback pick-season(int);
+
+    function move(delta: int) {
+        if (root.episodes.length == 0) { return; }
+        root.cursor = max(0, min(root.episodes.length - 1, root.cursor + delta));
+        ep-list.ensure-visible();
+    }
+    init => { fs.focus(); }
+
+    fs := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape || event.text == Key.Backspace) { root.back(); return accept; }
+            if (root.series && event.text == Key.UpArrow) { root.move(-1); return accept; }
+            if (root.series && event.text == Key.DownArrow) { root.move(1); return accept; }
+            if (event.text == Key.Return) {
+                if (root.series) { root.play-episode(root.cursor); } else { root.play(false); }
+                return accept;
+            }
+            reject
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 44px;
+        padding-right: 44px;
+        padding-top: 8px;
+        padding-bottom: 12px;
+        spacing: 36px;
+        VerticalLayout {
+            alignment: start;
+            spacing: 16px;
+            HorizontalLayout {
+                alignment: start;
+                IconBtn { icon: Icons.back; size: 40px; clicked => { root.back(); } }
+            }
+            Cover { d: root.d; }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            spacing: 10px;
+            Rectangle { height: 52px; }
+            Text {
+                text: root.d.title;
+                color: Theme.ink;
+                font-size: 34px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.d.meta;
+                color: Theme.dim;
+                font-size: 14px;
+            }
+            if root.d.loading: Text {
+                text: @tr("Loading…");
+                color: Theme.faint;
+                font-size: 14px;
+            }
+            if root.d.plot != "": Text {
+                text: root.d.plot;
+                color: Theme.ink;
+                font-size: 15px;
+                wrap: word-wrap;
+                max-height: 120px;
+                overflow: elide;
+            }
+            if root.d.credits != "": Text {
+                text: root.d.credits;
+                color: Theme.faint;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Rectangle { height: 6px; }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                if !root.series && root.d.resume-secs > 0: Btn {
+                    label: @tr("Resume from {}", Texts.clock(root.d.resume-secs));
+                    primary: true;
+                    clicked => { root.play(false); }
+                }
+                if !root.series && root.d.resume-secs > 0: Btn {
+                    label: @tr("From the start");
+                    clicked => { root.play(true); }
+                }
+                if !root.series && root.d.resume-secs == 0: Btn {
+                    label: @tr("Watch");
+                    primary: true;
+                    clicked => { root.play(false); }
+                }
+                if root.series && root.d.resume-label != "": Btn {
+                    label: @tr("Resume {}", root.d.resume-label);
+                    primary: true;
+                    clicked => { root.resume-series(); }
+                }
+                Btn {
+                    label: root.d.fav ? "★ " + @tr("In favorites") : "☆ " + @tr("Add to favorites");
+                    clicked => { root.toggle-fav(); }
+                }
+            }
+            if root.series: Rectangle { height: 8px; }
+            if root.series && root.seasons.length > 1: Tabs {
+                options: root.seasons;
+                current: root.season;
+                clicked(i) => { root.pick-season(i); }
+            }
+            ep-list := EpisodeList {
+                visible: root.series;
+                vertical-stretch: 1;
+                // tutta l'altezza che serve (lo spazio libero lo limita: poi si scorre)
+                min-height: root.series ? 200px : 0px;
+                preferred-height: root.series ? root.episodes.length * 64px : 0px;
+                model: root.episodes;
+                cursor <=> root.cursor;
+                play(i) => { root.play-episode(i); }
+            }
+        }
+    }
+}
+
+// La pagina Film e serie
+export component MediaScreen inherits Rectangle {
+    // 0 film, 1 serie
+    in property <int> mode;
+    in property <[PosterItem]> items;
+    in property <[CategoryItem]> categories;
+    in property <int> category;
+    in property <string> search;
+    in property <bool> available;
+    in-out property <int> cursor;
+    // scheda aperta: 0 nessuna, 1 film, 2 serie
+    in property <int> detail;
+    in property <DetailInfo> info;
+    in property <[string]> seasons;
+    in-out property <int> season;
+    in property <[EpisodeItem]> episodes;
+    in-out property <int> episode-cursor;
+    in property <int> focus-tick;
+    callback pick-mode(int);
+    callback pick-category(int);
+    callback open(int);
+    callback back();
+    callback play(bool);
+    callback resume-series();
+    callback play-episode(int);
+    callback toggle-fav();
+    callback pick-season(int);
+    callback add-source();
+
+    function move(delta: int) {
+        if (root.items.length == 0) { return; }
+        root.cursor = max(0, min(root.items.length - 1, root.cursor + delta));
+        grid.ensure-visible();
+    }
+    init => { fs.focus(); }
+    changed focus-tick => { fs.focus(); }
+    changed category => { grid.to-top(); }
+    changed mode => { grid.to-top(); }
+    changed detail => {
+        if (root.detail == 0) { fs.focus(); }
+    }
+
+    if !root.available: EmptyState {
+        icon: Icons.film;
+        title: @tr("Movies & series");
+        body: @tr("Movies and series come with an Xtream Codes account: add it in Settings.");
+        action: @tr("Add an account");
+        act => { root.add-source(); }
+    }
+    fs := FocusScope {
+        enabled: root.available && root.detail == 0;
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow) { root.move(-1); return accept; }
+            if (event.text == Key.RightArrow) { root.move(1); return accept; }
+            if (event.text == Key.UpArrow) { root.move(-grid.cols); return accept; }
+            if (event.text == Key.DownArrow) { root.move(grid.cols); return accept; }
+            if (event.text == Key.Return && root.items.length > 0) { root.open(root.cursor); return accept; }
+            reject
+        }
+        HorizontalLayout {
+            visible: root.available && root.detail == 0;
+            padding-left: 44px;
+            padding-right: 44px;
+            padding-top: 8px;
+            spacing: 24px;
+            VerticalLayout {
+                width: 230px;
+                spacing: 10px;
+                Tabs {
+                    options: [@tr("Movies"), @tr("Series")];
+                    current: root.mode;
+                    clicked(i) => { root.pick-mode(i); }
+                }
+                CategoryList {
+                    vertical-stretch: 1;
+                    model: root.categories;
+                    current: root.category;
+                    searching: root.search != "";
+                    picked(i) => {
+                        root.pick-category(i);
+                        fs.focus();
+                    }
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 10px;
+                Title {
+                    text: root.search != ""
+                        ? @tr("Results for “{}”: {}", root.search, root.items.length)
+                        : (root.mode == 0 ? @tr("{n} movie" | "{n} movies" % root.items.length)
+                            : @tr("{n} series" | "{n} series" % root.items.length));
+                }
+                grid := PosterGrid {
+                    vertical-stretch: 1;
+                    model: root.items;
+                    cursor <=> root.cursor;
+                    open(i) => {
+                        fs.focus();
+                        root.open(i);
+                    }
+                }
+            }
+        }
+    }
+    if root.available && root.detail != 0: DetailScreen {
+        series: root.detail == 2;
+        d: root.info;
+        seasons: root.seasons;
+        season <=> root.season;
+        episodes: root.episodes;
+        cursor <=> root.episode-cursor;
+        back => { root.back(); }
+        play(from-start) => { root.play(from-start); }
+        resume-series => { root.resume-series(); }
+        play-episode(i) => { root.play-episode(i); }
+        toggle-fav => { root.toggle-fav(); }
+        pick-season(i) => { root.pick-season(i); }
+    }
+}

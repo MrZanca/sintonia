@@ -54,9 +54,11 @@ pub struct Settings {
     pub language: Language,
     pub reconnect: bool,
     pub fullscreen_start: bool,
+    /// Nell'elenco Live il canale evidenziato si apre da solo dopo un attimo.
+    pub live_preview: bool,
     /// User-agent generale (vuoto = quello di Sintonia).
     pub user_agent: Option<String>,
-    /// Nome dell'ultimo canale visto (gli identificativi cambiano a ogni aggiornamento).
+    /// Chiave stabile dell'ultimo canale visto.
     pub last_channel: Option<String>,
     /// Larghezza del mini player (pixel logici).
     pub pip_width: Option<f32>,
@@ -68,6 +70,7 @@ impl Settings {
             language,
             reconnect: true,
             fullscreen_start: false,
+            live_preview: true,
             user_agent: None,
             last_channel: None,
             pip_width: None,
@@ -94,6 +97,7 @@ impl Settings {
             }
             "reconnect" => self.reconnect = flag,
             "fullscreen_start" => self.fullscreen_start = flag,
+            "live_preview" => self.live_preview = flag,
             "user_agent" => {
                 self.user_agent = Some(value.trim())
                     .filter(|v| !v.is_empty())
@@ -115,12 +119,14 @@ mod tests {
         let pairs = [
             ("language".to_owned(), "en".to_owned()),
             ("reconnect".to_owned(), "0".to_owned()),
+            ("live_preview".to_owned(), "0".to_owned()),
             ("user_agent".to_owned(), "  ".to_owned()),
             ("sconosciuta".to_owned(), "x".to_owned()),
         ];
         let s = Settings::from_pairs(&pairs, Language::Italian);
         assert_eq!(s.language, Language::English);
         assert!(!s.reconnect);
+        assert!(!s.live_preview);
         assert_eq!(s.user_agent, None);
     }
 

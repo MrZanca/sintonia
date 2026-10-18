@@ -1,0 +1,525 @@
+// Sintonia: parti comuni dell'interfaccia (dati, colori, testi, mattoncini).
+// Le stringhe sono in inglese con @tr(); le traduzioni stanno in lang/<lingua>/LC_MESSAGES/sintonia-app.po.
+
+// ───────────── Dati ─────────────
+
+export struct ChannelItem {
+    id: int,
+    num: string,
+    name: string,
+    group: string,
+    logo: image,
+    has-logo: bool,
+    tint: color,
+    radio: bool,
+    drm: bool,
+    fav: bool,
+}
+
+// kind: 0 tutti, 1 categoria della sorgente, 2 senza categoria, 3 preferiti
+export struct CategoryItem { name: string, count: int, kind: int }
+
+// kind: 0 link M3U, 1 file M3U, 2 Xtream Codes; expires: data già formattata ("" se non nota)
+export struct SourceItem {
+    id: int,
+    name: string,
+    detail: string,
+    kind: int,
+    count: int,
+    movies: int,
+    series: int,
+    expires: string,
+    active: bool,
+}
+
+export struct TrackItem { id: int, label: string, selected: bool }
+
+// Esito di «Verifica» o «Salva».
+// state: 0 niente, 1 in corso, 2 verificata, 3 salvata, 4 errore
+// error: 1 risposta HTTP, 2 rete, 3 file, 4 nessun canale, 5 troppo grande, 6 archivio,
+//        7 campi mancanti, 8 utente o password, 9 indirizzo del server, 10 risposta non valida,
+//        11 portachiavi
+// account: 0 non è Xtream, 1 attivo, 2 non attivo (scaduto, sospeso…)
+export struct SourceStatus {
+    state: int,
+    channels: int,
+    groups: int,
+    skipped: int,
+    movies: int,
+    series: int,
+    account: int,
+    account-status: string,
+    expires: string,
+    connections: int,
+    error: int,
+    http: int,
+    detail: string,
+}
+
+// Una locandina della griglia Film e serie.
+export struct PosterItem {
+    id: int,
+    title: string,
+    meta: string,
+    rating: string,
+    cover: image,
+    has-cover: bool,
+    tint: color,
+    progress: float,
+    fav: bool,
+}
+
+// Una voce delle righe della Home (Riprendi, Preferiti). kind: 0 canale, 1 film, 2 serie
+export struct HomeItem {
+    title: string,
+    subtitle: string,
+    num: string,
+    image: image,
+    has-image: bool,
+    tint: color,
+    progress: float,
+    kind: int,
+}
+
+// Un episodio nella scheda di una serie.
+export struct EpisodeItem {
+    id: int,
+    season: int,
+    number: int,
+    title: string,
+    duration: string,
+    progress: float,
+    current: bool,
+}
+
+// Scheda di un film o di una serie.
+export struct DetailInfo {
+    title: string,
+    meta: string,
+    plot: string,
+    credits: string,
+    cover: image,
+    has-cover: bool,
+    tint: color,
+    fav: bool,
+    loading: bool,
+    // film: secondi visti (0 se mai); serie: etichetta dell'episodio da riprendere ("" se nessuno)
+    resume-secs: int,
+    resume-label: string,
+}
+
+export global Theme {
+    in-out property <int> page: 0;
+    out property <color> bg: #0e0f14;
+    out property <color> panel: #1b1c26;
+    out property <color> glass: #ffffff14;
+    out property <color> ink: #ffffff;
+    out property <color> dim: #b4b6c6;
+    out property <color> faint: #7d8094;
+    out property <color> live: #ff5d7a;
+    out property <color> ok: #8fd18a;
+    // un colore per sezione: Home, Live, Guida, Film e serie, Impostazioni
+    public pure function cat(i: int) -> color {
+        return i == 0 ? #6D5BB1 : (i == 1 ? #677C2F : (i == 2 ? #A06135 : (i == 3 ? #525C62 : #7C6969)));
+    }
+    out property <color> base: cat(page);
+    out property <color> needle: base.brighter(0.9);
+}
+
+// Il video di libmpv. Rust disegna il fotogramma in una texture OpenGL grande quanto il riquadro
+// (`w` × `h`), con gli angoli già ritagliati a super-ellisse di raggio `r`, e la passa in `frame`.
+// Ogni finestra ha la sua istanza di questo global.
+export global Video {
+    in property <image> frame;
+    // c'è un fotogramma del flusso corrente da mostrare
+    in property <bool> ready;
+    // 0 fermo, 1 collegamento, 2 in onda, 3 in attesa di dati, 4 errore, 5 riconnessione
+    in property <int> state;
+    // tentativo di riconnessione in corso
+    in property <int> attempt;
+    // scritte da `VideoView`, lette da Rust
+    in-out property <length> w;
+    in-out property <length> h;
+    in-out property <length> r;
+}
+
+export global Texts {
+    public pure function status(state: int, attempt: int) -> string {
+        return state == 1 ? @tr("Connecting to the channel…")
+            : (state == 3 ? @tr("Waiting for the signal…")
+            : (state == 4 ? @tr("The channel is not responding")
+            : (state == 5 ? @tr("Reconnecting ({})…", attempt) : "")));
+    }
+    public pure function category(c: CategoryItem) -> string {
+        return c.kind == 0 ? @tr("All")
+            : (c.kind == 2 ? @tr("No category")
+            : (c.kind == 3 ? @tr("Favorites") : c.name));
+    }
+    // durata o posizione in secondi come 1:05:09 o 5:09
+    public pure function clock(secs: int) -> string {
+        let h = Math.floor(secs / 3600);
+        let m = Math.floor(Math.mod(secs, 3600) / 60);
+        let s = Math.mod(secs, 60);
+        return (h > 0 ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (s < 10 ? "0" : "") + s;
+    }
+    // testi composti dal codice Rust (schede di film e serie)
+    public pure function season(n: int) -> string {
+        return @tr("Season {}", n);
+    }
+    public pure function minutes(n: int) -> string {
+        return @tr("{} min", n);
+    }
+    public pure function director(name: string) -> string {
+        return @tr("Directed by {}", name);
+    }
+    public pure function channels(n: int) -> string {
+        return @tr("{n} channel" | "{n} channels" % n);
+    }
+    public pure function source-error(s: SourceStatus) -> string {
+        return s.error == 1 ? @tr("The server answered with error {}.", s.http)
+            : (s.error == 2 ? @tr("Can't reach the server: {}", s.detail)
+            : (s.error == 3 ? @tr("Can't read the file: {}", s.detail)
+            : (s.error == 4 ? @tr("No channels found in this playlist.")
+            : (s.error == 5 ? @tr("The playlist is too large.")
+            : (s.error == 7 ? @tr("Fill in the name and the address.")
+            : (s.error == 8 ? @tr("Username or password not accepted.")
+            : (s.error == 9 ? @tr("The server address is not valid.")
+            : (s.error == 10 ? @tr("The server answered with something unexpected.")
+            : (s.error == 11 ? @tr("Can't use the system keychain: {}", s.detail)
+            : @tr("Something went wrong: {}", s.detail))))))))));
+    }
+    public pure function source-result(s: SourceStatus) -> string {
+        if (s.state == 1) {
+            return @tr("Reading the playlist…");
+        }
+        if (s.state == 4) {
+            return source-error(s);
+        }
+        if (s.state != 2 && s.state != 3) {
+            return "";
+        }
+        let saved = s.state == 3 ? @tr("Saved.") + " " : "";
+        if (s.account != 0) {
+            let account = s.account == 1 ? @tr("Account active") : @tr("Account not active ({})", s.account-status);
+            let expires = s.expires != "" ? " · " + @tr("expires {}", s.expires) : "";
+            let connections = s.connections > 0 ? " · " + @tr("{n} connection" | "{n} connections" % s.connections) : "";
+            let content = @tr("{n} channel" | "{n} channels" % s.channels) + " · "
+                + @tr("{n} movie" | "{n} movies" % s.movies) + " · "
+                + @tr("{n} series" | "{n} series" % s.series);
+            return saved + account + expires + connections + "\n" + content;
+        }
+        let counts = @tr("{n} channel" | "{n} channels" % s.channels) + " · " + @tr("{n} category" | "{n} categories" % s.groups);
+        let skipped = s.skipped > 0 ? " · " + @tr("{n} line skipped" | "{n} lines skipped" % s.skipped) : "";
+        return saved + counts + skipped;
+    }
+}
+
+// ───────────── Mattoncini ─────────────
+
+// Rettangolo a super-ellisse: gli angoli sono curve continue (squircle), non archi di cerchio.
+// Le coordinate sono intere, in centesimi di pixel: convertendo un numero decimale in testo Slint
+// usa il separatore della lingua (in italiano la virgola) e il percorso non sarebbe più valido.
+// La curva occupa al massimo il 40% del lato corto: negli elementi piccoli (pulsanti, etichette)
+// il raggio si riduce da solo e tra i due angoli resta sempre un tratto dritto. Con il 50% gli
+// angoli si toccavano e le estremità risultavano deformate.
+export component Sq inherits Path {
+    in property <length> r: 20px;
+    property <int> w: round(root.width / 1px * 100);
+    property <int> h: round(root.height / 1px * 100);
+    property <int> p: round(min(root.r / 1px * 150, min(root.w, root.h) * 0.4));
+    property <int> q: round(root.p / 4);
+    viewbox-width: root.w;
+    viewbox-height: root.h;
+    // con un bordo Slint riduce l'area di (bordo) per lato; «contain» (il valore normale) terrebbe
+    // le proporzioni e restringerebbe di molto le forme larghe e basse
+    fit: fill;
+    fill: transparent;
+    commands: "M " + root.p + " 0 L " + (root.w - root.p) + " 0 C " + (root.w - root.q) + " 0 " + root.w + " " + root.q + " " + root.w + " " + root.p
+        + " L " + root.w + " " + (root.h - root.p) + " C " + root.w + " " + (root.h - root.q) + " " + (root.w - root.q) + " " + root.h + " " + (root.w - root.p) + " " + root.h
+        + " L " + root.p + " " + root.h + " C " + root.q + " " + root.h + " 0 " + (root.h - root.q) + " 0 " + (root.h - root.p)
+        + " L 0 " + root.p + " C 0 " + root.q + " " + root.q + " 0 " + root.p + " 0 Z";
+}
+
+// Il riquadro in cui compare il video. Ce n'è al massimo uno visibile per finestra.
+export component VideoView inherits Rectangle {
+    in property <length> r: 0px;
+    init => {
+        Video.w = self.width;
+        Video.h = self.height;
+        Video.r = self.r;
+    }
+    changed width => { Video.w = self.width; }
+    changed height => { Video.h = self.height; }
+    changed r => { Video.r = self.r; }
+    if Video.ready: Image {
+        width: 100%;
+        height: 100%;
+        source: Video.frame;
+        image-fit: fill;
+    }
+}
+
+export component Icon inherits Path {
+    in property <color> tint: Theme.ink;
+    width: 20px;
+    height: 20px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.tint;
+    stroke-width: 2px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    fill: transparent;
+}
+
+export global Icons {
+    out property <string> home: "M3 11 L12 4 L21 11 M5.5 9.5 V20 H18.5 V9.5";
+    out property <string> back: "M15 5 L8 12 L15 19";
+    out property <string> gear: "M5 12 A7 7 0 1 0 19 12 A7 7 0 1 0 5 12 M9 12 A3 3 0 1 0 15 12 A3 3 0 1 0 9 12 M19 12 L22 12 M16.95 7.05 L19.07 4.93 M12 5 L12 2 M7.05 7.05 L4.93 4.93 M5 12 L2 12 M7.05 16.95 L4.93 19.07 M12 19 L12 22 M16.95 16.95 L19.07 19.07";
+    out property <string> close: "M6 6 L18 18 M18 6 L6 18";
+    out property <string> expand: "M14 4 H20 V10 M20 4 L13 11 M10 20 H4 V14 M4 20 L11 13";
+    out property <string> pip: "M3 5 H21 V19 H3 Z M12 12 H19 V17 H12 Z";
+    out property <string> search: "M4 11 A7 7 0 1 0 18 11 A7 7 0 1 0 4 11 M16 16 L21 21";
+    out property <string> guide: "M3 5 H21 M3 12 H21 M3 19 H21 M8 3 V21";
+    out property <string> film: "M4 4 H20 V20 H4 Z M8 4 V20 M16 4 V20 M4 9 H8 M4 15 H8 M16 9 H20 M16 15 H20";
+    out property <string> plus: "M12 5 V19 M5 12 H19";
+    out property <string> refresh: "M20 11 A8 8 0 1 0 18 17 M20 5 V11 H14";
+    out property <string> star: "M12 3 L14.6 8.9 L21 9.5 L16.1 13.8 L17.6 20.1 L12 16.8 L6.4 20.1 L7.9 13.8 L3 9.5 L9.4 8.9 Z";
+    out property <string> play: "M7 4 L19 12 L7 20 Z";
+    out property <string> pause: "M7 5 V19 M17 5 V19";
+    out property <string> rewind: "M11 6 L4 12 L11 18 Z M20 6 L13 12 L20 18 Z";
+    out property <string> forward: "M13 6 L20 12 L13 18 Z M4 6 L11 12 L4 18 Z";
+    out property <string> next: "M5 5 L15 12 L5 19 Z M19 5 V19";
+}
+
+export component IconBtn inherits Rectangle {
+    in property <string> icon;
+    in property <length> size: 44px;
+    out property <bool> hovered: ta.has-hover;
+    callback clicked;
+    width: root.size;
+    height: root.size;
+    Sq { r: root.size / 2; fill: ta.has-hover ? #ffffff40 : #000000a0; }
+    Icon {
+        commands: root.icon;
+        width: root.size * 0.46;
+        height: root.size * 0.46;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+export component Btn inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary;
+    in property <bool> danger;
+    in property <bool> enabled: true;
+    out property <bool> hovered: ta.has-hover;
+    callback clicked;
+    height: 38px;
+    horizontal-stretch: 0;
+    width: t.preferred-width + 40px;
+    opacity: root.enabled ? 1 : 0.4;
+    Sq {
+        r: 19px;
+        fill: root.danger ? (ta.has-hover ? Theme.live.brighter(0.2) : Theme.live)
+            : root.primary ? (ta.has-hover ? #e6e0ff : Theme.ink) : (ta.has-hover ? #ffffff30 : Theme.glass);
+    }
+    t := Text {
+        text: root.label;
+        color: root.primary && !root.danger ? Theme.bg : Theme.ink;
+        font-size: 14px;
+        font-weight: 600;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Tabs inherits HorizontalLayout {
+    in property <[string]> options;
+    in-out property <int> current;
+    in property <int> disabled-from: 999;
+    callback clicked(int);
+    spacing: 8px;
+    alignment: start;
+    height: 36px;
+    for o[i] in root.options: Rectangle {
+        width: t.preferred-width + 32px;
+        opacity: i >= root.disabled-from ? 0.45 : 1;
+        Sq { r: 18px; fill: i == root.current ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
+        t := Text {
+            text: o;
+            color: i == root.current ? Theme.bg : Theme.ink;
+            font-size: 14px;
+            font-weight: i == root.current ? 700 : 400;
+        }
+        ta := TouchArea {
+            clicked => {
+                root.current = i;
+                root.clicked(i);
+            }
+        }
+    }
+}
+
+export component Title inherits Text {
+    color: Theme.dim;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+export component Ring inherits Rectangle {
+    in property <bool> on;
+    in property <length> r: 22px;
+    Sq {
+        r: root.r;
+        stroke: root.on ? Theme.ink : transparent;
+        stroke-width: 3px;
+    }
+}
+
+export component Toggle inherits Rectangle {
+    in-out property <bool> on;
+    callback toggled(bool);
+    width: 52px;
+    height: 30px;
+    Sq { r: 15px; fill: root.on ? Theme.base.brighter(0.4) : #ffffff2e; }
+    Rectangle {
+        x: root.on ? parent.width - self.width - 3px : 3px;
+        width: 24px;
+        height: 24px;
+        border-radius: 12px;
+        background: Theme.ink;
+        animate x { duration: 160ms; easing: ease-out; }
+    }
+    TouchArea {
+        clicked => {
+            root.on = !root.on;
+            root.toggled(root.on);
+        }
+    }
+}
+
+// Stato del video (collegamento, attesa, errore); senza x/y si centra nel genitore
+export component StatusPill inherits Rectangle {
+    in property <bool> small;
+    width: st.preferred-width + (root.small ? 36px : 48px);
+    height: root.small ? 34px : 44px;
+    Sq { r: parent.height / 2; fill: #000000b0; }
+    st := Text {
+        text: Texts.status(Video.state, Video.attempt);
+        color: Video.state == 4 ? Theme.live : Theme.ink;
+        font-size: root.small ? 13px : 15px;
+        font-weight: 600;
+    }
+}
+
+// Logo del canale, o le iniziali su un colore se manca
+export component Logo inherits Rectangle {
+    in property <ChannelItem> c;
+    in property <length> r: 10px;
+    Sq { r: root.r; fill: root.c.has-logo ? #ffffff10 : root.c.tint.darker(0.3); }
+    if root.c.has-logo: Image {
+        x: parent.width * 0.1;
+        y: parent.height * 0.1;
+        width: parent.width * 0.8;
+        height: parent.height * 0.8;
+        source: root.c.logo;
+        image-fit: contain;
+    }
+    if !root.c.has-logo: Text {
+        text: root.c.name;
+        width: parent.width - 6px;
+        horizontal-alignment: center;
+        overflow: elide;
+        color: #ffffffc0;
+        font-size: min(parent.height * 0.32, 14px);
+        font-weight: 700;
+    }
+}
+
+// Messaggio al centro di una pagina vuota
+export component EmptyState inherits VerticalLayout {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> body;
+    in property <string> action;
+    callback act();
+    alignment: center;
+    spacing: 12px;
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            width: 72px;
+            height: 72px;
+            Sq { r: 36px; fill: Theme.glass; }
+            Icon { commands: root.icon; width: 32px; height: 32px; tint: Theme.dim; }
+        }
+    }
+    Text {
+        text: root.title;
+        color: Theme.ink;
+        font-size: 24px;
+        font-weight: 700;
+        horizontal-alignment: center;
+    }
+    Text {
+        text: root.body;
+        color: Theme.dim;
+        font-size: 15px;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+    if root.action != "": HorizontalLayout {
+        alignment: center;
+        padding-top: 8px;
+        Btn { label: root.action; primary: true; clicked => { root.act(); } }
+    }
+}
+
+// Colonna delle categorie (scelta B): poche centinaia di righe, un `for` basta
+export component CategoryList inherits Rectangle {
+    in property <[CategoryItem]> model;
+    in property <int> current;
+    in property <bool> searching;
+    callback picked(int);
+    clip: true;
+    property <length> row-h: 40px;
+    Flickable {
+        content-height: root.model.length * root.row-h;
+        for c[i] in root.model: cr := Rectangle {
+            x: 0px;
+            y: i * root.row-h;
+            width: parent.width;
+            height: root.row-h - 4px;
+            property <bool> on: i == root.current && !root.searching;
+            Sq {
+                r: 14px;
+                fill: cr.on ? Theme.base : (cta.has-hover ? #ffffff10 : transparent);
+            }
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 12px;
+                spacing: 8px;
+                Text {
+                    text: Texts.category(c);
+                    color: cr.on ? Theme.ink : Theme.dim;
+                    font-size: 14px;
+                    font-weight: cr.on ? 700 : 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: c.count;
+                    color: cr.on ? Theme.ink : Theme.faint;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            cta := TouchArea { clicked => { root.picked(i); } }
+        }
+    }
+}
+

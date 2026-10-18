@@ -46,12 +46,21 @@ cargo test
 cargo run --release -p sintonia-player --example probe -- lista.m3u 15 8
 
 # zip portatile per Windows in dist\
-powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1
+powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1          # -Prova: aggiunge finto_xtream.exe
 ```
 
 Log: `RUST_LOG=debug` (o `info,sintonia=debug,mpv=info`). I messaggi di mpv passano per
 `sintonia_core::redact`: gli URL vengono ridotti a `schema://host/…`, così utente e password dei
 fornitori IPTV non finiscono mai nei log.
+
+Finto server Xtream Codes (dati inventati, flussi di prova pubblici), per provare film, serie e
+preferiti senza un account vero:
+
+```powershell
+cargo run -p sintonia-core --features mock --example finto_xtream   # http://127.0.0.1:8899
+# nell'app: Impostazioni › Xtream Codes, server http://127.0.0.1:8899, utente mario, password prova123
+cargo run -p sintonia-core --features mock --example finto_xtream -- 8899 20000 30000 2000   # catalogo grande
+```
 
 Ispezione dell'interfaccia con il server MCP di Slint (Slint ≥ 1.17):
 
@@ -64,9 +73,9 @@ cargo run -p sintonia-app --features slint/mcp
 
 | Crate | Ruolo |
 |---|---|
-| `sintonia-core` | logica senza interfaccia: `m3u` (parser tollerante a righe), `db` (SQLite + FTS5), `crypto` e `secrets` (indirizzi cifrati, chiave nel portachiavi), `service` (runtime tokio: download, archivio, loghi), `redact` |
+| `sintonia-core` | logica senza interfaccia: `m3u` (parser tollerante a righe), `xtream` (client `player_api.php`, risposte lette con tolleranza) e `xtream_mock` (finto server, solo test ed esempio), `db` (SQLite + FTS5: canali, film, serie, preferiti, cronologia), `crypto` e `secrets` (indirizzi cifrati, chiave e password Xtream nel portachiavi), `service` (runtime tokio: download, archivio, immagini), `redact` |
 | `sintonia-player` | involucro di libmpv: `Player` (comandi, tracce, opzioni per canale, eventi da un thread dedicato), `Backoff` (riconnessione), `RenderContext` (render API OpenGL) |
-| `sintonia-app` | finestre Slint: `app.rs` (collega interfaccia, servizio e player), `channels.rs` (modello virtualizzato dei canali), `video.rs` (video di mpv nelle finestre, riconnessione), `settings.rs` |
+| `sintonia-app` | finestre Slint: `app.rs` (collega interfaccia, servizio e player; ripresa, prossimo episodio), `catalog.rs` (modello virtualizzato per canali, film e serie, con preferiti), `images.rs` (locandine ritagliate con gli angoli di `Sq`), `video.rs` (video di mpv nelle finestre, riconnessione, fine dei film), `settings.rs` |
 
 ### Il video dentro Slint (M0)
 
@@ -91,6 +100,16 @@ cargo run -p sintonia-app --features slint/mcp
   Se la chiave sparisce, all'avvio l'archivio vecchio viene messo da parte e se ne crea uno nuovo.
 - L'interfaccia non fa I/O: tutto passa dal servizio (`Command` → `Event`).
 
+### Xtream, preferiti e ripresa (M2)
+
+- La password Xtream non va mai nell'archivio: sta nel portachiavi (voce `sorgente-<id>`) e viene
+  cancellata insieme alla sorgente. Server e utente sono cifrati come gli indirizzi.
+- Ogni contenuto ha una **chiave stabile** (`l<id>`/`m<id>`/`s<id>` per Xtream, hash dell'indirizzo
+  per M3U): preferiti, cronologia e «ultimo canale» sopravvivono all'aggiornamento della sorgente.
+- Film ed episodi salvano il punto ogni 10 s e all'uscita; oltre il 95% (o a meno di un minuto dalla
+  fine) sono «visti»: il film esce da «Riprendi», la serie passa all'episodio successivo.
+- `VideoRouter::play` toglie sempre la pausa: in mpv la pausa vale per il core, non per il file.
+
 ### Traduzioni
 
 - Testi in inglese con `@tr()` in `ui/app.slint`; italiano in `lang/it/LC_MESSAGES/sintonia-app.po`.
@@ -106,5 +125,10 @@ cargo run -p sintonia-app --features slint/mcp
 - `row` è una proprietà predefinita degli elementi (griglie): non usarla come nome di proprietà.
 - Non si può chiamare una funzione o leggere un `id` di un elemento dentro un `if`: per passare il
   focus a una pagina condizionale si usa una proprietà contatore con `changed`.
+- Un `Path` con `stroke-width` viene adattato al riquadro meno il bordo e, con `fit: contain`
+  (il valore normale), **mantenendo le proporzioni**: le forme larghe e basse si restringono di
+  circa 2·larghezza/altezza pixel. `Sq` usa `fit: fill`.
+- Un elemento a larghezza fissa dentro un `VerticalLayout` ne limita la larghezza massima: va messo in
+  un suo `HorizontalLayout { alignment: start; }`.
 - Elenchi lunghi: `ChannelList` disegna solo le righe visibili (`for i in visibili` + `model[indice]`),
   come `ListView` ma con l'aspetto della bozza.

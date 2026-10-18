@@ -45,7 +45,14 @@ fn po_ids(po: &str) -> BTreeSet<String> {
 #[test]
 fn italian_translation_is_complete() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let slint = std::fs::read_to_string(root.join("ui/app.slint")).expect("app.slint");
+    // tutti i file dell'interfaccia
+    let mut slint = String::new();
+    for entry in std::fs::read_dir(root.join("ui")).expect("cartella ui") {
+        let path = entry.expect("voce di ui").path();
+        if path.extension().is_some_and(|e| e == "slint") {
+            slint.push_str(&std::fs::read_to_string(&path).expect("file .slint"));
+        }
+    }
     let po =
         std::fs::read_to_string(root.join("lang/it/LC_MESSAGES/sintonia-app.po")).expect("it.po");
     let used = slint_strings(&slint);

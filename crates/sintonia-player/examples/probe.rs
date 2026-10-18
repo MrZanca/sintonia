@@ -44,6 +44,7 @@ fn probe(entry: &m3u::Entry, timeout: Duration) -> Outcome {
     let options = LoadOptions {
         user_agent: entry.user_agent.clone(),
         referrer: entry.referrer.clone(),
+        start_secs: None,
     };
     let start = Instant::now();
     if let Err(err) = player.load_with(&entry.url, &options) {

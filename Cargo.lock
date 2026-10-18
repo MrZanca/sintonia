@@ -5022,7 +5022,7 @@ dependencies = [
 
 [[package]]
 name = "sintonia-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "directories",
@@ -5040,7 +5040,7 @@ dependencies = [
 
 [[package]]
 name = "sintonia-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chacha20poly1305",
  "directories",
@@ -5051,6 +5051,8 @@ dependencies = [
  "log",
  "reqwest",
  "rusqlite",
+ "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.21",
@@ -5059,7 +5061,7 @@ dependencies = [
 
 [[package]]
 name = "sintonia-player"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "sintonia-core",

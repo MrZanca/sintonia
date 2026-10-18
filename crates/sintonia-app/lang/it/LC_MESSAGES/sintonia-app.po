@@ -25,17 +25,8 @@ msgstr[1] "{n} righe saltate"
 msgid "↑ ↓ browse   ·   Enter watch   ·   Esc close"
 msgstr "↑ ↓ scorri   ·   Invio guarda   ·   Esc chiudi"
 
-msgid "Add a playlist"
-msgstr "Aggiungi una playlist"
-
 msgid "Add a source"
 msgstr "Aggiungi una sorgente"
-
-msgid "Add your M3U playlist in Settings to see your channels here."
-msgstr "Aggiungi la tua playlist M3U nelle Impostazioni per vedere qui i tuoi canali."
-
-msgid "All channels"
-msgstr "Tutti i canali"
 
 msgid "Audio"
 msgstr "Audio"
@@ -121,9 +112,6 @@ msgstr "Link M3U"
 msgid "Movies & series"
 msgstr "Film e serie"
 
-msgid "Movies and series arrive with Xtream Codes sources, in a next version."
-msgstr "Film e serie arrivano con le sorgenti Xtream Codes, in una prossima versione."
-
 msgid "My playlist"
 msgstr "La mia playlist"
 
@@ -138,9 +126,6 @@ msgstr "In questa playlist non ci sono canali."
 
 msgid "No channels match your search."
 msgstr "Nessun canale corrisponde alla ricerca."
-
-msgid "No playlist yet"
-msgstr "Ancora nessuna playlist"
 
 msgid "Off"
 msgstr "Spenti"
@@ -186,9 +171,6 @@ msgstr "Salvata."
 
 msgid "Search channels"
 msgstr "Cerca canali"
-
-msgid "Sintonia doesn't provide channels: add your own M3U playlist to start."
-msgstr "Sintonia non fornisce canali: aggiungi la tua playlist M3U per cominciare."
 
 msgid "Sintonia doesn't provide channels: add your own playlist or account."
 msgstr "Sintonia non fornisce canali: aggiungi la tua playlist o il tuo account."
@@ -241,8 +223,131 @@ msgstr "Guarda"
 msgid "Welcome to Sintonia"
 msgstr "Benvenuto in Sintonia"
 
-msgid "Xtream Codes accounts are coming in the next version."
-msgstr "Gli account Xtream Codes arrivano nella prossima versione."
-
 msgid "Your sources"
 msgstr "Le tue sorgenti"
+
+msgid "{n} movie"
+msgid_plural "{n} movies"
+msgstr[0] "{n} film"
+msgstr[1] "{n} film"
+
+msgid "{n} series"
+msgid_plural "{n} series"
+msgstr[0] "{n} serie"
+msgstr[1] "{n} serie"
+
+msgid "{n} connection"
+msgid_plural "{n} connections"
+msgstr[0] "{n} connessione"
+msgstr[1] "{n} connessioni"
+
+msgid "Account active"
+msgstr "Account attivo"
+
+msgid "Account not active ({})"
+msgstr "Account non attivo ({})"
+
+msgid "Add an account"
+msgstr "Aggiungi un account"
+
+msgid "Add to favorites"
+msgstr "Aggiungi ai preferiti"
+
+msgid "Add your M3U playlist or Xtream Codes account in Settings to see your channels here."
+msgstr "Aggiungi la tua playlist M3U o il tuo account Xtream Codes nelle Impostazioni per vedere qui i tuoi canali."
+
+msgid "All"
+msgstr "Tutti"
+
+msgid "Can't use the system keychain: {}"
+msgstr "Impossibile usare il portachiavi di sistema: {}"
+
+msgid "Cancel"
+msgstr "Annulla"
+
+msgid "Continue watching"
+msgstr "Riprendi"
+
+msgid "Directed by {}"
+msgstr "Regia di {}"
+
+msgid "Favorites"
+msgstr "Preferiti"
+
+msgid "From the start"
+msgstr "Dall'inizio"
+
+msgid "In favorites"
+msgstr "Nei preferiti"
+
+msgid "Loading…"
+msgstr "Caricamento…"
+
+msgid "Movies"
+msgstr "Film"
+
+msgid "Movies and series come with an Xtream Codes account: add it in Settings."
+msgstr "Film e serie arrivano con un account Xtream Codes: aggiungilo nelle Impostazioni."
+
+msgid "Next episode"
+msgstr "Prossimo episodio"
+
+msgid "No favorite channels yet: choose a channel and press “Add to favorites” (or the S key)."
+msgstr "Ancora nessun canale preferito: scegli un canale e premi «Aggiungi ai preferiti» (o il tasto S)."
+
+msgid "No source yet"
+msgstr "Ancora nessuna sorgente"
+
+msgid "Password"
+msgstr "Password"
+
+msgid "Preview in the Live list"
+msgstr "Anteprima nell'elenco Live"
+
+msgid "Resume from {}"
+msgstr "Riprendi da {}"
+
+msgid "Resume {}"
+msgstr "Riprendi {}"
+
+msgid "Season {}"
+msgstr "Stagione {}"
+
+msgid "Series"
+msgstr "Serie"
+
+msgid "Server"
+msgstr "Server"
+
+msgid "Sintonia doesn't provide channels: add your own M3U playlist or Xtream Codes account to start."
+msgstr "Sintonia non fornisce canali: aggiungi la tua playlist M3U o il tuo account Xtream Codes per iniziare."
+
+msgid "Starts in {} s"
+msgstr "Parte tra {} s"
+
+msgid "The highlighted channel starts after a moment. Turn it off if your account allows only one connection."
+msgstr "Il canale evidenziato parte dopo un attimo. Spegnila se il tuo account ammette una sola connessione."
+
+msgid "The server address is not valid."
+msgstr "L'indirizzo del server non è valido."
+
+msgid "The server answered with something unexpected."
+msgstr "Il server ha risposto in modo inatteso."
+
+msgid "Username"
+msgstr "Utente"
+
+msgid "Username or password not accepted."
+msgstr "Utente o password non accettati."
+
+msgid "Watch now"
+msgstr "Guarda ora"
+
+msgid "expires {}"
+msgstr "scade il {}"
+
+msgid "username"
+msgstr "nome utente"
+
+msgid "{} min"
+msgstr "{} min"

@@ -11,7 +11,8 @@ Stato: **M1**, prima versione usabile.
 - Player con riconnessione automatica, tracce audio e sottotitoli, mini player, schermo intero.
 - Interfaccia in italiano e inglese, cambio immediato.
 
-In arrivo: Xtream Codes, preferiti e film/serie (M2), guida dei programmi (M3). Vedi `01-specifiche.md`.
+Già presenti: playlist M3U, account Xtream Codes con film e serie, preferiti, «Riprendi» e mini player.
+In arrivo: guida dei programmi (M3). Vedi `01-specifiche.md`.
 
 - Sviluppo e compilazione: [docs/sviluppo.md](docs/sviluppo.md)
 - Licenza: [GPL-3.0](LICENSE), copyright © 2026 MrZanca; librerie di terze parti in [THIRD-PARTY.md](THIRD-PARTY.md)

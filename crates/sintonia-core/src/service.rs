@@ -1,10 +1,11 @@
-//! Il servizio: tutto l'I/O di Sintonia (rete, disco, archivio) su un runtime tokio in un thread a
-//! parte. L'interfaccia manda [`Command`] e riceve [`Event`]; non tocca mai rete o disco.
+//! Il servizio: tutto l'I/O di Sintonia (rete, disco, archivio, portachiavi) su un runtime tokio
+//! in un thread a parte. L'interfaccia manda [`Command`] e riceve [`Event`]; non tocca mai rete o
+//! disco.
 //!
 //! Gli eventi arrivano da thread del runtime attraverso la funzione passata a [`Service::start`]:
 //! l'app li inoltra al suo thread (con Slint: `invoke_from_event_loop`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -15,64 +16,137 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::crypto::Cipher;
-use crate::db::{ChannelRow, NewSource, SourceInfo, SourceKind, Store, StoreError, StreamInfo};
+use crate::db::{
+    ChannelInput, ChannelRow, ChannelStream, EpisodeRef, HistoryEntry, ItemKind, MovieRow,
+    NewSource, SeriesRow, SourceInfo, SourceKind, Store, StoreError, StreamInfo,
+};
 use crate::m3u::{self, Parser, Playlist};
+use crate::secrets::{source_password_name, SecretStore};
+use crate::xtream::{self, AccountInfo, Credentials, MovieDetail, SeriesDetail, XtreamError};
 
 /// Dimensione massima di una playlist (per non riempire la memoria con una risposta sbagliata).
 const MAX_PLAYLIST_BYTES: u64 = 512 * 1024 * 1024;
-/// Dimensione massima di un logo.
-const MAX_LOGO_BYTES: u64 = 4 * 1024 * 1024;
-/// Loghi scaricati in parallelo.
-const LOGO_PARALLELISM: usize = 6;
+/// Dimensione massima di un'immagine.
+const MAX_IMAGE_BYTES: u64 = 6 * 1024 * 1024;
+/// Immagini scaricate in parallelo.
+const IMAGE_PARALLELISM: usize = 6;
 /// Risultati massimi di una ricerca.
 const SEARCH_LIMIT: u32 = 2_000;
-/// Lato massimo dei loghi in memoria (pixel): bastano per le righe dell'elenco.
+/// Lato massimo in memoria: loghi (righe dell'elenco) e locandine (griglia dei film).
 const LOGO_MAX_SIDE: u32 = 128;
+const POSTER_MAX_SIDE: u32 = 360;
+/// Voci di cronologia mandate all'interfaccia.
+const HISTORY_LIMIT: u32 = 30;
 
 /// Configurazione del servizio.
 #[derive(Debug)]
 pub struct ServiceConfig {
     /// File dell'archivio SQLite.
     pub database: PathBuf,
-    /// Cartella della cache (loghi).
+    /// Cartella della cache (immagini).
     pub cache_dir: PathBuf,
     /// Chiave dell'archivio.
     pub cipher: Cipher,
+    /// Portachiavi per le password Xtream.
+    pub secrets: Arc<dyn SecretStore>,
     /// User-agent predefinito per le richieste HTTP.
     pub user_agent: String,
+}
+
+/// Cosa aprire nel player.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Playable {
+    /// Un canale (M3U o Xtream).
+    Channel(i64),
+    /// Un film Xtream.
+    Movie(i64),
+    /// Un episodio di una serie Xtream (identificativo della serie nell'archivio).
+    Episode {
+        /// Serie.
+        series_id: i64,
+        /// Episodio.
+        episode: EpisodeRef,
+    },
 }
 
 /// Comandi dall'interfaccia.
 #[derive(Debug, Clone)]
 pub enum Command {
-    /// Carica sorgenti, impostazioni e canali della sorgente in uso.
+    /// Carica sorgenti, impostazioni, catalogo della sorgente in uso, preferiti e cronologia.
     Init,
     /// Scarica e legge una playlist senza salvarla (pulsante «Verifica»).
     VerifySource(NewSource),
-    /// Scarica, legge e salva una sorgente.
+    /// Scarica, legge e salva una sorgente M3U.
     AddSource(NewSource),
-    /// Riscarica i canali di una sorgente.
+    /// Verifica un account Xtream (senza salvarlo).
+    VerifyXtream {
+        /// Server e utente.
+        source: NewSource,
+        /// Password.
+        password: String,
+    },
+    /// Verifica, scarica il catalogo e salva un account Xtream.
+    AddXtream {
+        /// Server e utente.
+        source: NewSource,
+        /// Password (va nel portachiavi).
+        password: String,
+    },
+    /// Riscarica il catalogo di una sorgente.
     RefreshSource(i64),
     /// Rende una sorgente quella in uso.
     ActivateSource(i64),
-    /// Elimina una sorgente.
+    /// Elimina una sorgente (e la sua password).
     DeleteSource(i64),
-    /// Ricerca nella sorgente in uso; `generation` permette di scartare risultati superati.
+    /// Ricerca nella sorgente in uso (canali, film e serie); `generation` scarta i risultati
+    /// superati.
     Search {
         /// Testo cercato.
         query: String,
         /// Numero crescente della richiesta.
         generation: u64,
     },
-    /// Indirizzo di un canale da aprire.
-    ResolveStream {
-        /// Canale.
-        channel_id: i64,
-        /// Numero della richiesta (per ignorare risposte di canali già lasciati).
+    /// Indirizzo di un contenuto da aprire.
+    Resolve {
+        /// Contenuto.
+        item: Playable,
+        /// Numero della richiesta (per ignorare risposte superate).
         token: u64,
     },
-    /// Logo da scaricare (o leggere dalla cache).
-    FetchLogo(String),
+    /// Dettagli di un film.
+    MovieDetail(i64),
+    /// Stagioni ed episodi di una serie.
+    SeriesDetail(i64),
+    /// Un'immagine da scaricare (o leggere dalla cache): logo o locandina.
+    FetchImage {
+        /// Indirizzo.
+        url: String,
+        /// Locandina (più grande) invece di logo.
+        poster: bool,
+    },
+    /// Aggiunge o toglie un preferito della sorgente in uso.
+    SetFavorite {
+        /// Tipo.
+        kind: ItemKind,
+        /// Chiave stabile.
+        key: String,
+        /// Preferito sì o no.
+        favorite: bool,
+    },
+    /// Salva il punto di visione; con `notify` rimanda la cronologia all'interfaccia.
+    SaveHistory {
+        /// Voce.
+        entry: HistoryEntry,
+        /// Aggiornare l'interfaccia.
+        notify: bool,
+    },
+    /// Toglie una voce dalla cronologia.
+    RemoveHistory {
+        /// Tipo.
+        kind: ItemKind,
+        /// Chiave.
+        key: String,
+    },
     /// Salva un'impostazione.
     SetSetting {
         /// Chiave.
@@ -103,6 +177,18 @@ pub enum SourceError {
     /// Errore dell'archivio.
     #[error("archivio: {0}")]
     Store(String),
+    /// Utente o password non accettati.
+    #[error("utente o password non accettati")]
+    Auth,
+    /// Indirizzo del server non valido.
+    #[error("indirizzo del server non valido")]
+    InvalidServer,
+    /// Risposta del server non leggibile.
+    #[error("risposta non valida: {0}")]
+    Format(String),
+    /// Portachiavi non disponibile.
+    #[error("portachiavi: {0}")]
+    Secrets(String),
 }
 
 impl From<StoreError> for SourceError {
@@ -111,20 +197,39 @@ impl From<StoreError> for SourceError {
     }
 }
 
-/// Esito della lettura di una playlist.
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl From<XtreamError> for SourceError {
+    fn from(err: XtreamError) -> Self {
+        match err {
+            XtreamError::InvalidServer => Self::InvalidServer,
+            XtreamError::Http(code) => Self::Http(code),
+            XtreamError::Network(text) => Self::Network(text),
+            XtreamError::Auth => Self::Auth,
+            XtreamError::Json(text) => Self::Format(text),
+            XtreamError::TooLarge => Self::TooLarge,
+        }
+    }
+}
+
+/// Esito della lettura di una sorgente.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SourceReport {
     /// Canali letti.
     pub channels: usize,
-    /// Categorie distinte.
+    /// Categorie distinte dei canali.
     pub groups: usize,
     /// Righe saltate (doppioni, indirizzi non validi…).
     pub skipped: usize,
     /// La playlist indica una guida dei programmi.
     pub has_epg: bool,
+    /// Film (Xtream).
+    pub movies: usize,
+    /// Serie (Xtream).
+    pub series: usize,
+    /// Stato dell'account (Xtream).
+    pub account: Option<AccountInfo>,
 }
 
-/// Un logo pronto da mostrare (RGBA, 8 bit per canale).
+/// Un'immagine pronta da mostrare (RGBA, 8 bit per canale).
 #[derive(Clone, PartialEq, Eq)]
 pub struct LogoImage {
     /// Larghezza.
@@ -141,6 +246,15 @@ impl std::fmt::Debug for LogoImage {
     }
 }
 
+/// Un flusso pronto per il player.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedStream {
+    /// Indirizzo e intestazioni.
+    pub stream: StreamInfo,
+    /// Contenuto on demand (film o episodio): finisce invece di riconnettersi.
+    pub on_demand: bool,
+}
+
 /// Eventi verso l'interfaccia.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -148,13 +262,21 @@ pub enum Event {
     Settings(Vec<(String, String)>),
     /// Elenco delle sorgenti (dopo ogni modifica).
     Sources(Vec<SourceInfo>),
-    /// Canali della sorgente in uso (`None`: nessuna sorgente).
-    Channels {
+    /// Catalogo della sorgente in uso (`None`: nessuna sorgente).
+    Catalog {
         /// Sorgente.
         source_id: Option<i64>,
         /// Canali in ordine.
         channels: Arc<Vec<ChannelRow>>,
+        /// Film (vuoto per le sorgenti M3U).
+        movies: Arc<Vec<MovieRow>>,
+        /// Serie (vuoto per le sorgenti M3U).
+        series: Arc<Vec<SeriesRow>>,
     },
+    /// Preferiti della sorgente in uso.
+    Favorites(Vec<(ItemKind, String)>),
+    /// Cronologia della sorgente in uso, le più recenti prima.
+    History(Vec<HistoryEntry>),
     /// Un'operazione lunga è iniziata o finita (download, lettura).
     Working(bool),
     /// Esito di «Verifica».
@@ -170,22 +292,40 @@ pub enum Event {
     SearchResults {
         /// Numero della richiesta.
         generation: u64,
-        /// Canali trovati, nell'ordine della playlist.
-        ids: Vec<i64>,
+        /// Canali trovati.
+        channels: Vec<i64>,
+        /// Film trovati.
+        movies: Vec<i64>,
+        /// Serie trovate.
+        series: Vec<i64>,
     },
-    /// Indirizzo di un canale.
+    /// Flusso da aprire.
     Stream {
         /// Numero della richiesta.
         token: u64,
-        /// Canale.
-        channel_id: i64,
         /// Esito.
-        result: Result<StreamInfo, String>,
+        result: Result<ResolvedStream, String>,
     },
-    /// Logo pronto (`None`: non disponibile).
-    Logo {
+    /// Dettagli di un film.
+    MovieDetail {
+        /// Film.
+        id: i64,
+        /// Esito.
+        result: Result<MovieDetail, String>,
+    },
+    /// Stagioni ed episodi di una serie.
+    SeriesDetail {
+        /// Serie.
+        id: i64,
+        /// Esito.
+        result: Result<SeriesDetail, String>,
+    },
+    /// Immagine pronta (`None`: non disponibile).
+    Image {
         /// Indirizzo richiesto.
         url: String,
+        /// Locandina o logo.
+        poster: bool,
         /// Immagine.
         image: Option<LogoImage>,
     },
@@ -218,11 +358,12 @@ type EventSink = Arc<dyn Fn(Event) + Send + Sync>;
 
 struct Shared {
     store: Mutex<Store>,
+    secrets: Arc<dyn SecretStore>,
     http: reqwest::Client,
     on_event: EventSink,
     cache_dir: PathBuf,
-    logos: Semaphore,
-    logos_in_flight: Mutex<HashSet<String>>,
+    images: Semaphore,
+    images_in_flight: Mutex<HashSet<(String, bool)>>,
 }
 
 impl Shared {
@@ -244,6 +385,40 @@ impl Shared {
         .await
         .unwrap_or(Err(StoreError::Interrupted))
     }
+
+    /// Operazione sul portachiavi (può bloccare: thread a parte).
+    async fn with_secrets<T, F>(self: &Arc<Self>, f: F) -> Result<T, SourceError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&dyn SecretStore) -> Result<T, crate::secrets::SecretsError> + Send + 'static,
+    {
+        let secrets = Arc::clone(&self.secrets);
+        tokio::task::spawn_blocking(move || f(secrets.as_ref()))
+            .await
+            .map_err(|e| SourceError::Secrets(e.to_string()))?
+            .map_err(|e| SourceError::Secrets(e.to_string()))
+    }
+
+    /// Client Xtream di una sorgente salvata (server e utente dall'archivio, password dal
+    /// portachiavi).
+    async fn xtream_client(
+        self: &Arc<Self>,
+        source_id: i64,
+    ) -> Result<(xtream::Client, NewSource), SourceError> {
+        let source = self
+            .with_store(move |s| s.source_location(source_id))
+            .await?;
+        let password = self
+            .with_secrets(move |s| s.get(&source_password_name(source_id)))
+            .await?
+            .ok_or_else(|| SourceError::Secrets("password non trovata".into()))?;
+        let credentials = Credentials {
+            server: xtream::normalize_server(&source.location)?,
+            username: source.username.clone().unwrap_or_default(),
+            password,
+        };
+        Ok((xtream::Client::new(self.http.clone(), credentials), source))
+    }
 }
 
 impl Service {
@@ -255,12 +430,12 @@ impl Service {
         if let Some(parent) = config.database.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::create_dir_all(config.cache_dir.join("loghi"))?;
+        std::fs::create_dir_all(config.cache_dir.join("immagini"))?;
         let store = Store::open(&config.database, config.cipher)?;
         let http = reqwest::Client::builder()
             .user_agent(config.user_agent)
             .connect_timeout(Duration::from_secs(10))
-            .read_timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| ServiceError::Start(e.without_url().to_string()))?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -272,11 +447,12 @@ impl Service {
 
         let shared = Arc::new(Shared {
             store: Mutex::new(store),
+            secrets: config.secrets,
             http,
             on_event: Arc::new(on_event),
             cache_dir: config.cache_dir,
-            logos: Semaphore::new(LOGO_PARALLELISM),
-            logos_in_flight: Mutex::new(HashSet::new()),
+            images: Semaphore::new(IMAGE_PARALLELISM),
+            images_in_flight: Mutex::new(HashSet::new()),
         });
         let (commands, mut inbox) = mpsc::unbounded_channel::<Command>();
         let thread = std::thread::Builder::new()
@@ -332,7 +508,7 @@ async fn handle(shared: Arc<Shared>, command: Command) {
                 Ok(settings) => shared.emit(Event::Settings(settings)),
                 Err(err) => shared.emit(Event::Error(err.to_string())),
             }
-            emit_sources_and_channels(&shared).await;
+            emit_everything(&shared).await;
         }
         Command::VerifySource(source) => {
             shared.emit(Event::Working(true));
@@ -342,61 +518,143 @@ async fn handle(shared: Arc<Shared>, command: Command) {
         }
         Command::AddSource(source) => {
             shared.emit(Event::Working(true));
-            let result = add_source(&shared, source).await;
+            let result = add_m3u(&shared, source).await;
+            finish_save(&shared, result).await;
+        }
+        Command::VerifyXtream { source, password } => {
+            shared.emit(Event::Working(true));
+            let result = verify_xtream(&shared, &source, password).await;
             shared.emit(Event::Working(false));
-            let (source_id, result) = match result {
-                Ok((id, report)) => (Some(id), Ok(report)),
-                Err(err) => (None, Err(err)),
-            };
-            shared.emit(Event::SourceSaved { source_id, result });
-            emit_sources_and_channels(&shared).await;
+            shared.emit(Event::Verified(result));
+        }
+        Command::AddXtream { source, password } => {
+            shared.emit(Event::Working(true));
+            let result = add_xtream(&shared, source, password).await;
+            finish_save(&shared, result).await;
         }
         Command::RefreshSource(id) => {
             shared.emit(Event::Working(true));
-            let result = refresh_source(&shared, id).await;
-            shared.emit(Event::Working(false));
-            shared.emit(Event::SourceSaved {
-                source_id: Some(id),
-                result,
-            });
-            emit_sources_and_channels(&shared).await;
+            let result = refresh_source(&shared, id).await.map(|r| (id, r));
+            finish_save(&shared, result).await;
         }
         Command::ActivateSource(id) => {
             if let Err(err) = shared.with_store(move |s| s.set_active_source(id)).await {
                 shared.emit(Event::Error(err.to_string()));
             }
-            emit_sources_and_channels(&shared).await;
+            emit_everything(&shared).await;
         }
         Command::DeleteSource(id) => {
             if let Err(err) = shared.with_store(move |s| s.delete_source(id)).await {
                 shared.emit(Event::Error(err.to_string()));
             }
-            emit_sources_and_channels(&shared).await;
+            if let Err(err) = shared
+                .with_secrets(move |s| s.delete(&source_password_name(id)))
+                .await
+            {
+                log::warn!("password della sorgente non eliminata: {err}");
+            }
+            emit_everything(&shared).await;
         }
         Command::Search { query, generation } => {
             let result = shared
                 .with_store(move |s| match s.active_source()? {
-                    Some(source) => s.search(source, &query, SEARCH_LIMIT),
-                    None => Ok(Vec::new()),
+                    Some(source) => Ok((
+                        s.search(source, &query, SEARCH_LIMIT)?,
+                        s.search_movies(source, &query, SEARCH_LIMIT)?,
+                        s.search_series(source, &query, SEARCH_LIMIT)?,
+                    )),
+                    None => Ok((Vec::new(), Vec::new(), Vec::new())),
                 })
                 .await;
             match result {
-                Ok(ids) => shared.emit(Event::SearchResults { generation, ids }),
+                Ok((channels, movies, series)) => shared.emit(Event::SearchResults {
+                    generation,
+                    channels,
+                    movies,
+                    series,
+                }),
                 Err(err) => shared.emit(Event::Error(err.to_string())),
             }
         }
-        Command::ResolveStream { channel_id, token } => {
-            let result = shared
-                .with_store(move |s| s.stream(channel_id))
-                .await
-                .map_err(|e| e.to_string());
-            shared.emit(Event::Stream {
-                token,
-                channel_id,
-                result,
-            });
+        Command::Resolve { item, token } => {
+            let result = resolve(&shared, item).await.map_err(|e| e.to_string());
+            shared.emit(Event::Stream { token, result });
         }
-        Command::FetchLogo(url) => fetch_logo(&shared, url).await,
+        Command::MovieDetail(id) => {
+            let result = async {
+                let (source_id, movie) = shared.with_store(move |s| s.movie_ref(id)).await?;
+                let (client, _) = shared.xtream_client(source_id).await?;
+                Ok::<_, SourceError>(client.movie_detail(movie.xtream_id).await?)
+            }
+            .await
+            .map_err(|e| e.to_string());
+            shared.emit(Event::MovieDetail { id, result });
+        }
+        Command::SeriesDetail(id) => {
+            let result = async {
+                let (source_id, series) = shared.with_store(move |s| s.series_ref(id)).await?;
+                let (client, _) = shared.xtream_client(source_id).await?;
+                Ok::<_, SourceError>(client.series_detail(series.xtream_id).await?)
+            }
+            .await
+            .map_err(|e| e.to_string());
+            shared.emit(Event::SeriesDetail { id, result });
+        }
+        Command::FetchImage { url, poster } => fetch_image(&shared, url, poster).await,
+        Command::SetFavorite {
+            kind,
+            key,
+            favorite,
+        } => {
+            let result = shared
+                .with_store(move |s| {
+                    let Some(source) = s.active_source()? else {
+                        return Ok(Vec::new());
+                    };
+                    s.set_favorite(source, kind, &key, favorite, now())?;
+                    s.favorites(source)
+                })
+                .await;
+            match result {
+                Ok(favorites) => shared.emit(Event::Favorites(favorites)),
+                Err(err) => shared.emit(Event::Error(err.to_string())),
+            }
+        }
+        Command::SaveHistory { entry, notify } => {
+            let result = shared
+                .with_store(move |s| {
+                    let Some(source) = s.active_source()? else {
+                        return Ok(Vec::new());
+                    };
+                    s.save_history(source, &entry)?;
+                    if notify {
+                        s.history(source, HISTORY_LIMIT)
+                    } else {
+                        Ok(Vec::new())
+                    }
+                })
+                .await;
+            match result {
+                Ok(history) if notify => shared.emit(Event::History(history)),
+                Ok(_) => {}
+                Err(err) => shared.emit(Event::Error(err.to_string())),
+            }
+        }
+        Command::RemoveHistory { kind, key } => {
+            let result = shared
+                .with_store(move |s| {
+                    let Some(source) = s.active_source()? else {
+                        return Ok(Vec::new());
+                    };
+                    s.remove_history(source, kind, &key)?;
+                    s.history(source, HISTORY_LIMIT)
+                })
+                .await;
+            match result {
+                Ok(history) => shared.emit(Event::History(history)),
+                Err(err) => shared.emit(Event::Error(err.to_string())),
+            }
+        }
         Command::SetSetting { key, value } => {
             if let Err(err) = shared
                 .with_store(move |s| s.set_setting(&key, &value))
@@ -408,25 +666,48 @@ async fn handle(shared: Arc<Shared>, command: Command) {
     }
 }
 
-async fn emit_sources_and_channels(shared: &Arc<Shared>) {
+async fn finish_save(shared: &Arc<Shared>, result: Result<(i64, SourceReport), SourceError>) {
+    shared.emit(Event::Working(false));
+    let (source_id, result) = match result {
+        Ok((id, report)) => (Some(id), Ok(report)),
+        Err(err) => (None, Err(err)),
+    };
+    shared.emit(Event::SourceSaved { source_id, result });
+    emit_everything(shared).await;
+}
+
+/// Sorgenti, catalogo della sorgente in uso, preferiti e cronologia.
+async fn emit_everything(shared: &Arc<Shared>) {
     let result = shared
         .with_store(|s| {
             let sources = s.sources()?;
             let active = s.active_source()?;
-            let channels = match active {
-                Some(id) => s.channels(id)?,
-                None => Vec::new(),
+            let (channels, movies, series, favorites, history) = match active {
+                Some(id) => (
+                    s.channels(id)?,
+                    s.movies(id)?,
+                    s.series(id)?,
+                    s.favorites(id)?,
+                    s.history(id, HISTORY_LIMIT)?,
+                ),
+                None => Default::default(),
             };
-            Ok((sources, active, channels))
+            Ok((
+                sources, active, channels, movies, series, favorites, history,
+            ))
         })
         .await;
     match result {
-        Ok((sources, source_id, channels)) => {
+        Ok((sources, source_id, channels, movies, series, favorites, history)) => {
             shared.emit(Event::Sources(sources));
-            shared.emit(Event::Channels {
+            shared.emit(Event::Catalog {
                 source_id,
                 channels: Arc::new(channels),
+                movies: Arc::new(movies),
+                series: Arc::new(series),
             });
+            shared.emit(Event::Favorites(favorites));
+            shared.emit(Event::History(history));
         }
         Err(err) => shared.emit(Event::Error(err.to_string())),
     }
@@ -443,10 +724,11 @@ fn report(playlist: &Playlist) -> SourceReport {
         groups: groups.len(),
         skipped: m3u::count_skipped(&playlist.warnings),
         has_epg: !playlist.epg_urls.is_empty(),
+        ..SourceReport::default()
     }
 }
 
-async fn add_source(
+async fn add_m3u(
     shared: &Arc<Shared>,
     source: NewSource,
 ) -> Result<(i64, SourceReport), SourceError> {
@@ -464,6 +746,11 @@ async fn add_source(
 
 async fn refresh_source(shared: &Arc<Shared>, id: i64) -> Result<SourceReport, SourceError> {
     let source = shared.with_store(move |s| s.source_location(id)).await?;
+    if source.kind == SourceKind::Xtream {
+        let (client, _) = shared.xtream_client(id).await?;
+        let catalog = load_xtream_catalog(&client).await?;
+        return save_xtream_catalog(shared, id, catalog).await;
+    }
     let playlist = load_playlist(shared, &source).await?;
     let report = report(&playlist);
     shared
@@ -471,6 +758,259 @@ async fn refresh_source(shared: &Arc<Shared>, id: i64) -> Result<SourceReport, S
         .await?;
     Ok(report)
 }
+
+// ───────────── Xtream ─────────────
+
+fn xtream_client_for(
+    shared: &Shared,
+    source: &NewSource,
+    password: String,
+) -> Result<xtream::Client, SourceError> {
+    let credentials = Credentials {
+        server: xtream::normalize_server(&source.location)?,
+        username: source.username.clone().unwrap_or_default(),
+        password,
+    };
+    Ok(xtream::Client::new(shared.http.clone(), credentials))
+}
+
+async fn verify_xtream(
+    shared: &Arc<Shared>,
+    source: &NewSource,
+    password: String,
+) -> Result<SourceReport, SourceError> {
+    let client = xtream_client_for(shared, source, password)?;
+    let catalog = load_xtream_catalog(&client).await?;
+    Ok(catalog.report())
+}
+
+async fn add_xtream(
+    shared: &Arc<Shared>,
+    mut source: NewSource,
+    password: String,
+) -> Result<(i64, SourceReport), SourceError> {
+    source.location = xtream::normalize_server(&source.location)?;
+    let client = xtream_client_for(shared, &source, password.clone())?;
+    let catalog = load_xtream_catalog(&client).await?;
+    let id = shared.with_store(move |s| s.add_source(&source)).await?;
+    if let Err(err) = shared
+        .with_secrets(move |s| s.set(&source_password_name(id), &password))
+        .await
+    {
+        // senza password la sorgente non servirebbe: la si toglie
+        let _ = shared.with_store(move |s| s.delete_source(id)).await;
+        return Err(err);
+    }
+    let report = save_xtream_catalog(shared, id, catalog).await?;
+    Ok((id, report))
+}
+
+/// Il catalogo di un account Xtream, già pronto per l'archivio.
+struct XtreamCatalog {
+    account: AccountInfo,
+    channels: Vec<ChannelInput>,
+    movies: Vec<MovieRow>,
+    series: Vec<SeriesRow>,
+    groups: usize,
+}
+
+impl XtreamCatalog {
+    fn report(&self) -> SourceReport {
+        SourceReport {
+            channels: self.channels.len(),
+            groups: self.groups,
+            movies: self.movies.len(),
+            series: self.series.len(),
+            account: Some(self.account.clone()),
+            ..SourceReport::default()
+        }
+    }
+}
+
+fn category_names(categories: Vec<xtream::Category>) -> HashMap<String, String> {
+    categories
+        .into_iter()
+        .filter_map(|c| Some((c.category_id?, c.category_name.unwrap_or_default())))
+        .collect()
+}
+
+/// Anno dai primi quattro caratteri di una data, se sono un anno plausibile.
+fn year_of(date: Option<&str>) -> Option<String> {
+    let year = date?.trim().get(..4)?;
+    (year.chars().all(|c| c.is_ascii_digit()) && year > "1880").then(|| year.to_owned())
+}
+
+async fn load_xtream_catalog(client: &xtream::Client) -> Result<XtreamCatalog, SourceError> {
+    let account = client.account().await?;
+    let (live_cats, live, movie_cats, movies, series_cats, series) = tokio::try_join!(
+        client.live_categories(),
+        client.live_streams(),
+        client.movie_categories(),
+        client.movies(),
+        client.series_categories(),
+        client.series(),
+    )?;
+    let (live_cats, movie_cats, series_cats) = (
+        category_names(live_cats),
+        category_names(movie_cats),
+        category_names(series_cats),
+    );
+    let group = |names: &HashMap<String, String>, id: &Option<String>| {
+        id.as_ref()
+            .and_then(|id| names.get(id))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let channels: Vec<ChannelInput> = live
+        .into_iter()
+        .enumerate()
+        .filter_map(|(position, s)| {
+            let id = s.stream_id?;
+            Some(ChannelInput {
+                key: format!("l{id}"),
+                number: s
+                    .num
+                    .and_then(|n| u32::try_from(n).ok())
+                    .filter(|n| *n > 0)
+                    .unwrap_or_else(|| u32::try_from(position + 1).unwrap_or(u32::MAX)),
+                name: s.name.unwrap_or_else(|| format!("#{id}")),
+                group: group(&live_cats, &s.category_id),
+                tvg_id: s.epg_channel_id,
+                logo: s.stream_icon,
+                xtream_id: Some(id),
+                ..ChannelInput::default()
+            })
+        })
+        .collect();
+    let groups = channels
+        .iter()
+        .map(|c| c.group.as_str())
+        .collect::<HashSet<_>>()
+        .len();
+    let movies = movies
+        .into_iter()
+        .filter_map(|m| {
+            Some(MovieRow {
+                xtream_id: m.stream_id?,
+                name: m.name.unwrap_or_default(),
+                group: group(&movie_cats, &m.category_id),
+                cover: m.stream_icon,
+                rating: m.rating.filter(|r| *r > 0.0),
+                year: year_of(m.year.as_deref()),
+                added: m.added,
+                container: m.container_extension,
+                ..MovieRow::default()
+            })
+        })
+        .collect();
+    let series = series
+        .into_iter()
+        .filter_map(|s| {
+            Some(SeriesRow {
+                xtream_id: s.series_id?,
+                name: s.name.unwrap_or_default(),
+                group: group(&series_cats, &s.category_id),
+                cover: s.cover,
+                rating: s.rating.filter(|r| *r > 0.0),
+                year: year_of(s.release_date.as_deref()),
+                plot: s.plot,
+                genre: s.genre,
+                ..SeriesRow::default()
+            })
+        })
+        .collect();
+    Ok(XtreamCatalog {
+        account,
+        channels,
+        movies,
+        series,
+        groups,
+    })
+}
+
+async fn save_xtream_catalog(
+    shared: &Arc<Shared>,
+    id: i64,
+    catalog: XtreamCatalog,
+) -> Result<SourceReport, SourceError> {
+    let report = catalog.report();
+    let ext = catalog.account.live_extension().to_owned();
+    let expires = catalog.account.expires;
+    shared
+        .with_store(move |s| {
+            s.replace_catalog(
+                id,
+                &catalog.channels,
+                Some((&catalog.movies, &catalog.series)),
+                &[],
+                now(),
+            )?;
+            s.set_account_info(id, &ext, expires)
+        })
+        .await?;
+    Ok(report)
+}
+
+/// Indirizzo da aprire per un contenuto.
+async fn resolve(shared: &Arc<Shared>, item: Playable) -> Result<ResolvedStream, SourceError> {
+    match item {
+        Playable::Channel(channel_id) => {
+            match shared
+                .with_store(move |s| s.channel_stream(channel_id))
+                .await?
+            {
+                ChannelStream::Url(stream) => Ok(ResolvedStream {
+                    stream,
+                    on_demand: false,
+                }),
+                ChannelStream::Xtream {
+                    source_id,
+                    xtream_id,
+                } => {
+                    let ext = shared
+                        .with_store(move |s| s.live_extension(source_id))
+                        .await?;
+                    let (client, source) = shared.xtream_client(source_id).await?;
+                    Ok(ResolvedStream {
+                        stream: StreamInfo {
+                            url: client.live_url(xtream_id, &ext),
+                            user_agent: source.user_agent,
+                            referrer: None,
+                        },
+                        on_demand: false,
+                    })
+                }
+            }
+        }
+        Playable::Movie(movie_id) => {
+            let (source_id, movie) = shared.with_store(move |s| s.movie_ref(movie_id)).await?;
+            let (client, source) = shared.xtream_client(source_id).await?;
+            let container = movie.container.as_deref().unwrap_or("mp4");
+            Ok(ResolvedStream {
+                stream: StreamInfo {
+                    url: client.movie_url(movie.xtream_id, container),
+                    user_agent: source.user_agent,
+                    referrer: None,
+                },
+                on_demand: true,
+            })
+        }
+        Playable::Episode { series_id, episode } => {
+            let (source_id, _) = shared.with_store(move |s| s.series_ref(series_id)).await?;
+            let (client, source) = shared.xtream_client(source_id).await?;
+            Ok(ResolvedStream {
+                stream: StreamInfo {
+                    url: client.episode_url(episode.id, &episode.container),
+                    user_agent: source.user_agent,
+                    referrer: None,
+                },
+                on_demand: true,
+            })
+        }
+    }
+}
+
+// ───────────── M3U ─────────────
 
 /// Scarica (o legge dal disco) e interpreta una playlist, riga per riga mentre arriva.
 async fn load_playlist(shared: &Shared, source: &NewSource) -> Result<Playlist, SourceError> {
@@ -491,6 +1031,7 @@ async fn load_playlist(shared: &Shared, source: &NewSource) -> Result<Playlist, 
             .map_err(|e| SourceError::File(e.to_string()))??
         }
         SourceKind::M3uUrl => download_playlist(&shared.http, source).await?,
+        SourceKind::Xtream => return Err(SourceError::InvalidServer),
     };
     if playlist.entries.is_empty() {
         return Err(SourceError::Empty);
@@ -550,8 +1091,10 @@ async fn download_playlist(
     })
 }
 
-/// Nome del file di cache di un logo: hash dell'indirizzo (non si salvano URL su disco).
-fn logo_cache_name(url: &str) -> String {
+// ───────────── immagini ─────────────
+
+/// Nome del file di cache di un'immagine: hash dell'indirizzo (non si salvano URL su disco).
+fn image_cache_name(url: &str) -> String {
     Sha256::digest(url.as_bytes())
         .iter()
         .take(16)
@@ -559,45 +1102,53 @@ fn logo_cache_name(url: &str) -> String {
         .collect()
 }
 
-async fn fetch_logo(shared: &Arc<Shared>, url: String) {
+async fn fetch_image(shared: &Arc<Shared>, url: String, poster: bool) {
     {
         let mut in_flight = shared
-            .logos_in_flight
+            .images_in_flight
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if !in_flight.insert(url.clone()) {
+        if !in_flight.insert((url.clone(), poster)) {
             return;
         }
     }
-    let image = load_logo(shared, &url).await;
+    let image = load_image(shared, &url, poster).await;
     shared
-        .logos_in_flight
+        .images_in_flight
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .remove(&url);
-    shared.emit(Event::Logo { url, image });
+        .remove(&(url.clone(), poster));
+    shared.emit(Event::Image { url, poster, image });
 }
 
-async fn load_logo(shared: &Arc<Shared>, url: &str) -> Option<LogoImage> {
-    let path = shared.cache_dir.join("loghi").join(logo_cache_name(url));
+async fn load_image(shared: &Arc<Shared>, url: &str, poster: bool) -> Option<LogoImage> {
+    let path = shared
+        .cache_dir
+        .join("immagini")
+        .join(image_cache_name(url));
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
         Err(_) => {
-            let _permit = shared.logos.acquire().await.ok()?;
-            let bytes = download_logo(&shared.http, url).await?;
+            let _permit = shared.images.acquire().await.ok()?;
+            let bytes = download_image(&shared.http, url).await?;
             if let Err(err) = tokio::fs::write(&path, &bytes).await {
-                log::debug!("cache del logo non scritta: {err}");
+                log::debug!("cache dell'immagine non scritta: {err}");
             }
             bytes
         }
     };
-    tokio::task::spawn_blocking(move || decode_logo(&bytes))
+    let max_side = if poster {
+        POSTER_MAX_SIDE
+    } else {
+        LOGO_MAX_SIDE
+    };
+    tokio::task::spawn_blocking(move || decode_image(&bytes, max_side))
         .await
         .ok()
         .flatten()
 }
 
-async fn download_logo(http: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
+async fn download_image(http: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return None;
     }
@@ -610,18 +1161,18 @@ async fn download_logo(http: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
     if !response.status().is_success()
         || response
             .content_length()
-            .is_some_and(|len| len > MAX_LOGO_BYTES)
+            .is_some_and(|len| len > MAX_IMAGE_BYTES)
     {
         return None;
     }
     let bytes = response.bytes().await.ok()?;
-    (bytes.len() as u64 <= MAX_LOGO_BYTES).then(|| bytes.to_vec())
+    (bytes.len() as u64 <= MAX_IMAGE_BYTES).then(|| bytes.to_vec())
 }
 
-fn decode_logo(bytes: &[u8]) -> Option<LogoImage> {
+fn decode_image(bytes: &[u8], max_side: u32) -> Option<LogoImage> {
     let image = image::load_from_memory(bytes).ok()?;
-    let image = if image.width() > LOGO_MAX_SIDE || image.height() > LOGO_MAX_SIDE {
-        image.thumbnail(LOGO_MAX_SIDE, LOGO_MAX_SIDE)
+    let image = if image.width() > max_side || image.height() > max_side {
+        image.thumbnail(max_side, max_side)
     } else {
         image
     };
@@ -636,16 +1187,19 @@ fn decode_logo(bytes: &[u8]) -> Option<LogoImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secrets::MemorySecrets;
     use std::sync::mpsc as std_mpsc;
 
-    fn start(dir: &std::path::Path) -> (Service, std_mpsc::Receiver<Event>) {
+    fn start(dir: &std::path::Path) -> (Service, std_mpsc::Receiver<Event>, Arc<MemorySecrets>) {
         let (tx, rx) = std_mpsc::channel();
         let tx = Mutex::new(tx);
+        let secrets = Arc::new(MemorySecrets::default());
         let service = Service::start(
             ServiceConfig {
                 database: dir.join("archivio.db"),
                 cache_dir: dir.join("cache"),
                 cipher: Cipher::new(&[3; 32]),
+                secrets: Arc::clone(&secrets) as Arc<dyn SecretStore>,
                 user_agent: "Sintonia-test".into(),
             },
             move |event| {
@@ -653,7 +1207,7 @@ mod tests {
             },
         )
         .unwrap();
-        (service, rx)
+        (service, rx, secrets)
     }
 
     fn wait<T>(rx: &std_mpsc::Receiver<Event>, pick: impl Fn(Event) -> Option<T>) -> T {
@@ -667,8 +1221,26 @@ mod tests {
         }
     }
 
+    type Catalog = (
+        Arc<Vec<ChannelRow>>,
+        Arc<Vec<MovieRow>>,
+        Arc<Vec<SeriesRow>>,
+    );
+
+    fn catalog(rx: &std_mpsc::Receiver<Event>) -> Catalog {
+        wait(rx, |e| match e {
+            Event::Catalog {
+                channels,
+                movies,
+                series,
+                ..
+            } => Some((channels, movies, series)),
+            _ => None,
+        })
+    }
+
     #[test]
-    fn add_file_source_then_search_and_resolve() {
+    fn add_file_source_then_search_resolve_and_favorites() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("lista.m3u");
         std::fs::write(
@@ -677,11 +1249,12 @@ mod tests {
              #EXTINF:-1 group-title=\"Sport\",Sport Due\nhttp://h/u/p/2.ts\n",
         )
         .unwrap();
-        let (service, rx) = start(dir.path());
+        let (service, rx, _) = start(dir.path());
         service.send(Command::AddSource(NewSource {
             name: "Prova".into(),
             kind: SourceKind::M3uFile,
             location: file.to_string_lossy().into_owned(),
+            username: None,
             user_agent: None,
         }));
         let saved = wait(&rx, |e| match e {
@@ -689,37 +1262,52 @@ mod tests {
             _ => None,
         });
         assert_eq!(saved.unwrap().channels, 2);
-        let channels = wait(&rx, |e| match e {
-            Event::Channels { channels, .. } => Some(channels),
-            _ => None,
-        });
+        let (channels, movies, _) = catalog(&rx);
         assert_eq!(channels.len(), 2);
+        assert!(movies.is_empty());
 
         service.send(Command::Search {
             query: "sport".into(),
             generation: 7,
         });
         let (generation, ids) = wait(&rx, |e| match e {
-            Event::SearchResults { generation, ids } => Some((generation, ids)),
+            Event::SearchResults {
+                generation,
+                channels,
+                ..
+            } => Some((generation, channels)),
             _ => None,
         });
         assert_eq!((generation, ids), (7, vec![channels[1].id]));
 
-        service.send(Command::ResolveStream {
-            channel_id: channels[0].id,
+        service.send(Command::Resolve {
+            item: Playable::Channel(channels[0].id),
             token: 1,
         });
         let stream = wait(&rx, |e| match e {
             Event::Stream { result, .. } => Some(result),
             _ => None,
+        })
+        .unwrap();
+        assert_eq!(stream.stream.url, "http://h/u/p/1.ts");
+        assert!(!stream.on_demand);
+
+        service.send(Command::SetFavorite {
+            kind: ItemKind::Live,
+            key: channels[1].key.clone(),
+            favorite: true,
         });
-        assert_eq!(stream.unwrap().url, "http://h/u/p/1.ts");
+        let favorites = wait(&rx, |e| match e {
+            Event::Favorites(f) if !f.is_empty() => Some(f),
+            _ => None,
+        });
+        assert_eq!(favorites, [(ItemKind::Live, channels[1].key.clone())]);
     }
 
     #[test]
     fn missing_file_is_reported() {
         let dir = tempfile::tempdir().unwrap();
-        let (service, rx) = start(dir.path());
+        let (service, rx, _) = start(dir.path());
         service.send(Command::VerifySource(NewSource {
             name: "X".into(),
             kind: SourceKind::M3uFile,
@@ -728,6 +1316,7 @@ mod tests {
                 .join("non-esiste.m3u")
                 .to_string_lossy()
                 .into_owned(),
+            username: None,
             user_agent: None,
         }));
         let result = wait(&rx, |e| match e {
@@ -738,21 +1327,107 @@ mod tests {
     }
 
     #[test]
-    fn logo_names_do_not_contain_the_url() {
-        let name = logo_cache_name("http://h/u/p/logo.png");
+    fn image_names_do_not_contain_the_url() {
+        let name = image_cache_name("http://h/u/p/logo.png");
         assert_eq!(name.len(), 32);
         assert!(!name.contains("logo"));
     }
 
     #[test]
-    fn logos_are_decoded_and_shrunk() {
+    fn images_are_decoded_and_shrunk() {
         let mut png = Vec::new();
         image::RgbaImage::new(400, 200)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let logo = decode_logo(&png).unwrap();
+        let logo = decode_image(&png, LOGO_MAX_SIDE).unwrap();
         assert_eq!((logo.width, logo.height), (128, 64));
         assert_eq!(logo.rgba.len(), 128 * 64 * 4);
-        assert!(decode_logo(b"non un'immagine").is_none());
+        let poster = decode_image(&png, POSTER_MAX_SIDE).unwrap();
+        assert_eq!((poster.width, poster.height), (360, 180));
+        assert!(decode_image(b"non un'immagine", LOGO_MAX_SIDE).is_none());
+    }
+
+    #[test]
+    fn years_from_dates() {
+        assert_eq!(year_of(Some("2021-05-01")), Some("2021".into()));
+        assert_eq!(year_of(Some("n/d")), None);
+        assert_eq!(year_of(Some("0000-00-00")), None);
+        assert_eq!(year_of(None), None);
+    }
+
+    #[cfg(feature = "mock")]
+    #[test]
+    fn xtream_account_end_to_end() {
+        let server = crate::xtream_mock::MockServer::start(crate::xtream_mock::Catalog::sample());
+        let dir = tempfile::tempdir().unwrap();
+        let (service, rx, secrets) = start(dir.path());
+        let source = NewSource {
+            name: "Casa".into(),
+            kind: SourceKind::Xtream,
+            location: server.address(),
+            username: Some("mario".into()),
+            user_agent: None,
+        };
+        // password sbagliata
+        service.send(Command::VerifyXtream {
+            source: source.clone(),
+            password: "no".into(),
+        });
+        let wrong = wait(&rx, |e| match e {
+            Event::Verified(r) => Some(r),
+            _ => None,
+        });
+        assert_eq!(wrong, Err(SourceError::Auth));
+
+        service.send(Command::AddXtream {
+            source,
+            password: crate::xtream_mock::PASSWORD.into(),
+        });
+        let report = wait(&rx, |e| match e {
+            Event::SourceSaved { result, .. } => Some(result),
+            _ => None,
+        })
+        .unwrap();
+        assert!(report.account.as_ref().is_some_and(AccountInfo::is_active));
+        let (channels, movies, series) = catalog(&rx);
+        assert_eq!(channels.len(), report.channels);
+        assert!(!movies.is_empty() && !series.is_empty());
+        assert!(
+            !channels[0].group.is_empty(),
+            "nome della categoria risolto"
+        );
+        // la password sta nel portachiavi, non nell'archivio
+        let source_id = 1;
+        assert_eq!(
+            secrets
+                .get(&source_password_name(source_id))
+                .unwrap()
+                .as_deref(),
+            Some(crate::xtream_mock::PASSWORD)
+        );
+
+        service.send(Command::Resolve {
+            item: Playable::Movie(movies[0].id),
+            token: 5,
+        });
+        let movie = wait(&rx, |e| match e {
+            Event::Stream { token: 5, result } => Some(result),
+            _ => None,
+        })
+        .unwrap();
+        assert!(movie.on_demand);
+        assert!(movie.stream.url.contains("/movie/mario/"));
+
+        service.send(Command::SeriesDetail(series[0].id));
+        let detail = wait(&rx, |e| match e {
+            Event::SeriesDetail { result, .. } => Some(result),
+            _ => None,
+        })
+        .unwrap();
+        assert!(!detail.episodes.is_empty());
+
+        service.send(Command::DeleteSource(source_id));
+        let _ = catalog(&rx);
+        assert_eq!(secrets.get(&source_password_name(source_id)).unwrap(), None);
     }
 }

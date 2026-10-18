@@ -70,6 +70,7 @@ fn per_file_options_are_accepted() {
     let options = sintonia_player::LoadOptions {
         user_agent: Some("Prova/1.0 (a, b)".into()),
         referrer: Some("https://r.example/".into()),
+        start_secs: Some(30),
     };
     player
         .load_with("C:/questo-file-non-esiste/sintonia.ts", &options)
@@ -82,5 +83,7 @@ fn per_file_options_are_accepted() {
         Some(PlayerEvent::Ended(EndReason::Error(_)))
     ));
     assert!(player.tracks().is_empty());
+    assert_eq!(player.position(), None);
+    assert_eq!(player.duration(), None);
     player.set_user_agent(None).expect("user-agent generale");
 }
