@@ -25,6 +25,7 @@ sys-locale = "0.3.2"
 directories = "6.0.0"
 
 [build-dependencies]
+embed-resource = "3.0.12"
 slint-build = { workspace = true }
 
 [lints]

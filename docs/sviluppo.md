@@ -81,6 +81,10 @@ cargo run -p sintonia-app --features slint/mcp
 | `sintonia-player` | involucro di libmpv: `Player` (comandi, tracce, opzioni per canale, eventi da un thread dedicato), `Backoff` (riconnessione), `RenderContext` (render API OpenGL) |
 | `sintonia-app` | finestre Slint: `app.rs` (collega interfaccia, servizio e player; ripresa, prossimo episodio), `catalog.rs` (modello virtualizzato per canali, film e serie, con preferiti), `guide.rs` (palinsesto in memoria, «in onda / dopo», griglia della Guida), `images.rs` (locandine ritagliate con gli angoli di `Sq`), `video.rs` (video di mpv nelle finestre, riconnessione, fine dei film), `settings.rs` |
 
+Il logo sta in `assets/logo/` (SVG d'origine, PNG da 32 a 1024 px, `sintonia.ico`): l'icona
+dell'eseguibile entra da `crates/sintonia-app/sintonia.rc` (build script, `embed-resource`), quella
+delle finestre e il logo della barra in alto da `ui/app.slint`.
+
 ### Il video dentro Slint (M0)
 
 - Slint usa il renderer **FemtoVG su OpenGL** (`BackendSelector::require_opengl`).

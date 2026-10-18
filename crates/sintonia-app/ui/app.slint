@@ -22,24 +22,22 @@ component TopBar inherits HorizontalLayout {
     height: 70px;
     spacing: 16px;
     HorizontalLayout {
-        spacing: 8px;
+        spacing: 10px;
         alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("../../../assets/logo/sintonia-logo-64.png");
+                width: 32px;
+                height: 32px;
+            }
+        }
         Text {
             text: "Sintonia";
             color: Theme.ink;
             font-size: 24px;
             font-weight: 700;
             vertical-alignment: center;
-        }
-        VerticalLayout {
-            alignment: center;
-            padding-top: 4px;
-            Rectangle {
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: Theme.needle;
-            }
         }
     }
     Rectangle { horizontal-stretch: 1; }
@@ -1659,6 +1657,7 @@ export component PipWindow inherits Window {
     // rotellina: positivo ingrandisce
     callback resize-step(float);
     title: "Sintonia mini player";
+    icon: @image-url("../../../assets/logo/sintonia-logo-64.png");
     no-frame: true;
     always-on-top: true;
     background: transparent;
@@ -1777,6 +1776,7 @@ export component PipWindow inherits Window {
 
 export component MainWindow inherits Window {
     title: "Sintonia";
+    icon: @image-url("../../../assets/logo/sintonia-logo-64.png");
     preferred-width: 1320px;
     preferred-height: 800px;
     min-width: 1100px;

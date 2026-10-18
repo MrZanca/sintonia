@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/sintonia-logo-256.png" alt="Logo di Sintonia" width="128"></p>
+
 # Sintonia
 
 Player IPTV per PC (Windows, poi Linux e macOS), scritto in Rust con interfaccia Slint e video libmpv.

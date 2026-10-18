@@ -6,6 +6,12 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=lang");
+    println!("cargo:rerun-if-changed=sintonia.rc");
+    println!("cargo:rerun-if-changed=../../assets/logo/sintonia.ico");
+    // icona dell'eseguibile su Windows (nessun effetto sugli altri sistemi)
+    embed_resource::compile("sintonia.rc", embed_resource::NONE)
+        .manifest_optional()
+        .expect("icona dell'eseguibile non compilata");
     let config = slint_build::CompilerConfiguration::new()
         .with_bundled_translations("lang")
         .with_default_translation_context(slint_build::DefaultTranslationContext::None);
