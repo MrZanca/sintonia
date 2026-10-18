@@ -46,7 +46,7 @@ cargo test
 cargo run --release -p sintonia-player --example probe -- lista.m3u 15 8
 
 # zip portatile per Windows in dist\
-powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1
+powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1          # -Prova: aggiunge finto_xtream.exe
 ```
 
 Log: `RUST_LOG=debug` (o `info,sintonia=debug,mpv=info`). I messaggi di mpv passano per
