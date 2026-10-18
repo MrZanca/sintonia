@@ -1231,6 +1231,10 @@ component PlayerScreen inherits Rectangle {
     callback cycle-aspect();
     property <bool> overlay: true;
     property <bool> drawer: false;
+    // il puntatore sparisce insieme alle informazioni (Rust lo nasconde anche col mouse fermo)
+    callback cursor-hidden(bool);
+    property <bool> hide-cursor: !root.overlay && !root.drawer;
+    changed hide-cursor => { root.cursor-hidden(self.hide-cursor); }
     background: #000000;
 
     // Le informazioni sul video spariscono dopo qualche secondo senza movimenti del mouse o tasti;
@@ -1651,9 +1655,11 @@ export component PipWindow inherits Window {
     callback expand();
     callback dismiss();
     callback moved(length, length);
-    // ridimensionamento con una maniglia d'angolo: 0 alto-sinistra, 1 alto-destra,
-    // 2 basso-sinistra, 3 basso-destra; Rust mantiene le proporzioni 16:9
-    callback resize(int, length, length);
+    // ridimensionamento con una maniglia d'angolo: alla pressione l'angolo (0 alto-sinistra,
+    // 1 alto-destra, 2 basso-sinistra, 3 basso-destra) e il mouse nella finestra, poi solo il
+    // mouse; Rust mantiene le proporzioni 16:9
+    callback resize-start(int, length, length);
+    callback resize(length, length);
     // rotellina: positivo ingrandisce
     callback resize-step(float);
     title: "Sintonia mini player";
@@ -1744,7 +1750,12 @@ export component PipWindow inherits Window {
         width: 16px;
         height: 16px;
         mouse-cursor: MouseCursor.nw-resize;
-        moved => { root.resize(0, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.resize-start(0, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => { root.resize(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
     }
     h1 := TouchArea {
         x: root.width - 16px;
@@ -1752,7 +1763,12 @@ export component PipWindow inherits Window {
         width: 16px;
         height: 16px;
         mouse-cursor: MouseCursor.ne-resize;
-        moved => { root.resize(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.resize-start(1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => { root.resize(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
     }
     h2 := TouchArea {
         x: 0px;
@@ -1760,7 +1776,12 @@ export component PipWindow inherits Window {
         width: 16px;
         height: 16px;
         mouse-cursor: MouseCursor.sw-resize;
-        moved => { root.resize(2, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.resize-start(2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => { root.resize(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
     }
     h3 := TouchArea {
         x: root.width - 16px;
@@ -1768,7 +1789,12 @@ export component PipWindow inherits Window {
         width: 16px;
         height: 16px;
         mouse-cursor: MouseCursor.se-resize;
-        moved => { root.resize(3, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.resize-start(3, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => { root.resize(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
     }
 }
 
@@ -1787,6 +1813,8 @@ export component MainWindow inherits Window {
     in-out property <int> page <=> Theme.page;
     in-out property <bool> playing: false;
     in property <string> clock;
+    // nel player: il puntatore va nascosto (o rimostrato)
+    callback cursor-hidden(bool);
 
     // canali della sorgente in uso, già filtrati per categoria o ricerca
     in property <[ChannelItem]> channels;
@@ -2132,5 +2160,6 @@ export component MainWindow inherits Window {
         select-audio(id) => { root.select-audio(id); }
         select-sub(id) => { root.select-sub(id); }
         cycle-aspect => { root.cycle-aspect(); }
+        cursor-hidden(h) => { root.cursor-hidden(h); }
     }
 }

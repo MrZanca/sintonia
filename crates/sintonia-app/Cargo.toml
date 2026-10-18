@@ -14,7 +14,8 @@ path = "src/main.rs"
 [dependencies]
 sintonia-core = { path = "../sintonia-core" }
 sintonia-player = { path = "../sintonia-player" }
-slint = { workspace = true }
+# winit_030: per nascondere il puntatore anche quando il mouse è fermo
+slint = { workspace = true, features = ["unstable-winit-030"] }
 glow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }

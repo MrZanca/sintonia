@@ -20,6 +20,7 @@ use sintonia_core::service::{
 };
 use sintonia_core::xtream::{Episode, MovieDetail, SeriesDetail};
 use sintonia_player::TrackKind;
+use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, Model, ModelRc, PhysicalPosition, SharedString, VecModel};
 
 use crate::catalog::{
@@ -71,13 +72,18 @@ const PIP_MARGIN: f32 = 40.0;
 /// Spostamento di uno scatto della rotellina, come lo riporta Slint (pixel logici).
 const WHEEL_NOTCH: f32 = 60.0;
 
-/// Punto che resta fermo quando il mini player cambia dimensione.
+/// Trascinamento di un angolo del mini player: tutto si calcola dalla situazione alla
+/// pressione, così la finestra che cambia sotto il mouse non fa tornare indietro la misura.
 #[derive(Debug, Clone, Copy)]
-enum PipAnchor {
-    /// L'angolo opposto a quello trascinato (`left`/`top`: lato dell'angolo trascinato).
-    Corner { left: bool, top: bool },
-    /// Il centro (rotellina del mouse).
-    Center,
+struct PipDrag {
+    left: bool,
+    top: bool,
+    /// Posizione della finestra alla pressione (pixel fisici).
+    pos: PhysicalPosition,
+    /// Larghezza alla pressione (pixel logici).
+    width: f32,
+    /// Mouse alla pressione, in coordinate dello schermo (pixel fisici).
+    cursor: (f32, f32),
 }
 
 /// Cosa c'è nel player (o sta per esserci).
@@ -225,6 +231,7 @@ pub struct App {
     auto_fullscreen: Cell<bool>,
     /// Salva la dimensione del mini player poco dopo l'ultimo ridimensionamento.
     pip_save_timer: slint::Timer,
+    pip_drag: Cell<Option<PipDrag>>,
 
     // guida
     /// Programmi attorno ad adesso, per «in onda / dopo».
@@ -348,6 +355,7 @@ impl App {
             aspect: Cell::new(0),
             auto_fullscreen: Cell::new(false),
             pip_save_timer: slint::Timer::default(),
+            pip_drag: Cell::new(None),
             now_schedule,
             now_loaded_at: Cell::new(0),
             now_generation: Cell::new(0),
@@ -1996,6 +2004,9 @@ impl App {
         }));
         main.on_request_pip(with_app!(|app, row: i32| app.open_pip(row)));
         main.on_close_pip(on(|app| app.router.move_to_main()));
+        // Slint cambia il puntatore solo quando il mouse si muove: per farlo sparire col mouse
+        // fermo lo si nasconde direttamente nella finestra
+        main.on_cursor_hidden(with_app!(|app, hidden: bool| app.set_cursor_hidden(hidden)));
         main.on_toggle_fullscreen(on(|app| {
             if let Some(main) = app.main() {
                 let window = main.window();
@@ -2142,23 +2153,15 @@ impl App {
                 }
             });
         }
-        pip.on_resize(with_app!(|app, corner: i32, dx: f32, dy: f32| {
-            let (left, top) = (corner == 0 || corner == 2, corner == 0 || corner == 1);
-            // la larghezza segue il movimento più ampio, l'altezza resta in proporzione
-            let from_x = if left { -dx } else { dx };
-            let from_y = (if top { -dy } else { dy }) / PIP_RATIO;
-            let delta = if from_x.abs() >= from_y.abs() {
-                from_x
-            } else {
-                from_y
-            };
-            app.resize_pip(|w| w + delta, PipAnchor::Corner { left, top });
+        pip.on_resize_start(with_app!(|app, corner: i32, x: f32, y: f32| {
+            app.start_pip_drag(corner, x, y);
         }));
+        pip.on_resize(with_app!(|app, x: f32, y: f32| app.drag_pip(x, y)));
         pip.on_resize_step(with_app!(|app, delta: f32| {
             // +10% per scatto della rotellina (uno scatto vale 60 px); più scatti possono
             // arrivare in un solo evento
             let factor = 1.1f32.powf(delta / WHEEL_NOTCH).clamp(0.5, 2.0);
-            app.resize_pip(|w| w * factor, PipAnchor::Center);
+            app.resize_pip(|w| w * factor);
         }));
         // «chiudi»: chiude il mini player e ferma la riproduzione
         pip.on_dismiss(on(|app| {
@@ -2295,8 +2298,73 @@ impl App {
         self.router.move_to_pip();
     }
 
-    /// Cambia la larghezza del mini player (l'altezza segue in 16:9) tenendo fermo `anchor`.
-    fn resize_pip(self: &Rc<Self>, new_width: impl FnOnce(f32) -> f32, anchor: PipAnchor) {
+    /// Il mouse in coordinate dello schermo, dal punto `(x, y)` della finestra del mini player.
+    fn pip_cursor(window: &slint::Window, x: f32, y: f32) -> (f32, f32) {
+        let (scale, pos) = (window.scale_factor(), window.position());
+        (pos.x as f32 + x * scale, pos.y as f32 + y * scale)
+    }
+
+    /// Pressione su un angolo (0 alto-sinistra, 1 alto-destra, 2 basso-sinistra,
+    /// 3 basso-destra); `(x, y)` è il mouse nella finestra.
+    fn start_pip_drag(&self, corner: i32, x: f32, y: f32) {
+        let Some(pip) = self.pip.upgrade() else {
+            return;
+        };
+        let window = pip.window();
+        self.pip_drag.set(Some(PipDrag {
+            left: corner == 0 || corner == 2,
+            top: corner == 0 || corner == 1,
+            pos: window.position(),
+            width: window.size().to_logical(window.scale_factor()).width,
+            cursor: Self::pip_cursor(window, x, y),
+        }));
+    }
+
+    /// Trascinamento di un angolo: la misura nasce dallo spostamento del mouse rispetto alla
+    /// pressione; l'angolo opposto resta fermo.
+    fn drag_pip(self: &Rc<Self>, x: f32, y: f32) {
+        let (Some(pip), Some(drag)) = (self.pip.upgrade(), self.pip_drag.get()) else {
+            return;
+        };
+        let window = pip.window();
+        let scale = window.scale_factor();
+        let cursor = Self::pip_cursor(window, x, y);
+        let (dx, dy) = (
+            (cursor.0 - drag.cursor.0) / scale,
+            (cursor.1 - drag.cursor.1) / scale,
+        );
+        // la larghezza segue il movimento più ampio, l'altezza resta in proporzione
+        let from_x = if drag.left { -dx } else { dx };
+        let from_y = (if drag.top { -dy } else { dy }) / PIP_RATIO;
+        let delta = if from_x.abs() >= from_y.abs() {
+            from_x
+        } else {
+            from_y
+        };
+        let width = (drag.width + delta)
+            .round()
+            .clamp(PIP_MIN_WIDTH, PIP_MAX_WIDTH);
+        let current = window.size().to_logical(scale).width;
+        if (width - current).abs() < 0.5 {
+            return;
+        }
+        let height = width * PIP_RATIO;
+        let start_height = drag.width * PIP_RATIO;
+        window.set_size(slint::LogicalSize::new(width, height));
+        if drag.left || drag.top {
+            let shift_x = if drag.left { drag.width - width } else { 0.0 };
+            let shift_y = if drag.top { start_height - height } else { 0.0 };
+            window.set_position(PhysicalPosition::new(
+                drag.pos.x + (shift_x * scale).round() as i32,
+                drag.pos.y + (shift_y * scale).round() as i32,
+            ));
+        }
+        self.save_pip_width_later(width);
+    }
+
+    /// Rotellina: cambia la larghezza del mini player (l'altezza segue in 16:9) tenendo fermo
+    /// il centro.
+    fn resize_pip(self: &Rc<Self>, new_width: impl FnOnce(f32) -> f32) {
         let Some(pip) = self.pip.upgrade() else {
             return;
         };
@@ -2311,18 +2379,15 @@ impl App {
         }
         let pos = window.position();
         window.set_size(slint::LogicalSize::new(width, height));
-        let (shift_x, shift_y) = match anchor {
-            PipAnchor::Corner { left, top } => {
-                (if left { dw } else { 0.0 }, if top { dh } else { 0.0 })
-            }
-            PipAnchor::Center => (dw / 2.0, dh / 2.0),
-        };
-        if shift_x != 0.0 || shift_y != 0.0 {
-            window.set_position(PhysicalPosition::new(
-                pos.x - (shift_x * scale).round() as i32,
-                pos.y - (shift_y * scale).round() as i32,
-            ));
-        }
+        window.set_position(PhysicalPosition::new(
+            pos.x - (dw / 2.0 * scale).round() as i32,
+            pos.y - (dh / 2.0 * scale).round() as i32,
+        ));
+        self.save_pip_width_later(width);
+    }
+
+    /// Salva la larghezza del mini player poco dopo l'ultimo cambiamento.
+    fn save_pip_width_later(self: &Rc<Self>, width: f32) {
         let weak = Rc::downgrade(self);
         self.pip_save_timer.start(
             slint::TimerMode::SingleShot,
@@ -2335,8 +2400,20 @@ impl App {
         );
     }
 
+    /// Nasconde (o rimostra) il puntatore del mouse sopra la finestra principale.
+    fn set_cursor_hidden(&self, hidden: bool) {
+        if let Some(main) = self.main() {
+            main.window()
+                .with_winit_window(|window| window.set_cursor_visible(!hidden));
+        }
+    }
+
     fn on_playing_changed(&self, playing: bool) {
         let Some(main) = self.main() else { return };
+        if !playing {
+            // il player si chiude: il puntatore torna in ogni caso
+            self.set_cursor_hidden(false);
+        }
         let window = main.window();
         if playing && self.settings.borrow().fullscreen_start && !window.is_fullscreen() {
             window.set_fullscreen(true);
