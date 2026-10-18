@@ -199,9 +199,6 @@ msgstr "La playlist è troppo grande."
 msgid "The server answered with error {}."
 msgstr "Il server ha risposto con l'errore {}."
 
-msgid "The TV guide is coming in a next version of Sintonia."
-msgstr "La guida TV arriva in una prossima versione di Sintonia."
-
 msgid "This channel declares a DRM protection: it may not play."
 msgstr "Questo canale dichiara una protezione DRM: potrebbe non funzionare."
 
@@ -351,3 +348,83 @@ msgstr "nome utente"
 
 msgid "{} min"
 msgstr "{} min"
+
+msgid "Guide: {n} channel"
+msgid_plural "Guide: {n} channels"
+msgstr[0] "Guida: {n} canale"
+msgstr[1] "Guida: {n} canali"
+
+msgid "Downloads the program guide when you open Sintonia, if it is more than 12 hours old."
+msgstr "Scarica la guida dei programmi quando apri Sintonia, se ha più di 12 ore."
+
+msgid "Guide not updated: {}"
+msgstr "Guida non aggiornata: {}"
+
+msgid "Guide: updating…"
+msgstr "Guida: aggiornamento in corso…"
+
+msgid "Next: {} {}"
+msgstr "Dopo: {} {}"
+
+msgid "No programme information"
+msgstr "Nessuna informazione sui programmi"
+
+msgid "Open Settings"
+msgstr "Apri le Impostazioni"
+
+msgid "Program guide (optional)"
+msgstr "Guida dei programmi (facoltativa)"
+
+msgid "Refresh the guide at startup"
+msgstr "Aggiorna la guida all'avvio"
+
+msgid "This source has no program guide. You can add an XMLTV address to the source in Settings."
+msgstr "Questa sorgente non ha una guida dei programmi. Puoi aggiungere un indirizzo XMLTV alla sorgente nelle Impostazioni."
+
+msgid "Today"
+msgstr "Oggi"
+
+msgid "Tomorrow"
+msgstr "Domani"
+
+msgid "Yesterday"
+msgstr "Ieri"
+
+msgid "Updating the guide…"
+msgstr "Aggiornamento della guida…"
+
+msgid "XMLTV address or file, if the playlist doesn't give one"
+msgstr "indirizzo o file XMLTV, se la playlist non ne indica uno"
+
+msgid "automatic from the server"
+msgstr "automatica dal server"
+
+msgid "updated {}"
+msgstr "aggiornata il {}"
+
+msgid "Mon"
+msgstr "Lun"
+
+msgid "Tue"
+msgstr "Mar"
+
+msgid "Wed"
+msgstr "Mer"
+
+msgid "Thu"
+msgstr "Gio"
+
+msgid "Fri"
+msgstr "Ven"
+
+msgid "Sat"
+msgstr "Sab"
+
+msgid "Sun"
+msgstr "Dom"
+
+msgid "XMLTV address or file (empty: the source's own)"
+msgstr "Indirizzo o file XMLTV (vuoto: quella della sorgente)"
+
+msgid "Use this guide"
+msgstr "Usa questa guida"

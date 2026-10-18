@@ -2,9 +2,11 @@
 // Le stringhe sono in inglese con @tr(); le traduzioni stanno in lang/<lingua>/LC_MESSAGES/sintonia-app.po.
 // I dati arrivano da Rust: qui non c'è nessun canale.
 
-import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
+import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo, NowNext } from "common.slint";
 import { MediaScreen } from "media.slint";
+import { GuideScreen, GuideRow, DayItem } from "guide.slint";
 export { Video, Texts, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
+export { GuideRow, GuideBlock, DayItem } from "guide.slint";
 
 // ───────────── Barra in alto e fascia di lancio ─────────────
 
@@ -216,8 +218,9 @@ component ChannelLine inherits Rectangle {
                 font-weight: 600;
                 overflow: elide;
             }
+            // con la guida: il programma in onda al posto della categoria
             Text {
-                text: root.c.group;
+                text: root.c.now-title != "" ? root.c.now-title : root.c.group;
                 color: Theme.dim;
                 font-size: 12px;
                 overflow: elide;
@@ -467,6 +470,8 @@ component HomeScreen inherits Rectangle {
                     color: Theme.ink;
                     font-size: 18px;
                 }
+                if root.hero.now-title != "": Rectangle { height: 4px; }
+                if root.hero.now-title != "": NowNext { c: root.hero; bar-width: 300px; label: false; }
                 Text {
                     text: @tr("Channel {}", root.hero.num);
                     color: Theme.dim;
@@ -648,6 +653,12 @@ component LiveScreen inherits Rectangle {
                     color: Theme.dim;
                     font-size: 15px;
                 }
+                if root.channels.length > 0 && root.cur.now-title != "": Rectangle { height: 6px; }
+                if root.channels.length > 0 && root.cur.now-title != "": NowNext {
+                    c: root.cur;
+                    bar-width: 320px;
+                    title-size: 17px;
+                }
                 if root.cur.drm && root.channels.length > 0: Text {
                     text: @tr("This channel declares a DRM protection: it may not play.");
                     color: Theme.faint;
@@ -752,15 +763,19 @@ component SourceRow inherits Rectangle {
     callback activate();
     callback refresh();
     callback remove();
+    // guida scelta dall'utente ("" = quella della playlist o del server)
+    callback set-epg(string);
     property <bool> confirm: false;
-    height: 104px;
+    property <bool> editing: false;
+    property <string> epg;
+    height: inner.preferred-height;
     Sq {
         r: 20px;
         fill: root.s.active ? #ffffff1c : Theme.glass;
         stroke: root.s.active ? Theme.needle : transparent;
         stroke-width: 1.5px;
     }
-    VerticalLayout {
+    inner := VerticalLayout {
         padding-left: 20px;
         padding-right: 16px;
         padding-top: 12px;
@@ -792,6 +807,12 @@ component SourceRow inherits Rectangle {
             font-size: 12px;
             overflow: elide;
         }
+        if Texts.source-epg(root.s) != "": Text {
+            text: Texts.source-epg(root.s);
+            color: root.s.epg-state == 3 ? Theme.live : Theme.faint;
+            font-size: 12px;
+            overflow: elide;
+        }
         Rectangle { height: 4px; }
         HorizontalLayout {
             spacing: 8px;
@@ -809,6 +830,15 @@ component SourceRow inherits Rectangle {
                 clicked => { root.refresh(); }
             }
             Btn {
+                label: @tr("Guide");
+                height: 30px;
+                enabled: !root.working;
+                clicked => {
+                    root.editing = !root.editing;
+                    root.epg = "";
+                }
+            }
+            Btn {
                 label: root.confirm ? @tr("Confirm delete") : @tr("Delete");
                 height: 30px;
                 danger: root.confirm;
@@ -821,6 +851,30 @@ component SourceRow inherits Rectangle {
                         root.confirm = true;
                     }
                 }
+            }
+        }
+        if root.editing: Rectangle { height: 4px; }
+        if root.editing: Field {
+            label: @tr("XMLTV address or file (empty: the source's own)");
+            placeholder: "http://…/guide.xml.gz";
+            value <=> root.epg;
+        }
+        if root.editing: HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Btn {
+                label: @tr("Use this guide");
+                height: 30px;
+                primary: true;
+                clicked => {
+                    root.set-epg(root.epg);
+                    root.editing = false;
+                }
+            }
+            Btn {
+                label: @tr("Cancel");
+                height: 30px;
+                clicked => { root.editing = false; }
             }
         }
     }
@@ -871,17 +925,19 @@ component SettingsScreen inherits Rectangle {
     in-out property <bool> reconnect;
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview;
+    in-out property <bool> epg-on-start;
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     // cresce dopo un salvataggio riuscito: il modulo si svuota (password compresa)
     in property <int> form-reset;
-    // tipo, nome, indirizzo o file o server, utente, password, user-agent
-    callback verify(int, string, string, string, string, string);
-    callback save(int, string, string, string, string, string);
+    // tipo, nome, indirizzo o file o server, utente, password, user-agent, guida
+    callback verify(int, string, string, string, string, string, string);
+    callback save(int, string, string, string, string, string, string);
     callback pick-file();
     callback activate-source(int);
     callback refresh-source(int);
     callback delete-source(int);
+    callback set-source-epg(int, string);
     callback set-language(int);
     callback setting-changed(string, string);
 
@@ -893,7 +949,9 @@ component SettingsScreen inherits Rectangle {
     property <string> username;
     property <string> password;
     property <string> source-ua;
+    property <string> epg;
     changed form-reset => {
+        root.epg = "";
         root.name = "";
         root.link = "";
         root.server = "";
@@ -928,18 +986,22 @@ component SettingsScreen inherits Rectangle {
                 width: 380px;
                 spacing: 8px;
                 Title { text: @tr("Your sources"); }
-                Flickable {
+                source-fl := Flickable {
                     vertical-stretch: 1;
-                    content-height: root.sources.length * 112px;
-                    for s[i] in root.sources: SourceRow {
-                        x: 0px;
-                        y: i * 112px;
-                        width: parent.width;
-                        s: s;
-                        working: root.working;
-                        activate => { root.activate-source(s.id); }
-                        refresh => { root.refresh-source(s.id); }
-                        remove => { root.delete-source(s.id); }
+                    content-height: source-list.preferred-height;
+                    source-list := VerticalLayout {
+                        width: source-fl.width;
+                        padding-top: 2px;
+                        alignment: start;
+                        spacing: 8px;
+                        for s[i] in root.sources: SourceRow {
+                            s: s;
+                            working: root.working;
+                            activate => { root.activate-source(s.id); }
+                            refresh => { root.refresh-source(s.id); }
+                            remove => { root.delete-source(s.id); }
+                            set-epg(url) => { root.set-source-epg(s.id, url); }
+                        }
                     }
                 }
                 Text {
@@ -988,6 +1050,11 @@ component SettingsScreen inherits Rectangle {
                     }
                 }
                 Field {
+                    label: @tr("Program guide (optional)");
+                    placeholder: root.kind == 2 ? @tr("automatic from the server") : @tr("XMLTV address or file, if the playlist doesn't give one");
+                    value <=> root.epg;
+                }
+                Field {
                     label: @tr("User-agent (optional)");
                     placeholder: @tr("only if your provider asks for one");
                     value <=> root.source-ua;
@@ -998,13 +1065,13 @@ component SettingsScreen inherits Rectangle {
                     Btn {
                         label: @tr("Verify");
                         enabled: !root.working;
-                        clicked => { root.verify(root.kind, root.name, root.location(), root.username, root.password, root.source-ua); }
+                        clicked => { root.verify(root.kind, root.name, root.location(), root.username, root.password, root.source-ua, root.epg); }
                     }
                     Btn {
                         label: @tr("Save");
                         primary: true;
                         enabled: !root.working;
-                        clicked => { root.save(root.kind, root.name, root.location(), root.username, root.password, root.source-ua); }
+                        clicked => { root.save(root.kind, root.name, root.location(), root.username, root.password, root.source-ua, root.epg); }
                     }
                 }
                 if root.status.state != 0: Text {
@@ -1075,6 +1142,12 @@ component SettingsScreen inherits Rectangle {
                 detail: @tr("The highlighted channel starts after a moment. Turn it off if your account allows only one connection.");
                 on <=> root.live-preview;
                 toggled(v) => { root.setting-changed("live_preview", v ? "1" : "0"); }
+            }
+            SwitchRow {
+                label: @tr("Refresh the guide at startup");
+                detail: @tr("Downloads the program guide when you open Sintonia, if it is more than 12 hours old.");
+                on <=> root.epg-on-start;
+                toggled(v) => { root.setting-changed("epg_on_start", v ? "1" : "0"); }
             }
             Rectangle { height: 6px; }
             Field {
@@ -1277,14 +1350,14 @@ component PlayerScreen inherits Rectangle {
         home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
     }
 
-    // barra in basso
+    // barra in basso (più alta quando c'è la guida)
     Rectangle {
         y: parent.height - self.height;
-        height: 190px;
+        height: !root.on-demand && root.c.now-title != "" ? 260px : 190px;
         opacity: root.overlay ? 1 : 0;
         visible: self.opacity > 0.01;
         animate opacity { duration: 250ms; }
-        background: @linear-gradient(180deg, #00000000 0%, #000000d0 100%);
+        background: @linear-gradient(180deg, #00000000 0%, #000000b0 45%, #000000e0 100%);
         // barra di avanzamento (film ed episodi), cliccabile per saltare
         if root.on-demand: Rectangle {
             x: 40px;
@@ -1344,10 +1417,15 @@ component PlayerScreen inherits Rectangle {
                     font-weight: 600;
                     overflow: elide;
                 }
-                Text {
+                if root.on-demand || root.c.now-title == "": Text {
                     text: root.c.group;
                     color: Theme.dim;
                     font-size: 13px;
+                }
+                if !root.on-demand && root.c.now-title != "": NowNext {
+                    c: root.c;
+                    bar-width: 360px;
+                    title-size: 15px;
                 }
             }
             VerticalLayout {
@@ -1723,6 +1801,17 @@ export component MainWindow inherits Window {
     in-out property <int> media-episode-cursor;
     property <int> media-focus-tick;
 
+    // Guida
+    in property <[GuideRow]> guide-rows;
+    in property <[DayItem]> guide-days;
+    in property <int> guide-day: 1;
+    in property <int> guide-now-min: -1;
+    in property <int> guide-state;
+    in property <string> guide-error;
+    in-out property <int> guide-cursor;
+    in property <int> guide-scroll-tick;
+    property <int> guide-focus-tick;
+
     // impostazioni
     in property <[SourceItem]> sources;
     in property <bool> working;
@@ -1731,6 +1820,7 @@ export component MainWindow inherits Window {
     in-out property <bool> reconnect: true;
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview: true;
+    in-out property <bool> epg-on-start: true;
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     in-out property <int> settings-section: 0;
@@ -1760,8 +1850,12 @@ export component MainWindow inherits Window {
     callback request-pip(int);
     callback close-pip();
     callback toggle-fullscreen();
-    callback verify-source(int, string, string, string, string, string);
-    callback save-source(int, string, string, string, string, string);
+    callback verify-source(int, string, string, string, string, string, string);
+    callback save-source(int, string, string, string, string, string, string);
+    callback guide-opened();
+    callback guide-pick-day(int);
+    callback guide-watch(int);
+    callback guide-refresh();
     callback toggle-fav-channel(int);
     callback open-resume(int);
     callback open-favorite(int);
@@ -1783,6 +1877,7 @@ export component MainWindow inherits Window {
     callback activate-source(int);
     callback refresh-source(int);
     callback delete-source(int);
+    callback set-source-epg(int, string);
     callback set-language(int);
     callback setting-changed(string, string);
     callback load-tracks();
@@ -1791,6 +1886,9 @@ export component MainWindow inherits Window {
     callback cycle-aspect();
     callback playing-changed(bool);
     changed playing => { root.playing-changed(root.playing); }
+    changed page => {
+        if (root.page == 2) { root.guide-opened(); }
+    }
 
     // apre il player sul canale in onda
     public function watch-current() {
@@ -1827,12 +1925,13 @@ export component MainWindow inherits Window {
             search <=> root.search;
             search-edited(text) => {
                 root.search-edited(text);
-                // la ricerca vale per la pagina Film e serie se si è lì, altrimenti per Live
-                if (text != "" && root.page != 3) { root.page = 1; }
+                // la ricerca vale per la pagina in cui si è (Guida, Film e serie), altrimenti Live
+                if (text != "" && root.page != 2 && root.page != 3) { root.page = 1; }
             }
             search-done => {
                 root.live-focus-tick += 1;
                 root.media-focus-tick += 1;
+                root.guide-focus-tick += 1;
             }
         }
         Rectangle {
@@ -1875,10 +1974,29 @@ export component MainWindow inherits Window {
                 toggle-fav(i) => { root.toggle-fav-channel(i); }
                 add-source => { root.open-settings-sources(); }
             }
-            if root.page == 2: EmptyState {
-                icon: Icons.guide;
-                title: @tr("Program guide");
-                body: @tr("The TV guide is coming in a next version of Sintonia.");
+            if root.page == 2: GuideScreen {
+                rows: root.guide-rows;
+                categories: root.categories;
+                category: root.category;
+                search: root.search;
+                days: root.guide-days;
+                day: root.guide-day;
+                now-min: root.guide-now-min;
+                state: root.guide-state;
+                error: root.guide-error;
+                no-source: root.no-source;
+                cursor <=> root.guide-cursor;
+                focus-tick: root.guide-focus-tick;
+                scroll-tick: root.guide-scroll-tick;
+                pick-day(i) => { root.guide-pick-day(i); }
+                pick-category(i) => { root.pick-category(i); }
+                watch(i) => {
+                    root.close-pip();
+                    root.guide-watch(i);
+                    root.playing = true;
+                }
+                refresh => { root.guide-refresh(); }
+                add-source => { root.open-settings-sources(); }
             }
             if root.page == 3: MediaScreen {
                 available: root.media-available;
@@ -1927,15 +2045,17 @@ export component MainWindow inherits Window {
                 reconnect <=> root.reconnect;
                 fullscreen-start <=> root.fullscreen-start;
                 live-preview <=> root.live-preview;
+                epg-on-start <=> root.epg-on-start;
                 user-agent <=> root.user-agent;
                 picked-file <=> root.picked-file;
                 form-reset: root.form-reset;
-                verify(k, n, l, u, p, a) => { root.verify-source(k, n, l, u, p, a); }
-                save(k, n, l, u, p, a) => { root.save-source(k, n, l, u, p, a); }
+                verify(k, n, l, u, p, a, g) => { root.verify-source(k, n, l, u, p, a, g); }
+                save(k, n, l, u, p, a, g) => { root.save-source(k, n, l, u, p, a, g); }
                 pick-file => { root.pick-file(); }
                 activate-source(id) => { root.activate-source(id); }
                 refresh-source(id) => { root.refresh-source(id); }
                 delete-source(id) => { root.delete-source(id); }
+                set-source-epg(id, url) => { root.set-source-epg(id, url); }
                 set-language(i) => { root.set-language(i); }
                 setting-changed(k, v) => { root.setting-changed(k, v); }
             }

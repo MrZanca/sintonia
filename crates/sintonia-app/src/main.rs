@@ -9,6 +9,7 @@
 mod app;
 mod awake;
 mod catalog;
+mod guide;
 mod images;
 mod settings;
 mod video;

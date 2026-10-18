@@ -89,6 +89,9 @@ impl CatalogEntry for ChannelRow {
             radio: self.radio,
             drm: self.drm,
             fav,
+            // la guida si aggiunge con `CatalogModel::set_decorate`
+            now_progress: -1.0,
+            ..ChannelItem::default()
         }
     }
 }
@@ -204,6 +207,9 @@ enum Filter {
     Search(Vec<usize>),
 }
 
+/// Completa una riga con dati che non stanno nella voce.
+type Decorate<E> = Box<dyn Fn(&E, &mut <E as CatalogEntry>::Item)>;
+
 /// Il modello. Vedi la documentazione del modulo.
 pub struct CatalogModel<E: CatalogEntry> {
     all: RefCell<Arc<Vec<E>>>,
@@ -218,6 +224,10 @@ pub struct CatalogModel<E: CatalogEntry> {
     visible: RefCell<Vec<usize>>,
     images: RefCell<HashMap<String, ImageState>>,
     request_image: Box<dyn Fn(String, bool)>,
+    /// Completa una riga con dati che non stanno nella voce (la guida per i canali).
+    decorate: RefCell<Option<Decorate<E>>>,
+    /// Chiamata quando cambiano le righe visibili (filtro, voci).
+    on_change: RefCell<Option<Box<dyn Fn()>>>,
     notify: ModelNotify,
     /// Le immagini che arrivano a raffica producono un solo aggiornamento.
     refresh_timer: slint::Timer,
@@ -253,6 +263,8 @@ impl<E: CatalogEntry> CatalogModel<E> {
             visible: RefCell::new(Vec::new()),
             images: RefCell::new(HashMap::new()),
             request_image: Box::new(request_image),
+            decorate: RefCell::new(None),
+            on_change: RefCell::new(None),
             notify: ModelNotify::default(),
             refresh_timer: slint::Timer::default(),
             refresh_pending: Cell::new(false),
@@ -310,6 +322,21 @@ impl<E: CatalogEntry> CatalogModel<E> {
         *self.by_category.borrow_mut() = by_category;
         self.rebuild_favorites();
         self.apply(Filter::Category(0));
+    }
+
+    /// Imposta come completare le righe (vedi `decorate`).
+    pub fn set_decorate(&self, f: impl Fn(&E, &mut E::Item) + 'static) {
+        *self.decorate.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Imposta chi avvisare quando cambiano le righe visibili.
+    pub fn set_on_change(&self, f: impl Fn() + 'static) {
+        *self.on_change.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Ricostruisce le righe visibili (per esempio quando cambia la guida).
+    pub fn refresh(&self) {
+        self.notify.reset();
     }
 
     /// Chiavi dei preferiti (di questo tipo di voce).
@@ -388,6 +415,9 @@ impl<E: CatalogEntry> CatalogModel<E> {
         *self.filter.borrow_mut() = filter;
         *self.visible.borrow_mut() = visible;
         self.notify.reset();
+        if let Some(on_change) = self.on_change.borrow().as_ref() {
+            on_change();
+        }
     }
 
     /// La voce alla riga `row` dell'elenco visibile.
@@ -437,7 +467,11 @@ impl<E: CatalogEntry> CatalogModel<E> {
         let image = entry.image_url().and_then(|url| self.image(url));
         let fav = self.favorites.borrow().contains(&key);
         let progress = self.progress.borrow().get(&key).copied().unwrap_or(0.0);
-        Some(entry.to_item(image, fav, progress))
+        let mut item = entry.to_item(image, fav, progress);
+        if let Some(decorate) = self.decorate.borrow().as_ref() {
+            decorate(entry, &mut item);
+        }
+        Some(item)
     }
 
     /// Immagine pronta, oppure la chiede (una volta sola).
