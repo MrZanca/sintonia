@@ -19,6 +19,10 @@ glow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 thiserror = { workspace = true }
+rfd = "0.17.2"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+sys-locale = "0.3.2"
+directories = "6.0.0"
 
 [build-dependencies]
 slint-build = { workspace = true }

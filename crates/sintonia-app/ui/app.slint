@@ -1,6 +1,32 @@
-// Sintonia: interfaccia (partita dalla bozza grafica v3 approvata).
-// M0: dati ancora finti, nessun canale reale; il video arriva da libmpv attraverso il global `Video`.
-// Le stringhe sono ancora in `T` (italiano/inglese): passano a @tr() e ai file .po in M1.
+// Sintonia: interfaccia (dalla bozza grafica v3 approvata).
+// Le stringhe sono in inglese con @tr(); le traduzioni stanno in lang/<lingua>/LC_MESSAGES/sintonia-app.po.
+// I dati arrivano da Rust: qui non c'è nessun canale.
+
+// ───────────── Dati ─────────────
+
+export struct ChannelItem {
+    id: int,
+    num: string,
+    name: string,
+    group: string,
+    logo: image,
+    has-logo: bool,
+    tint: color,
+    radio: bool,
+    drm: bool,
+}
+
+// kind: 0 tutti i canali, 1 categoria della playlist, 2 senza categoria
+export struct CategoryItem { name: string, count: int, kind: int }
+
+export struct SourceItem { id: int, name: string, detail: string, count: int, active: bool, file: bool }
+
+export struct TrackItem { id: int, label: string, selected: bool }
+
+// Esito di «Verifica» o «Salva».
+// state: 0 niente, 1 in corso, 2 verificata, 3 salvata, 4 errore
+// error: 1 risposta HTTP, 2 rete, 3 file, 4 nessun canale, 5 troppo grande, 6 archivio, 7 campi mancanti
+export struct SourceStatus { state: int, channels: int, groups: int, skipped: int, error: int, http: int, detail: string }
 
 global Theme {
     in-out property <int> page: 0;
@@ -11,6 +37,7 @@ global Theme {
     out property <color> dim: #b4b6c6;
     out property <color> faint: #7d8094;
     out property <color> live: #ff5d7a;
+    out property <color> ok: #8fd18a;
     // un colore per sezione: Home, Live, Guida, Film e serie, Impostazioni
     public pure function cat(i: int) -> color {
         return i == 0 ? #6D5BB1 : (i == 1 ? #677C2F : (i == 2 ? #A06135 : (i == 3 ? #525C62 : #7C6969)));
@@ -19,113 +46,6 @@ global Theme {
     out property <color> needle: base.brighter(0.9);
 }
 
-global T {
-    in-out property <int> lang: 0;
-    pure function pick(it: string, en: string) -> string { return lang == 0 ? it : en; }
-
-    out property <string> search: pick("Cerca canali, film, serie", "Search channels, movies, series");
-    out property <[string]> nav: lang == 0 ? ["Home", "Live", "Guida", "Film e serie"] : ["Home", "Live", "Guide", "Movies & series"];
-    out property <string> on-now: pick("In onda ora sui tuoi preferiti", "On now from your favorites");
-    out property <string> channel: pick("canale", "channel");
-    out property <string> watch: pick("Guarda", "Watch");
-    out property <string> resume: pick("Riprendi", "Continue watching");
-    out property <string> favorites: pick("Preferiti", "Favorites");
-    out property <string> next-at: pick("Dopo, alle", "Next, at");
-    out property <string> live: pick("In diretta", "Live");
-    out property <[string]> cats: lang == 0 ? ["Tutti", "Preferiti", "Sport", "Cinema", "Notizie", "Bambini"] : ["All", "Favorites", "Sports", "Cinema", "News", "Kids"];
-    out property <string> add-fav: pick("Aggiungi ai preferiti", "Add to favorites");
-    out property <string> in-favs: pick("Tra i preferiti", "In favorites");
-    out property <[string]> days: lang == 0 ? ["Ieri", "Oggi", "Domani", "Lun 19", "Mar 20"] : ["Yesterday", "Today", "Tomorrow", "Mon 19", "Tue 20"];
-    out property <[string]> kinds: lang == 0 ? ["Film", "Serie"] : ["Movies", "Series"];
-    out property <string> audio: pick("Audio", "Audio");
-    out property <string> subtitles: pick("Sottotitoli", "Subtitles");
-    out property <string> hint-video: pick("Clic destro sul video: elenco canali  ·  P: mini player  ·  F: schermo intero", "Right-click the video: channel list  ·  P: mini player  ·  F: full screen");
-    // stato del video (Video.state)
-    out property <string> st-loading: pick("Collegamento al canale…", "Connecting to the channel…");
-    out property <string> st-buffering: pick("In attesa del segnale…", "Waiting for the signal…");
-    out property <string> st-error: pick("Il canale non risponde", "The channel is not responding");
-    public pure function status(state: int) -> string {
-        return state == 1 ? st-loading : (state == 3 ? st-buffering : (state == 4 ? st-error : ""));
-    }
-    out property <string> channels-title: pick("Canali", "Channels");
-    out property <string> hint-list: pick("↑ ↓ scorri   ·   Invio guarda   ·   Esc chiudi", "↑ ↓ browse   ·   Enter watch   ·   Esc close");
-    // impostazioni
-    out property <[string]> set-nav: lang == 0 ? ["Sorgenti", "Lingua", "Riproduzione"] : ["Sources", "Language", "Playback"];
-    out property <string> your-sources: pick("Le tue sorgenti", "Your sources");
-    out property <string> in-use: pick("In uso", "In use");
-    out property <string> no-channels: pick("Sintonia non fornisce canali: aggiungi la tua playlist o il tuo account.", "Sintonia does not provide channels: add your own playlist or account.");
-    out property <string> add-source: pick("Aggiungi una sorgente", "Add a source");
-    out property <[string]> kinds-src: lang == 0 ? ["Link M3U", "Xtream Codes", "File"] : ["M3U link", "Xtream Codes", "File"];
-    out property <string> f-name: pick("Nome", "Name");
-    out property <string> f-playlist: pick("Indirizzo della playlist", "Playlist address");
-    out property <string> f-server: pick("Server", "Server");
-    out property <string> f-user: pick("Utente", "Username");
-    out property <string> f-user-ph: pick("nome utente", "username");
-    out property <string> f-pass: pick("Password", "Password");
-    out property <string> f-file: pick("File", "File");
-    out property <string> f-file-ph: pick("Scegli un file .m3u o .m3u8", "Choose an .m3u or .m3u8 file");
-    out property <string> f-epg: pick("Guida dei programmi (facoltativa)", "Program guide (optional)");
-    out property <string> f-epg-ph: pick("automatica dal server", "automatic from the server");
-    out property <string> verify: pick("Verifica", "Verify");
-    out property <string> save: pick("Salva", "Save");
-    out property <string> lang-title: pick("Lingua dell'interfaccia", "Interface language");
-    out property <string> lang-note: pick("Cambia subito, senza riavviare.", "Changes immediately, no restart needed.");
-    out property <string> play-title: pick("Riproduzione", "Playback");
-    out property <string> reconnect: pick("Riconnessione automatica", "Reconnect automatically");
-    out property <string> reconnect-d: pick("Se lo stream cade, riprova con attese crescenti.", "If the stream drops, retry with growing delays.");
-    out property <string> fullscreen: pick("Avvia a schermo intero", "Start in full screen");
-    out property <string> fullscreen-d: pick("Il player si apre a tutto schermo.", "The player opens full screen.");
-    out property <string> epg-start: pick("Aggiorna la guida all'avvio", "Refresh the guide at startup");
-    out property <string> epg-start-d: pick("Scarica la guida dei programmi quando apri Sintonia.", "Downloads the program guide when you open Sintonia.");
-    out property <string> useragent: pick("User-agent personalizzato", "Custom user-agent");
-    out property <string> useragent-ph: pick("lascia vuoto per quello predefinito", "leave empty for the default");
-
-    public pure function resume-sub(kind: int, mins: int, detail: string) -> string {
-        return kind == 0 ? detail + " · " + pick("in diretta", "live")
-            : (kind == 1 ? pick("Film", "Movie") + " · " + mins + pick(" minuti rimasti", " min left")
-            : detail + " · " + mins + pick(" minuti rimasti", " min left"));
-    }
-}
-
-export struct Channel {
-    num: string,
-    name: string,
-    tint: color,
-    now: string,
-    start: string,
-    end: string,
-    progress: float,
-    next: string,
-    next-time: string,
-    desc: string,
-    hd: bool,
-    fav: bool,
-}
-export struct Resume { title: string, kind: int, mins: int, detail: string, progress: float }
-export struct Film { title: string, meta: string, rating: string, tint: color, progress: float }
-export struct Program { title: string, start: int, dur: int }
-export struct GuideRow { num: string, name: string, progs: [Program] }
-
-// ───────────── Mattoncini ─────────────
-
-// Rettangolo a super-ellisse: gli angoli sono curve continue (squircle), non archi di cerchio.
-component Sq inherits Path {
-    in property <length> r: 20px;
-    property <float> w: root.width / 1px;
-    property <float> h: root.height / 1px;
-    property <float> p: min(root.r / 1px * 1.5, min(root.w, root.h) / 2);
-    property <float> q: 0.25 * root.p;
-    viewbox-width: root.w;
-    viewbox-height: root.h;
-    fill: transparent;
-    commands: "M " + root.p + " 0 L " + (root.w - root.p) + " 0 C " + (root.w - root.q) + " 0 " + root.w + " " + root.q + " " + root.w + " " + root.p
-        + " L " + root.w + " " + (root.h - root.p) + " C " + root.w + " " + (root.h - root.q) + " " + (root.w - root.q) + " " + root.h + " " + (root.w - root.p) + " " + root.h
-        + " L " + root.p + " " + root.h + " C " + root.q + " " + root.h + " 0 " + (root.h - root.q) + " 0 " + (root.h - root.p)
-        + " L 0 " + root.p + " C 0 " + root.q + " " + root.q + " 0 " + root.p + " 0 Z";
-}
-
-// ───────────── Video ─────────────
-
 // Il video di libmpv. Rust disegna il fotogramma in una texture OpenGL grande quanto il riquadro
 // (`w` × `h`), con gli angoli già ritagliati a super-ellisse di raggio `r`, e la passa in `frame`.
 // Ogni finestra ha la sua istanza di questo global.
@@ -133,12 +53,75 @@ export global Video {
     in property <image> frame;
     // c'è un fotogramma del flusso corrente da mostrare
     in property <bool> ready;
-    // 0 fermo, 1 collegamento, 2 in onda, 3 in attesa di dati, 4 errore
+    // 0 fermo, 1 collegamento, 2 in onda, 3 in attesa di dati, 4 errore, 5 riconnessione
     in property <int> state;
+    // tentativo di riconnessione in corso
+    in property <int> attempt;
     // scritte da `VideoView`, lette da Rust
     in-out property <length> w;
     in-out property <length> h;
     in-out property <length> r;
+}
+
+global Texts {
+    public pure function status(state: int, attempt: int) -> string {
+        return state == 1 ? @tr("Connecting to the channel…")
+            : (state == 3 ? @tr("Waiting for the signal…")
+            : (state == 4 ? @tr("The channel is not responding")
+            : (state == 5 ? @tr("Reconnecting ({})…", attempt) : "")));
+    }
+    public pure function category(c: CategoryItem) -> string {
+        return c.kind == 0 ? @tr("All channels") : (c.kind == 2 ? @tr("No category") : c.name);
+    }
+    public pure function channels(n: int) -> string {
+        return @tr("{n} channel" | "{n} channels" % n);
+    }
+    public pure function source-error(s: SourceStatus) -> string {
+        return s.error == 1 ? @tr("The server answered with error {}.", s.http)
+            : (s.error == 2 ? @tr("Can't reach the server: {}", s.detail)
+            : (s.error == 3 ? @tr("Can't read the file: {}", s.detail)
+            : (s.error == 4 ? @tr("No channels found in this playlist.")
+            : (s.error == 5 ? @tr("The playlist is too large.")
+            : (s.error == 7 ? @tr("Fill in the name and the address.")
+            : @tr("Something went wrong: {}", s.detail))))));
+    }
+    public pure function source-result(s: SourceStatus) -> string {
+        if (s.state == 1) {
+            return @tr("Reading the playlist…");
+        }
+        if (s.state == 4) {
+            return source-error(s);
+        }
+        if (s.state != 2 && s.state != 3) {
+            return "";
+        }
+        let counts = @tr("{n} channel" | "{n} channels" % s.channels) + " · " + @tr("{n} category" | "{n} categories" % s.groups);
+        let skipped = s.skipped > 0 ? " · " + @tr("{n} line skipped" | "{n} lines skipped" % s.skipped) : "";
+        return (s.state == 3 ? @tr("Saved.") + " " : "") + counts + skipped;
+    }
+}
+
+// ───────────── Mattoncini ─────────────
+
+// Rettangolo a super-ellisse: gli angoli sono curve continue (squircle), non archi di cerchio.
+// Le coordinate sono intere, in centesimi di pixel: convertendo un numero decimale in testo Slint
+// usa il separatore della lingua (in italiano la virgola) e il percorso non sarebbe più valido.
+// La curva occupa al massimo il 40% del lato corto: negli elementi piccoli (pulsanti, etichette)
+// il raggio si riduce da solo e tra i due angoli resta sempre un tratto dritto. Con il 50% gli
+// angoli si toccavano e le estremità risultavano deformate.
+component Sq inherits Path {
+    in property <length> r: 20px;
+    property <int> w: round(root.width / 1px * 100);
+    property <int> h: round(root.height / 1px * 100);
+    property <int> p: round(min(root.r / 1px * 150, min(root.w, root.h) * 0.4));
+    property <int> q: round(root.p / 4);
+    viewbox-width: root.w;
+    viewbox-height: root.h;
+    fill: transparent;
+    commands: "M " + root.p + " 0 L " + (root.w - root.p) + " 0 C " + (root.w - root.q) + " 0 " + root.w + " " + root.q + " " + root.w + " " + root.p
+        + " L " + root.w + " " + (root.h - root.p) + " C " + root.w + " " + (root.h - root.q) + " " + (root.w - root.q) + " " + root.h + " " + (root.w - root.p) + " " + root.h
+        + " L " + root.p + " " + root.h + " C " + root.q + " " + root.h + " 0 " + (root.h - root.q) + " 0 " + (root.h - root.p)
+        + " L 0 " + root.p + " C 0 " + root.q + " " + root.q + " 0 " + root.p + " 0 Z";
 }
 
 // Il riquadro in cui compare il video. Ce n'è al massimo uno visibile per finestra.
@@ -180,11 +163,17 @@ global Icons {
     out property <string> close: "M6 6 L18 18 M18 6 L6 18";
     out property <string> expand: "M14 4 H20 V10 M20 4 L13 11 M10 20 H4 V14 M4 20 L11 13";
     out property <string> pip: "M3 5 H21 V19 H3 Z M12 12 H19 V17 H12 Z";
+    out property <string> search: "M4 11 A7 7 0 1 0 18 11 A7 7 0 1 0 4 11 M16 16 L21 21";
+    out property <string> guide: "M3 5 H21 M3 12 H21 M3 19 H21 M8 3 V21";
+    out property <string> film: "M4 4 H20 V20 H4 Z M8 4 V20 M16 4 V20 M4 9 H8 M4 15 H8 M16 9 H20 M16 15 H20";
+    out property <string> plus: "M12 5 V19 M5 12 H19";
+    out property <string> refresh: "M20 11 A8 8 0 1 0 18 17 M20 5 V11 H14";
 }
 
 component IconBtn inherits Rectangle {
     in property <string> icon;
     in property <length> size: 44px;
+    out property <bool> hovered: ta.has-hover;
     callback clicked;
     width: root.size;
     height: root.size;
@@ -197,48 +186,44 @@ component IconBtn inherits Rectangle {
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
-component Progress inherits Rectangle {
-    in property <float> value;
-    in property <color> tint: Theme.ink;
-    height: 3px;
-    Sq { r: 1.5px; fill: #ffffff24; }
-    Sq {
-        x: 0px;
-        width: max(3px, parent.width * min(1.0, max(0.0, root.value)));
-        height: parent.height;
-        r: 1.5px;
-        fill: root.tint;
-    }
-}
-
 component Btn inherits Rectangle {
     in property <string> label;
     in property <bool> primary;
+    in property <bool> danger;
+    in property <bool> enabled: true;
+    out property <bool> hovered: ta.has-hover;
     callback clicked;
     height: 38px;
     horizontal-stretch: 0;
     width: t.preferred-width + 40px;
+    opacity: root.enabled ? 1 : 0.4;
     Sq {
         r: 19px;
-        fill: root.primary ? (ta.has-hover ? #e6e0ff : Theme.ink) : (ta.has-hover ? #ffffff30 : Theme.glass);
+        fill: root.danger ? (ta.has-hover ? Theme.live.brighter(0.2) : Theme.live)
+            : root.primary ? (ta.has-hover ? #e6e0ff : Theme.ink) : (ta.has-hover ? #ffffff30 : Theme.glass);
     }
     t := Text {
         text: root.label;
-        color: root.primary ? Theme.bg : Theme.ink;
+        color: root.primary && !root.danger ? Theme.bg : Theme.ink;
         font-size: 14px;
         font-weight: 600;
     }
-    ta := TouchArea { clicked => { root.clicked(); } }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
 }
 
 component Tabs inherits HorizontalLayout {
     in property <[string]> options;
     in-out property <int> current;
+    in property <int> disabled-from: 999;
     spacing: 8px;
     alignment: start;
     height: 36px;
     for o[i] in root.options: Rectangle {
         width: t.preferred-width + 32px;
+        opacity: i >= root.disabled-from ? 0.45 : 1;
         Sq { r: 18px; fill: i == root.current ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
         t := Text {
             text: o;
@@ -268,6 +253,7 @@ component Ring inherits Rectangle {
 
 component Toggle inherits Rectangle {
     in-out property <bool> on;
+    callback toggled(bool);
     width: 52px;
     height: 30px;
     Sq { r: 15px; fill: root.on ? Theme.base.brighter(0.4) : #ffffff2e; }
@@ -279,13 +265,99 @@ component Toggle inherits Rectangle {
         background: Theme.ink;
         animate x { duration: 160ms; easing: ease-out; }
     }
-    TouchArea { clicked => { root.on = !root.on; } }
+    TouchArea {
+        clicked => {
+            root.on = !root.on;
+            root.toggled(root.on);
+        }
+    }
+}
+
+// Stato del video (collegamento, attesa, errore); senza x/y si centra nel genitore
+component StatusPill inherits Rectangle {
+    in property <bool> small;
+    width: st.preferred-width + (root.small ? 36px : 48px);
+    height: root.small ? 34px : 44px;
+    Sq { r: parent.height / 2; fill: #000000b0; }
+    st := Text {
+        text: Texts.status(Video.state, Video.attempt);
+        color: Video.state == 4 ? Theme.live : Theme.ink;
+        font-size: root.small ? 13px : 15px;
+        font-weight: 600;
+    }
+}
+
+// Logo del canale, o le iniziali su un colore se manca
+component Logo inherits Rectangle {
+    in property <ChannelItem> c;
+    in property <length> r: 10px;
+    Sq { r: root.r; fill: root.c.has-logo ? #ffffff10 : root.c.tint.darker(0.3); }
+    if root.c.has-logo: Image {
+        x: parent.width * 0.1;
+        y: parent.height * 0.1;
+        width: parent.width * 0.8;
+        height: parent.height * 0.8;
+        source: root.c.logo;
+        image-fit: contain;
+    }
+    if !root.c.has-logo: Text {
+        text: root.c.name;
+        width: parent.width - 6px;
+        horizontal-alignment: center;
+        overflow: elide;
+        color: #ffffffc0;
+        font-size: min(parent.height * 0.32, 14px);
+        font-weight: 700;
+    }
+}
+
+// Messaggio al centro di una pagina vuota
+component EmptyState inherits VerticalLayout {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> body;
+    in property <string> action;
+    callback act();
+    alignment: center;
+    spacing: 12px;
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            width: 72px;
+            height: 72px;
+            Sq { r: 36px; fill: Theme.glass; }
+            Icon { commands: root.icon; width: 32px; height: 32px; tint: Theme.dim; }
+        }
+    }
+    Text {
+        text: root.title;
+        color: Theme.ink;
+        font-size: 24px;
+        font-weight: 700;
+        horizontal-alignment: center;
+    }
+    Text {
+        text: root.body;
+        color: Theme.dim;
+        font-size: 15px;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+    if root.action != "": HorizontalLayout {
+        alignment: center;
+        padding-top: 8px;
+        Btn { label: root.action; primary: true; clicked => { root.act(); } }
+    }
 }
 
 // ───────────── Barra in alto e fascia di lancio ─────────────
 
 component TopBar inherits HorizontalLayout {
     in-out property <int> page;
+    in property <string> clock;
+    in-out property <string> search;
+    callback search-edited(string);
+    callback search-done();
     padding-left: 44px;
     padding-right: 44px;
     padding-top: 22px;
@@ -316,16 +388,52 @@ component TopBar inherits HorizontalLayout {
     Rectangle {
         width: 300px;
         height: 40px;
-        Sq { r: 20px; fill: Theme.glass; }
-        Text {
-            x: 18px;
-            text: T.search;
+        Sq {
+            r: 20px;
+            fill: Theme.glass;
+            stroke: si.has-focus ? Theme.ink : transparent;
+            stroke-width: 2px;
+        }
+        Icon { x: 14px; commands: Icons.search; width: 16px; height: 16px; tint: Theme.faint; }
+        // i tasti che la casella non usa (Esc, ↓) salgono a questo FocusScope
+        FocusScope {
+            x: 40px;
+            width: parent.width - 54px;
+            height: parent.height;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.search = "";
+                    root.search-edited("");
+                    root.search-done();
+                    return accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    root.search-done();
+                    return accept;
+                }
+                reject
+            }
+            si := TextInput {
+                width: parent.width;
+                height: parent.height;
+                text <=> root.search;
+                color: Theme.ink;
+                font-size: 14px;
+                vertical-alignment: center;
+                single-line: true;
+                edited => { root.search-edited(self.text); }
+                accepted => { root.search-done(); }
+            }
+        }
+        if root.search == "": Text {
+            x: 40px;
+            text: @tr("Search channels");
             color: Theme.faint;
             font-size: 14px;
         }
     }
     Text {
-        text: "21:14";
+        text: root.clock;
         color: Theme.ink;
         font-size: 26px;
         font-weight: 300;
@@ -345,6 +453,7 @@ component TopBar inherits HorizontalLayout {
 
 component Dock inherits Rectangle {
     in-out property <int> current;
+    in property <[string]> labels;
     height: 88px;
     property <length> dw: 640px;
     property <length> sw: root.dw / 4;
@@ -375,7 +484,7 @@ component Dock inherits Rectangle {
             opacity: root.current < 4 ? 1 : 0;
             animate x { duration: 260ms; easing: ease-out; }
         }
-        for it[i] in T.nav: Rectangle {
+        for it[i] in root.labels: Rectangle {
             x: 20px + i * root.sw + 4px;
             y: 8px;
             width: root.sw - 8px;
@@ -409,10 +518,10 @@ component Dock inherits Rectangle {
     }
 }
 
-// ───────────── Riga canale, anteprima ─────────────
+// ───────────── Elenchi ─────────────
 
 component ChannelLine inherits Rectangle {
-    in property <Channel> c;
+    in property <ChannelItem> c;
     in property <bool> active;
     in property <bool> playing;
     callback clicked;
@@ -425,16 +534,20 @@ component ChannelLine inherits Rectangle {
         stroke-width: 2px;
     }
     HorizontalLayout {
-        padding-left: 18px;
+        padding-left: 14px;
         padding-right: 16px;
-        spacing: 16px;
+        spacing: 12px;
         Text {
             text: root.c.num;
-            width: 50px;
+            width: 46px;
             color: root.playing ? Theme.needle : (root.active ? Theme.ink : Theme.faint);
-            font-size: 22px;
+            font-size: 20px;
             font-weight: 300;
             vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Logo { c: root.c; width: 48px; height: 32px; }
         }
         VerticalLayout {
             alignment: center;
@@ -448,22 +561,17 @@ component ChannelLine inherits Rectangle {
                 overflow: elide;
             }
             Text {
-                text: root.c.now;
+                text: root.c.group;
                 color: Theme.dim;
                 font-size: 12px;
                 overflow: elide;
             }
         }
-        VerticalLayout {
-            alignment: center;
-            width: 60px;
-            Progress { value: root.c.progress; tint: root.active ? Theme.ink : Theme.faint; }
-        }
         Text {
-            text: root.c.fav ? "★" : "";
+            text: root.playing ? "●" : "";
             width: 14px;
-            color: Theme.needle;
-            font-size: 14px;
+            color: Theme.live;
+            font-size: 12px;
             vertical-alignment: center;
         }
     }
@@ -473,37 +581,109 @@ component ChannelLine inherits Rectangle {
     }
 }
 
-// Stato del video (collegamento, attesa, errore); senza x/y si centra nel genitore
-component StatusPill inherits Rectangle {
-    in property <bool> small;
-    width: st.preferred-width + (root.small ? 36px : 48px);
-    height: root.small ? 34px : 44px;
-    Sq { r: parent.height / 2; fill: #000000b0; }
-    st := Text {
-        text: T.status(Video.state);
-        color: Video.state == 4 ? Theme.live : Theme.ink;
-        font-size: root.small ? 13px : 15px;
-        font-weight: 600;
+// Elenco virtualizzato: disegna solo le righe visibili, quindi regge decine di migliaia di canali.
+component ChannelList inherits Rectangle {
+    in property <[ChannelItem]> model;
+    in-out property <int> cursor;
+    in property <int> playing-id: -1;
+    callback clicked(int);
+    callback activated(int);
+    property <length> row-h: 52px;
+    property <int> count: root.model.length;
+    clip: true;
+
+    public function ensure-visible() {
+        if (root.cursor * root.row-h + fl.content-y < 0px) {
+            fl.content-y = -root.cursor * root.row-h;
+        } else if ((root.cursor + 1) * root.row-h + fl.content-y > fl.height) {
+            fl.content-y = fl.height - (root.cursor + 1) * root.row-h;
+        }
+    }
+    public function to-top() {
+        fl.content-y = 0px;
+    }
+
+    fl := Flickable {
+        content-height: root.count * root.row-h;
+        property <int> first: max(0, floor(-self.content-y / root.row-h));
+        property <int> shown: min(root.count, ceil(self.height / root.row-h) + 1);
+        for i in fl.shown: ChannelLine {
+            property <int> index: fl.first + i;
+            x: 0px;
+            y: self.index * root.row-h;
+            width: fl.width;
+            visible: self.index < root.count;
+            c: root.model[self.index];
+            active: self.index == root.cursor;
+            playing: root.model[self.index].id == root.playing-id;
+            clicked => { root.clicked(self.index); }
+            activated => { root.activated(self.index); }
+        }
+    }
+}
+
+// Colonna delle categorie (scelta B): poche centinaia di righe, un `for` basta
+component CategoryList inherits Rectangle {
+    in property <[CategoryItem]> model;
+    in property <int> current;
+    in property <bool> searching;
+    callback picked(int);
+    clip: true;
+    property <length> row-h: 40px;
+    Flickable {
+        content-height: root.model.length * root.row-h;
+        for c[i] in root.model: cr := Rectangle {
+            x: 0px;
+            y: i * root.row-h;
+            width: parent.width;
+            height: root.row-h - 4px;
+            property <bool> on: i == root.current && !root.searching;
+            Sq {
+                r: 14px;
+                fill: cr.on ? Theme.base : (cta.has-hover ? #ffffff10 : transparent);
+            }
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 12px;
+                spacing: 8px;
+                Text {
+                    text: Texts.category(c);
+                    color: cr.on ? Theme.ink : Theme.dim;
+                    font-size: 14px;
+                    font-weight: cr.on ? 700 : 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: c.count;
+                    color: cr.on ? Theme.ink : Theme.faint;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            cta := TouchArea { clicked => { root.picked(i); } }
+        }
     }
 }
 
 // Anteprima del canale: il video vero quando c'è, altrimenti il segnaposto colorato
 component Preview inherits Rectangle {
-    in property <Channel> c;
+    in property <ChannelItem> c;
     in property <bool> badge: true;
     in property <length> r: 22px;
     in property <bool> live-video: true;
     Sq { r: root.r; fill: @linear-gradient(145deg, root.c.tint.darker(0.2) 0%, #090a10 90%); }
     Sq { r: root.r; fill: @radial-gradient(circle, #ffffff1a 0%, transparent 70%); }
-    if !(root.live-video && (Video.ready || T.status(Video.state) != "")): Text {
-        text: root.c.name;
-        color: #ffffff22;
-        font-size: 52px;
-        font-weight: 800;
+    if !(root.live-video && (Video.ready || Texts.status(Video.state, Video.attempt) != "")): Logo {
+        c: root.c;
+        width: min(parent.width * 0.4, 220px);
+        height: self.width * 0.6;
+        r: 16px;
     }
     if root.live-video: VideoView { r: root.r; }
     Sq { r: root.r; fill: @linear-gradient(180deg, #00000000 55%, #000000b0 100%); }
-    if root.live-video && T.status(Video.state) != "": StatusPill { small: true; }
+    if root.live-video && Texts.status(Video.state, Video.attempt) != "": StatusPill { small: true; }
     if root.badge: Rectangle {
         x: 16px;
         y: 16px;
@@ -519,7 +699,7 @@ component Preview inherits Rectangle {
         }
         lt := Text {
             x: 24px;
-            text: T.live + " · " + root.c.num;
+            text: @tr("On air") + " · " + root.c.num;
             color: Theme.ink;
             font-size: 12px;
             font-weight: 600;
@@ -528,24 +708,36 @@ component Preview inherits Rectangle {
     Text {
         x: 18px;
         y: parent.height - self.height - 16px;
-        text: root.c.now;
+        width: parent.width - 36px;
+        text: root.c.name;
         color: Theme.ink;
         font-size: 16px;
         font-weight: 600;
+        overflow: elide;
     }
 }
 
 // ───────────── Home ─────────────
 
 component HomeScreen inherits Rectangle {
-    in property <[Channel]> channels;
-    in property <[Resume]> resume;
-    // il canale in onda, mostrato nell'anteprima
-    in property <int> current;
-    callback play(int);
-    callback pip(int);
-    property <Channel> hero: root.channels[root.current];
-    VerticalLayout {
+    in property <ChannelItem> hero;
+    in property <bool> has-hero;
+    in property <bool> no-source;
+    in property <[CategoryItem]> categories;
+    callback play();
+    callback pip();
+    // indice nella lista completa delle categorie (0 è «Tutti i canali»)
+    callback open-category(int);
+    callback add-source();
+
+    if root.no-source: EmptyState {
+        icon: Icons.plus;
+        title: @tr("Welcome to Sintonia");
+        body: @tr("Sintonia doesn't provide channels: add your own M3U playlist to start.");
+        action: @tr("Add a playlist");
+        act => { root.add-source(); }
+    }
+    if !root.no-source: VerticalLayout {
         padding-left: 44px;
         padding-right: 44px;
         padding-top: 6px;
@@ -559,14 +751,14 @@ component HomeScreen inherits Rectangle {
                 width: 466px;
                 Preview { c: root.hero; }
                 Ring { on: hta.has-hover; }
-                hta := TouchArea { clicked => { root.play(root.current); } }
+                hta := TouchArea { clicked => { root.play(); } }
             }
             VerticalLayout {
                 width: 440px;
                 alignment: center;
                 spacing: 6px;
                 Text {
-                    text: T.on-now;
+                    text: @tr("On now");
                     color: Theme.dim;
                     font-size: 14px;
                 }
@@ -575,95 +767,57 @@ component HomeScreen inherits Rectangle {
                     color: Theme.ink;
                     font-size: 36px;
                     font-weight: 700;
+                    overflow: elide;
                 }
                 Text {
-                    text: root.hero.now;
+                    text: root.hero.group;
                     color: Theme.ink;
                     font-size: 18px;
                 }
                 Text {
-                    text: root.hero.start + " – " + root.hero.end + "  ·  " + T.channel + " " + root.hero.num;
+                    text: @tr("Channel {}", root.hero.num);
                     color: Theme.dim;
-                    font-size: 13px;
-                }
-                Progress { value: root.hero.progress; width: 320px; }
-                Text {
-                    text: T.next-at + " " + root.hero.next-time + ": " + root.hero.next;
-                    color: Theme.faint;
                     font-size: 13px;
                 }
                 Rectangle { height: 8px; }
                 HorizontalLayout {
                     spacing: 10px;
                     alignment: start;
-                    Btn { label: T.watch; primary: true; clicked => { root.play(root.current); } }
-                    IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(root.current); } }
+                    Btn { label: @tr("Watch"); primary: true; clicked => { root.play(); } }
+                    IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
                 }
             }
         }
         Rectangle { height: 12px; }
-        Title { text: T.resume; }
-        HorizontalLayout {
-            spacing: 18px;
-            alignment: start;
-            height: 132px;
-            for r[i] in root.resume: Rectangle {
-                width: 236px;
-                Sq { r: 22px; fill: @linear-gradient(135deg, Theme.panel.brighter(0.25) 0%, Theme.panel 100%); }
-                VerticalLayout {
-                    padding: 18px;
-                    alignment: end;
-                    spacing: 4px;
-                    Text {
-                        text: r.title;
-                        color: Theme.ink;
-                        font-size: 17px;
-                        font-weight: 600;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: T.resume-sub(r.kind, r.mins, r.detail);
-                        color: Theme.dim;
-                        font-size: 12px;
-                        overflow: elide;
-                    }
-                    Rectangle { height: 4px; }
-                    Progress { value: r.progress; }
-                }
-                Ring { on: rta.has-hover; }
-                rta := TouchArea { clicked => { root.play(i == 0 ? 1 : 5); } }
-            }
-        }
-        Rectangle { height: 8px; }
-        Title { text: T.favorites; }
+        Title { text: @tr("Categories"); }
         HorizontalLayout {
             spacing: 14px;
             alignment: start;
             height: 84px;
-            for idx in [0, 2, 5, 9, 6]: Rectangle {
-                width: 168px;
+            for c[i] in root.categories: Rectangle {
+                width: 200px;
                 Sq { r: 22px; fill: Theme.glass; }
-                HorizontalLayout {
+                VerticalLayout {
                     padding-left: 18px;
-                    spacing: 12px;
+                    padding-right: 14px;
+                    alignment: center;
+                    spacing: 2px;
                     Text {
-                        text: root.channels[idx].num;
-                        color: Theme.faint;
-                        font-size: 24px;
-                        font-weight: 300;
-                        vertical-alignment: center;
+                        text: Texts.category(c);
+                        color: Theme.ink;
+                        font-size: 15px;
+                        font-weight: 600;
+                        overflow: elide;
                     }
                     Text {
-                        text: root.channels[idx].name;
-                        color: Theme.ink;
-                        font-size: 14px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                        overflow: elide;
+                        text: Texts.channels(c.count);
+                        color: Theme.dim;
+                        font-size: 12px;
                     }
                 }
                 Ring { on: fta.has-hover; }
-                fta := TouchArea { clicked => { root.play(idx); } }
+                // le categorie della Home sono quelle della lista completa a partire dalla seconda
+                fta := TouchArea { clicked => { root.open-category(i + 1); } }
             }
         }
     }
@@ -672,73 +826,91 @@ component HomeScreen inherits Rectangle {
 // ───────────── Live ─────────────
 
 component LiveScreen inherits Rectangle {
-    in property <[Channel]> channels;
-    in-out property <int> selected;
-    in-out property <int> category: 0;
-    callback play();
-    callback pip();
-    property <Channel> cur: root.channels[root.selected];
+    in property <[ChannelItem]> channels;
+    in property <[CategoryItem]> categories;
+    in property <int> category;
+    in property <string> search;
+    in-out property <int> cursor;
+    in property <int> playing-id;
+    in property <bool> no-source;
+    callback play(int);
+    callback pip(int);
+    callback pick-category(int);
+    callback cursor-moved(int);
+    callback add-source();
+    // cambia quando la ricerca in alto passa il controllo all'elenco
+    in property <int> focus-tick;
+    property <ChannelItem> cur: root.channels[root.cursor];
 
-    function ensure-visible() {
-        if (root.selected * 52px + fl.content-y < 0px) {
-            fl.content-y = -root.selected * 52px;
-        } else if ((root.selected + 1) * 52px + fl.content-y > fl.height) {
-            fl.content-y = fl.height - (root.selected + 1) * 52px;
-        }
+    changed focus-tick => { fs.focus(); }
+    function move(delta: int) {
+        if (root.channels.length == 0) { return; }
+        root.cursor = max(0, min(root.channels.length - 1, root.cursor + delta));
+        list.ensure-visible();
+        root.cursor-moved(root.cursor);
     }
     init => { fs.focus(); }
+    changed category => { list.to-top(); }
+    changed search => { list.to-top(); }
 
+    if root.no-source: EmptyState {
+        icon: Icons.plus;
+        title: @tr("No playlist yet");
+        body: @tr("Add your M3U playlist in Settings to see your channels here.");
+        action: @tr("Add a playlist");
+        act => { root.add-source(); }
+    }
     fs := FocusScope {
+        enabled: !root.no-source;
         key-pressed(event) => {
-            if (event.text == Key.UpArrow) {
-                root.selected = max(0, root.selected - 1);
-                root.ensure-visible();
-                return accept;
-            }
-            if (event.text == Key.DownArrow) {
-                root.selected = min(root.channels.length - 1, root.selected + 1);
-                root.ensure-visible();
-                return accept;
-            }
-            if (event.text == Key.Return) {
-                root.play();
-                return accept;
-            }
+            if (event.text == Key.UpArrow) { root.move(-1); return accept; }
+            if (event.text == Key.DownArrow) { root.move(1); return accept; }
+            if (event.text == Key.PageUp) { root.move(-10); return accept; }
+            if (event.text == Key.PageDown) { root.move(10); return accept; }
+            if (event.text == Key.Return && root.channels.length > 0) { root.play(root.cursor); return accept; }
             reject
         }
         HorizontalLayout {
+            visible: !root.no-source;
             padding-left: 44px;
             padding-right: 44px;
             padding-top: 8px;
-            spacing: 44px;
+            spacing: 24px;
             VerticalLayout {
-                width: 520px;
+                width: 230px;
                 spacing: 10px;
-                Tabs {
-                    options: T.cats;
-                    current <=> root.category;
-                }
-                Rectangle {
+                Title { text: @tr("Categories"); }
+                CategoryList {
                     vertical-stretch: 1;
-                    clip: true;
-                    fl := Flickable {
-                        width: parent.width;
-                        height: parent.height;
-                        content-height: root.channels.length * 52px;
-                        for c[i] in root.channels: ChannelLine {
-                            y: i * 52px;
-                            width: fl.width;
-                            c: c;
-                            active: i == root.selected;
-                            clicked => {
-                                root.selected = i;
-                                fs.focus();
-                            }
-                            activated => {
-                                root.selected = i;
-                                root.play();
-                            }
-                        }
+                    model: root.categories;
+                    current: root.category;
+                    searching: root.search != "";
+                    picked(i) => {
+                        root.pick-category(i);
+                        fs.focus();
+                    }
+                }
+            }
+            VerticalLayout {
+                width: 440px;
+                spacing: 10px;
+                Title {
+                    text: root.search != "" ? @tr("Results for “{}”: {}", root.search, root.channels.length)
+                        : Texts.channels(root.channels.length);
+                }
+                list := ChannelList {
+                    vertical-stretch: 1;
+                    model: root.channels;
+                    cursor <=> root.cursor;
+                    playing-id: root.playing-id;
+                    clicked(i) => {
+                        root.cursor = i;
+                        root.cursor-moved(i);
+                        fs.focus();
+                    }
+                    activated(i) => {
+                        root.cursor = i;
+                        root.play(i);
                     }
                 }
             }
@@ -746,238 +918,55 @@ component LiveScreen inherits Rectangle {
                 horizontal-stretch: 1;
                 alignment: start;
                 spacing: 6px;
-                Preview {
+                if root.channels.length > 0: Preview {
                     height: 250px;
                     c: root.cur;
+                    live-video: root.cur.id == root.playing-id;
                 }
-                Rectangle { height: 10px; }
-                Text {
+                if root.channels.length > 0: Rectangle { height: 10px; }
+                if root.channels.length > 0: Text {
                     text: root.cur.name;
                     color: Theme.ink;
-                    font-size: 32px;
+                    font-size: 30px;
                     font-weight: 700;
-                }
-                Text {
-                    text: root.cur.now;
-                    color: Theme.ink;
-                    font-size: 18px;
-                }
-                Text {
-                    text: root.cur.start + " – " + root.cur.end + (root.cur.hd ? "  ·  HD" : "");
-                    color: Theme.dim;
-                    font-size: 13px;
-                }
-                Progress { value: root.cur.progress; }
-                Text {
-                    text: root.cur.desc;
-                    color: Theme.dim;
-                    font-size: 14px;
                     wrap: word-wrap;
                 }
-                Text {
-                    text: T.next-at + " " + root.cur.next-time + ": " + root.cur.next;
+                if root.channels.length > 0: Text {
+                    text: root.cur.group;
+                    color: Theme.dim;
+                    font-size: 15px;
+                }
+                if root.cur.drm && root.channels.length > 0: Text {
+                    text: @tr("This channel declares a DRM protection: it may not play.");
                     color: Theme.faint;
                     font-size: 13px;
+                    wrap: word-wrap;
                 }
-                Rectangle { height: 12px; }
-                HorizontalLayout {
+                if root.channels.length > 0: Rectangle { height: 12px; }
+                if root.channels.length > 0: HorizontalLayout {
                     spacing: 10px;
                     alignment: start;
-                    Btn { label: T.watch; primary: true; clicked => { root.play(); } }
-                    IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
-                    Btn { label: root.cur.fav ? T.in-favs : T.add-fav; }
+                    Btn { label: @tr("Watch"); primary: true; clicked => { root.play(root.cursor); } }
+                    IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(root.cursor); } }
+                }
+                if root.channels.length == 0 && root.search != "": Text {
+                    text: @tr("No channels match your search.");
+                    color: Theme.dim;
+                    font-size: 15px;
                 }
             }
         }
     }
 }
 
-// ───────────── Guida ─────────────
-
-component GuideScreen inherits Rectangle {
-    in property <[GuideRow]> rows;
-    in-out property <int> day: 1;
-    property <length> ppm: 4px;
-    property <length> chan-w: 190px;
-    property <length> head: 40px;
-    property <length> row-h: 58px;
-    property <int> now-min: 74;
-
-    pure function hhmm(m: int) -> string {
-        return (20 + Math.floor(m / 60)) + ":" + (Math.mod(m, 60) < 10 ? "0" : "") + Math.mod(m, 60);
-    }
-
-    VerticalLayout {
-        padding-left: 44px;
-        padding-right: 44px;
-        padding-top: 8px;
-        spacing: 16px;
-        Tabs {
-            options: T.days;
-            current <=> root.day;
-        }
-        Rectangle {
-            vertical-stretch: 1;
-            clip: true;
-            for t[i] in ["20:00", "20:30", "21:00", "21:30", "22:00", "22:30"]: Text {
-                x: root.chan-w + i * 30 * root.ppm + 6px;
-                y: 8px;
-                text: t;
-                color: Theme.dim;
-                font-size: 13px;
-            }
-            for row[r] in root.rows: Rectangle {
-                y: root.head + r * root.row-h;
-                height: root.row-h;
-                HorizontalLayout {
-                    x: 0px;
-                    width: root.chan-w;
-                    spacing: 12px;
-                    Text {
-                        text: row.num;
-                        width: 44px;
-                        color: Theme.faint;
-                        font-size: 20px;
-                        font-weight: 300;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: row.name;
-                        color: Theme.ink;
-                        font-size: 14px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-                }
-                for p in row.progs: Rectangle {
-                    property <bool> on-air: p.start <= root.now-min && p.start + p.dur > root.now-min;
-                    x: root.chan-w + p.start * root.ppm + 2px;
-                    y: 6px;
-                    width: p.dur * root.ppm - 4px;
-                    height: root.row-h - 12px;
-                    clip: true;
-                    Sq {
-                        r: 14px;
-                        fill: on-air ? Theme.base.with-alpha(0.6) : (pta.has-hover ? #ffffff1c : Theme.glass);
-                        stroke: on-air ? Theme.needle : transparent;
-                        stroke-width: 1.5px;
-                    }
-                    VerticalLayout {
-                        padding-left: 14px;
-                        padding-right: 8px;
-                        alignment: center;
-                        spacing: 2px;
-                        Text {
-                            text: p.title;
-                            color: on-air ? Theme.ink : Theme.dim;
-                            font-size: 13px;
-                            font-weight: on-air ? 600 : 400;
-                            overflow: elide;
-                        }
-                        Text {
-                            text: root.hhmm(p.start);
-                            color: on-air ? Theme.dim : Theme.faint;
-                            font-size: 11px;
-                        }
-                    }
-                    pta := TouchArea { }
-                }
-            }
-            Rectangle {
-                x: root.chan-w + root.now-min * root.ppm - 1px;
-                width: 2px;
-                background: Theme.needle;
-            }
-        }
-    }
-}
-
-// ───────────── Film e serie ─────────────
-
-component Poster inherits VerticalLayout {
-    in property <Film> f;
-    in property <length> pw;
-    in property <length> ph;
-    width: root.pw;
-    spacing: 8px;
-    Rectangle {
-        height: root.ph;
-        Sq { r: 24px; fill: root.f.tint.darker(0.25); }
-        Text {
-            x: 16px;
-            y: 16px;
-            width: parent.width - 32px;
-            text: root.f.title;
-            color: #ffffff;
-            font-size: 24px;
-            font-weight: 800;
-            wrap: word-wrap;
-        }
-        Text {
-            x: 16px;
-            y: parent.height - self.height - 20px;
-            text: "★ " + root.f.rating;
-            color: Theme.ink;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        if root.f.progress > 0: Progress {
-            x: 18px;
-            y: parent.height - 14px;
-            width: parent.width - 36px;
-            value: root.f.progress;
-        }
-        Ring { on: ta.has-hover; r: 24px; }
-        ta := TouchArea { }
-    }
-    Text {
-        text: root.f.meta;
-        color: Theme.dim;
-        font-size: 12px;
-        overflow: elide;
-    }
-}
-
-component PosterScreen inherits Rectangle {
-    in property <[Film]> films;
-    in property <[Film]> series;
-    property <int> mode: 0;
-    property <[Film]> items: root.mode == 0 ? root.films : root.series;
-    property <length> pw: 160px;
-    property <length> ph: 230px;
-    property <length> gap: 24px;
-    property <length> cell-h: root.ph + 44px;
-    property <int> cols: max(1, Math.floor((fl.width + root.gap) / (root.pw + root.gap)));
-    VerticalLayout {
-        padding-left: 44px;
-        padding-right: 44px;
-        padding-top: 8px;
-        spacing: 18px;
-        Tabs {
-            options: T.kinds;
-            current <=> root.mode;
-        }
-        fl := Flickable {
-            content-height: Math.ceil(root.items.length / root.cols) * root.cell-h;
-            for f[i] in root.items: Poster {
-                x: Math.mod(i, root.cols) * (root.pw + root.gap);
-                y: Math.floor(i / root.cols) * root.cell-h;
-                f: f;
-                pw: root.pw;
-                ph: root.ph;
-            }
-        }
-    }
-}
-
-// ───────────── Impostazioni (con le sorgenti) ─────────────
+// ───────────── Impostazioni ─────────────
 
 component Field inherits VerticalLayout {
     in property <string> label;
     in property <string> placeholder;
     in property <bool> password;
     in-out property <string> value;
+    callback edited(string);
     spacing: 6px;
     Text {
         text: root.label;
@@ -1000,7 +989,9 @@ component Field inherits VerticalLayout {
             color: Theme.ink;
             font-size: 15px;
             vertical-alignment: center;
+            single-line: true;
             input-type: root.password ? InputType.password : InputType.text;
+            edited => { root.edited(self.text); }
         }
         if root.value == "": Text {
             x: 18px;
@@ -1034,40 +1025,78 @@ component SetRow inherits Rectangle {
 }
 
 component SourceRow inherits Rectangle {
-    in property <string> name;
-    in property <string> detail;
-    in property <bool> active;
-    height: 62px;
+    in property <SourceItem> s;
+    in property <bool> working;
+    callback activate();
+    callback refresh();
+    callback remove();
+    property <bool> confirm: false;
+    height: 104px;
     Sq {
         r: 20px;
-        fill: root.active ? #ffffff1c : Theme.glass;
+        fill: root.s.active ? #ffffff1c : Theme.glass;
+        stroke: root.s.active ? Theme.needle : transparent;
+        stroke-width: 1.5px;
     }
-    HorizontalLayout {
+    VerticalLayout {
         padding-left: 20px;
-        padding-right: 18px;
-        VerticalLayout {
-            alignment: center;
-            spacing: 3px;
-            horizontal-stretch: 1;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 3px;
+        HorizontalLayout {
+            spacing: 8px;
             Text {
-                text: root.name;
+                text: root.s.name;
                 color: Theme.ink;
                 font-size: 16px;
                 font-weight: 600;
+                overflow: elide;
+                horizontal-stretch: 1;
             }
             Text {
-                text: root.detail;
-                color: Theme.dim;
-                font-size: 12px;
-                overflow: elide;
+                text: root.s.active ? @tr("In use") : "";
+                color: Theme.needle;
+                font-size: 13px;
+                font-weight: 700;
             }
         }
         Text {
-            text: root.active ? T.in-use : "";
-            color: Theme.needle;
-            font-size: 13px;
-            font-weight: 700;
-            vertical-alignment: center;
+            text: (root.s.file ? @tr("File") : @tr("M3U link")) + " · " + root.s.detail + " · " + Texts.channels(root.s.count);
+            color: Theme.dim;
+            font-size: 12px;
+            overflow: elide;
+        }
+        Rectangle { height: 4px; }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            if !root.s.active: Btn {
+                label: @tr("Use");
+                height: 30px;
+                enabled: !root.working;
+                clicked => { root.activate(); }
+            }
+            Btn {
+                label: @tr("Refresh");
+                height: 30px;
+                enabled: !root.working;
+                clicked => { root.refresh(); }
+            }
+            Btn {
+                label: root.confirm ? @tr("Confirm delete") : @tr("Delete");
+                height: 30px;
+                danger: root.confirm;
+                enabled: !root.working;
+                clicked => {
+                    if (root.confirm) {
+                        root.remove();
+                        root.confirm = false;
+                    } else {
+                        root.confirm = true;
+                    }
+                }
+            }
         }
     }
 }
@@ -1076,6 +1105,7 @@ component SwitchRow inherits Rectangle {
     in property <string> label;
     in property <string> detail;
     in-out property <bool> on;
+    callback toggled(bool);
     height: 66px;
     Sq { r: 22px; fill: Theme.glass; }
     HorizontalLayout {
@@ -1099,14 +1129,39 @@ component SwitchRow inherits Rectangle {
         }
         VerticalLayout {
             alignment: center;
-            Toggle { on <=> root.on; }
+            Toggle {
+                on <=> root.on;
+                toggled(v) => { root.toggled(v); }
+            }
         }
     }
 }
 
 component SettingsScreen inherits Rectangle {
-    property <int> section: 0;
-    property <int> kind: 1;
+    in-out property <int> section: 0;
+    in property <[SourceItem]> sources;
+    in property <bool> working;
+    in property <SourceStatus> status;
+    in property <int> language;
+    in-out property <bool> reconnect;
+    in-out property <bool> fullscreen-start;
+    in-out property <string> user-agent;
+    in-out property <string> picked-file;
+    callback verify(int, string, string, string);
+    callback save(int, string, string, string);
+    callback pick-file();
+    callback activate-source(int);
+    callback refresh-source(int);
+    callback delete-source(int);
+    callback set-language(int);
+    callback setting-changed(string, string);
+
+    // 0 link M3U, 1 file, 2 Xtream (arriva in M2)
+    property <int> kind: 0;
+    property <string> name;
+    property <string> link;
+    property <string> source-ua;
+
     HorizontalLayout {
         padding-left: 44px;
         padding-right: 44px;
@@ -1116,7 +1171,7 @@ component SettingsScreen inherits Rectangle {
             width: 260px;
             alignment: start;
             spacing: 6px;
-            for s[i] in T.set-nav: SetRow {
+            for s[i] in [@tr("Sources"), @tr("Language"), @tr("Playback")]: SetRow {
                 label: s;
                 active: root.section == i;
                 clicked => { root.section = i; }
@@ -1126,45 +1181,90 @@ component SettingsScreen inherits Rectangle {
         if root.section == 0: HorizontalLayout {
             spacing: 44px;
             VerticalLayout {
-                width: 340px;
-                alignment: start;
+                width: 380px;
                 spacing: 8px;
-                Title { text: T.your-sources; }
-                SourceRow { name: "Casa"; detail: "Xtream Codes · 12.480"; active: true; }
-                SourceRow { name: "Ufficio"; detail: "M3U"; }
-                SourceRow { name: "Archivio"; detail: "lista.m3u8"; }
-                Rectangle { height: 8px; }
+                Title { text: @tr("Your sources"); }
+                Flickable {
+                    vertical-stretch: 1;
+                    content-height: root.sources.length * 112px;
+                    for s[i] in root.sources: SourceRow {
+                        x: 0px;
+                        y: i * 112px;
+                        width: parent.width;
+                        s: s;
+                        working: root.working;
+                        activate => { root.activate-source(s.id); }
+                        refresh => { root.refresh-source(s.id); }
+                        remove => { root.delete-source(s.id); }
+                    }
+                }
                 Text {
-                    text: T.no-channels;
+                    text: @tr("Sintonia doesn't provide channels: add your own playlist or account.");
                     color: Theme.faint;
                     font-size: 13px;
                     wrap: word-wrap;
                 }
+                Rectangle { height: 12px; }
             }
             VerticalLayout {
                 horizontal-stretch: 1;
                 alignment: start;
                 spacing: 14px;
-                Title { text: T.add-source; }
+                Title { text: @tr("Add a source"); }
                 Tabs {
-                    options: T.kinds-src;
+                    options: [@tr("M3U link"), @tr("File"), "Xtream Codes"];
                     current <=> root.kind;
+                    disabled-from: 2;
                 }
-                Field { label: T.f-name; value: "Casa"; }
-                if root.kind == 0: Field { label: T.f-playlist; placeholder: "http://…/lista.m3u8"; }
-                if root.kind == 1: Field { label: T.f-server; placeholder: "http://server:8080"; }
+                if root.kind == 2: Text {
+                    text: @tr("Xtream Codes accounts are coming in the next version.");
+                    color: Theme.dim;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+                if root.kind < 2: Field { label: @tr("Name"); placeholder: @tr("My playlist"); value <=> root.name; }
+                if root.kind == 0: Field {
+                    label: @tr("Playlist address");
+                    placeholder: "http://…/playlist.m3u8";
+                    value <=> root.link;
+                }
                 if root.kind == 1: HorizontalLayout {
-                    spacing: 14px;
-                    Field { label: T.f-user; placeholder: T.f-user-ph; }
-                    Field { label: T.f-pass; placeholder: "••••••••"; password: true; }
+                    spacing: 10px;
+                    Field {
+                        label: @tr("File");
+                        placeholder: @tr("Choose an .m3u or .m3u8 file");
+                        value <=> root.picked-file;
+                    }
+                    VerticalLayout {
+                        alignment: end;
+                        Btn { label: @tr("Choose…"); height: 44px; clicked => { root.pick-file(); } }
+                    }
                 }
-                if root.kind == 2: Field { label: T.f-file; placeholder: T.f-file-ph; }
-                Field { label: T.f-epg; placeholder: T.f-epg-ph; }
-                HorizontalLayout {
+                if root.kind < 2: Field {
+                    label: @tr("User-agent (optional)");
+                    placeholder: @tr("only if your provider asks for one");
+                    value <=> root.source-ua;
+                }
+                if root.kind < 2: HorizontalLayout {
                     spacing: 10px;
                     alignment: start;
-                    Btn { label: T.verify; }
-                    Btn { label: T.save; primary: true; }
+                    Btn {
+                        label: @tr("Verify");
+                        enabled: !root.working;
+                        clicked => { root.verify(root.kind, root.name, root.kind == 0 ? root.link : root.picked-file, root.source-ua); }
+                    }
+                    Btn {
+                        label: @tr("Save");
+                        primary: true;
+                        enabled: !root.working;
+                        clicked => { root.save(root.kind, root.name, root.kind == 0 ? root.link : root.picked-file, root.source-ua); }
+                    }
+                }
+                if root.kind < 2 && root.status.state != 0: Text {
+                    text: Texts.source-result(root.status);
+                    color: root.status.state == 4 ? Theme.live : (root.status.state == 1 ? Theme.dim : Theme.ok);
+                    font-size: 14px;
+                    wrap: word-wrap;
                 }
             }
         }
@@ -1173,14 +1273,14 @@ component SettingsScreen inherits Rectangle {
             horizontal-stretch: 1;
             alignment: start;
             spacing: 12px;
-            Title { text: T.lang-title; }
+            Title { text: @tr("Interface language"); }
             for l[i] in ["Italiano", "English"]: Rectangle {
                 height: 72px;
                 max-width: 520px;
                 Sq {
                     r: 24px;
-                    fill: T.lang == i ? #ffffff26 : Theme.glass;
-                    stroke: T.lang == i ? Theme.ink : transparent;
+                    fill: root.language == i ? #ffffff26 : Theme.glass;
+                    stroke: root.language == i ? Theme.ink : transparent;
                     stroke-width: 2px;
                 }
                 Text {
@@ -1188,19 +1288,19 @@ component SettingsScreen inherits Rectangle {
                     text: l;
                     color: Theme.ink;
                     font-size: 20px;
-                    font-weight: T.lang == i ? 700 : 400;
+                    font-weight: root.language == i ? 700 : 400;
                     horizontal-alignment: left;
                 }
                 Text {
                     x: parent.width - self.width - 26px;
-                    text: T.lang == i ? "●" : "";
+                    text: root.language == i ? "●" : "";
                     color: Theme.needle;
                     font-size: 18px;
                 }
-                TouchArea { clicked => { T.lang = i; } }
+                TouchArea { clicked => { root.set-language(i); } }
             }
             Text {
-                text: T.lang-note;
+                text: @tr("Changes immediately, no restart needed.");
                 color: Theme.faint;
                 font-size: 13px;
             }
@@ -1210,72 +1310,124 @@ component SettingsScreen inherits Rectangle {
             horizontal-stretch: 1;
             alignment: start;
             spacing: 10px;
-            Title { text: T.play-title; }
-            SwitchRow { label: T.reconnect; detail: T.reconnect-d; on: true; }
-            SwitchRow { label: T.fullscreen; detail: T.fullscreen-d; }
-            SwitchRow { label: T.epg-start; detail: T.epg-start-d; on: true; }
+            Title { text: @tr("Playback"); }
+            SwitchRow {
+                label: @tr("Reconnect automatically");
+                detail: @tr("If the stream drops, retry with growing delays.");
+                on <=> root.reconnect;
+                toggled(v) => { root.setting-changed("reconnect", v ? "1" : "0"); }
+            }
+            SwitchRow {
+                label: @tr("Start in full screen");
+                detail: @tr("The player opens full screen.");
+                on <=> root.fullscreen-start;
+                toggled(v) => { root.setting-changed("fullscreen_start", v ? "1" : "0"); }
+            }
             Rectangle { height: 6px; }
-            Field { label: T.useragent; placeholder: T.useragent-ph; }
+            Field {
+                label: @tr("Custom user-agent");
+                placeholder: @tr("leave empty for the default");
+                value <=> root.user-agent;
+                edited(v) => { root.setting-changed("user_agent", v); }
+            }
         }
     }
 }
 
 // ───────────── Player con elenco canali (clic destro) ─────────────
 
+component TrackRow inherits Rectangle {
+    in property <TrackItem> t;
+    callback clicked;
+    height: 40px;
+    Sq { r: 14px; fill: root.t.selected ? #ffffff26 : (ta.has-hover ? #ffffff14 : transparent); }
+    Text {
+        x: 16px;
+        text: root.t.label;
+        color: Theme.ink;
+        font-size: 14px;
+        font-weight: root.t.selected ? 700 : 400;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
 component PlayerScreen inherits Rectangle {
-    in property <[Channel]> channels;
-    in-out property <int> selected;
+    in property <[ChannelItem]> channels;
+    in property <[CategoryItem]> categories;
+    in property <int> category;
+    in property <string> search;
+    in property <ChannelItem> c;
+    in property <[TrackItem]> audio-tracks;
+    in property <[TrackItem]> sub-tracks;
+    in property <bool> any-sub-selected;
+    // 0 automatico, 1 16:9, 2 4:3, 3 riempi
+    in property <int> aspect;
+    in-out property <int> cursor;
     callback back();
     callback home();
     callback pip();
     callback toggle-fullscreen();
-    property <Channel> c: root.channels[root.selected];
+    callback zap(int);
+    callback play(int);
+    callback pick-category(int);
+    callback load-tracks();
+    callback select-audio(int);
+    callback select-sub(int);
+    callback cycle-aspect();
     property <bool> overlay: true;
     property <bool> drawer: false;
-    property <int> cursor: 0;
-    property <int> category: 0;
     background: #000000;
 
-    function ensure-visible() {
-        if (root.cursor * 52px + dl.content-y < 0px) {
-            dl.content-y = -root.cursor * 52px;
-        } else if ((root.cursor + 1) * 52px + dl.content-y > dl.height) {
-            dl.content-y = dl.height - (root.cursor + 1) * 52px;
+    // Le informazioni sul video spariscono dopo qualche secondo senza movimenti del mouse o tasti;
+    // restano finché il puntatore è sopra i pulsanti o l'elenco canali è aperto.
+    hide-timer := Timer {
+        interval: 3s;
+        running: false;
+        triggered => {
+            self.stop();
+            if (root.drawer || root.controls-hovered) {
+                self.start();
+            } else {
+                root.overlay = false;
+            }
         }
     }
+    function show-overlay() {
+        root.overlay = true;
+        // `restart()` funziona solo con il timer già avviato: stop + start lo riparte da zero
+        hide-timer.stop();
+        hide-timer.start();
+    }
+    property <bool> controls-hovered: back-btn.hovered || home-btn.hovered || pip-btn.hovered
+        || audio-btn.hovered || sub-btn.hovered || aspect-btn.hovered;
+
     function toggle-drawer() {
         root.drawer = !root.drawer;
         if (root.drawer) {
-            root.cursor = root.selected;
-            root.ensure-visible();
+            dl.ensure-visible();
         }
     }
-    init => { fs.focus(); }
+    function move(delta: int) {
+        root.cursor = max(0, min(root.channels.length - 1, root.cursor + delta));
+        dl.ensure-visible();
+    }
+    init => {
+        fs.focus();
+        root.show-overlay();
+    }
 
     fs := FocusScope {
         key-pressed(event) => {
             if (event.text == Key.UpArrow) {
-                if (root.drawer) {
-                    root.cursor = max(0, root.cursor - 1);
-                    root.ensure-visible();
-                } else {
-                    root.selected = max(0, root.selected - 1);
-                    root.overlay = true;
-                }
+                if (root.drawer) { root.move(-1); } else { root.zap(-1); root.show-overlay(); }
                 return accept;
             }
             if (event.text == Key.DownArrow) {
-                if (root.drawer) {
-                    root.cursor = min(root.channels.length - 1, root.cursor + 1);
-                    root.ensure-visible();
-                } else {
-                    root.selected = min(root.channels.length - 1, root.selected + 1);
-                    root.overlay = true;
-                }
+                if (root.drawer) { root.move(1); } else { root.zap(1); root.show-overlay(); }
                 return accept;
             }
             if (event.text == Key.Return) {
-                if (root.drawer) { root.selected = root.cursor; } else { root.toggle-drawer(); }
+                if (root.drawer) { root.play(root.cursor); } else { root.toggle-drawer(); }
                 return accept;
             }
             if (event.text == Key.Escape) {
@@ -1291,7 +1443,7 @@ component PlayerScreen inherits Rectangle {
                 return accept;
             }
             if (event.text == " ") {
-                root.overlay = !root.overlay;
+                if (root.overlay) { root.overlay = false; } else { root.show-overlay(); }
                 return accept;
             }
             reject
@@ -1302,46 +1454,49 @@ component PlayerScreen inherits Rectangle {
     Rectangle {
         background: @linear-gradient(160deg, root.c.tint.darker(0.45) 0%, #05060f 80%);
     }
-    if !Video.ready && T.status(Video.state) == "": Text {
+    if !Video.ready && Texts.status(Video.state, Video.attempt) == "": Text {
         text: root.c.num;
         color: #ffffff14;
         font-size: 300px;
         font-weight: 200;
     }
     VideoView { }
-    if T.status(Video.state) != "": StatusPill { }
+    if Texts.status(Video.state, Video.attempt) != "": StatusPill { }
     TouchArea {
+        // senza informazioni a video sparisce anche il puntatore
+        mouse-cursor: root.overlay || root.drawer ? MouseCursor.default : MouseCursor.none;
         pointer-event(e) => {
+            if (e.kind == PointerEventKind.move) {
+                root.show-overlay();
+            }
             if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
                 root.toggle-drawer();
                 fs.focus();
             }
         }
         clicked => {
-            if (root.drawer) { root.drawer = false; } else { root.overlay = !root.overlay; }
+            if (root.drawer) {
+                root.drawer = false;
+            } else if (root.overlay) {
+                root.overlay = false;
+            } else {
+                root.show-overlay();
+            }
             fs.focus();
         }
-        double-clicked => { root.back(); }
+        double-clicked => { root.toggle-fullscreen(); }
     }
 
-    // in alto a sinistra: indietro e home
+    // in alto a sinistra: indietro e home (non cliccabili quando sono nascosti)
     HorizontalLayout {
         x: 36px;
         y: 28px;
         spacing: 10px;
         opacity: root.overlay && !root.drawer ? 1 : 0;
-        animate opacity { duration: 200ms; }
-        IconBtn { icon: Icons.back; clicked => { root.back(); } }
-        IconBtn { icon: Icons.home; clicked => { root.home(); } }
-    }
-    Text {
-        x: 36px;
-        y: 88px;
-        text: T.hint-video;
-        color: #ffffff80;
-        font-size: 13px;
-        opacity: root.overlay && !root.drawer ? 1 : 0;
-        animate opacity { duration: 200ms; }
+        visible: self.opacity > 0.01;
+        animate opacity { duration: 250ms; }
+        back-btn := IconBtn { icon: Icons.back; clicked => { root.back(); } }
+        home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
     }
 
     // barra in basso
@@ -1349,7 +1504,8 @@ component PlayerScreen inherits Rectangle {
         y: parent.height - self.height;
         height: 190px;
         opacity: root.overlay ? 1 : 0;
-        animate opacity { duration: 200ms; }
+        visible: self.opacity > 0.01;
+        animate opacity { duration: 250ms; }
         background: @linear-gradient(180deg, #00000000 0%, #000000d0 100%);
         HorizontalLayout {
             padding: 40px;
@@ -1368,57 +1524,113 @@ component PlayerScreen inherits Rectangle {
                 spacing: 4px;
                 horizontal-stretch: 1;
                 Text {
-                    text: "● " + T.live;
+                    text: "● " + @tr("On air");
                     color: Theme.live;
                     font-size: 13px;
                     font-weight: 600;
                 }
                 Text {
-                    text: root.c.name + "  ·  " + root.c.now;
+                    text: root.c.name;
                     color: Theme.ink;
                     font-size: 22px;
                     font-weight: 600;
                     overflow: elide;
                 }
-                HorizontalLayout {
-                    spacing: 14px;
-                    Text {
-                        text: root.c.start;
-                        color: Theme.dim;
-                        font-size: 13px;
-                        vertical-alignment: center;
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        horizontal-stretch: 1;
-                        Progress { value: root.c.progress; }
-                    }
-                    Text {
-                        text: root.c.end;
-                        color: Theme.dim;
-                        font-size: 13px;
-                        vertical-alignment: center;
-                    }
+                Text {
+                    text: root.c.group;
+                    color: Theme.dim;
+                    font-size: 13px;
                 }
             }
             VerticalLayout {
                 alignment: end;
                 HorizontalLayout {
                     spacing: 10px;
-                    IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
-                    Btn { label: T.audio; }
-                    Btn { label: T.subtitles; }
-                    Btn { label: "16:9"; }
+                    pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
+                    audio-btn := Btn {
+                        label: @tr("Audio");
+                        clicked => {
+                            root.load-tracks();
+                            audio-popup.show();
+                        }
+                    }
+                    sub-btn := Btn {
+                        label: @tr("Subtitles");
+                        clicked => {
+                            root.load-tracks();
+                            sub-popup.show();
+                        }
+                    }
+                    aspect-btn := Btn {
+                        label: root.aspect == 1 ? "16:9" : (root.aspect == 2 ? "4:3" : (root.aspect == 3 ? @tr("Fill") : @tr("Auto")));
+                        clicked => { root.cycle-aspect(); }
+                    }
                 }
             }
         }
     }
 
-    // l'elenco canali che scorre da sinistra
+    audio-popup := PopupWindow {
+        x: root.width - 470px;
+        y: root.height - 110px - self.height;
+        width: 300px;
+        height: max(1, root.audio-tracks.length) * 44px + 56px;
+        Sq { r: 22px; fill: #14151cf4; stroke: #ffffff22; stroke-width: 1px; }
+        VerticalLayout {
+            padding: 10px;
+            spacing: 4px;
+            Text {
+                text: @tr("Audio");
+                color: Theme.dim;
+                font-size: 13px;
+                height: 28px;
+                vertical-alignment: center;
+            }
+            if root.audio-tracks.length == 0: Text {
+                text: @tr("Only one audio track");
+                color: Theme.faint;
+                font-size: 14px;
+                height: 40px;
+                vertical-alignment: center;
+            }
+            for t in root.audio-tracks: TrackRow {
+                t: t;
+                clicked => { root.select-audio(t.id); }
+            }
+        }
+    }
+    sub-popup := PopupWindow {
+        x: root.width - 370px;
+        y: root.height - 110px - self.height;
+        width: 300px;
+        height: (root.sub-tracks.length + 1) * 44px + 56px;
+        Sq { r: 22px; fill: #14151cf4; stroke: #ffffff22; stroke-width: 1px; }
+        VerticalLayout {
+            padding: 10px;
+            spacing: 4px;
+            Text {
+                text: @tr("Subtitles");
+                color: Theme.dim;
+                font-size: 13px;
+                height: 28px;
+                vertical-alignment: center;
+            }
+            TrackRow {
+                t: { id: -1, label: @tr("Off"), selected: !(root.sub-tracks.length > 0 && root.any-sub-selected) };
+                clicked => { root.select-sub(-1); }
+            }
+            for t in root.sub-tracks: TrackRow {
+                t: t;
+                clicked => { root.select-sub(t.id); }
+            }
+        }
+    }
+
+    // l'elenco canali che scorre da sinistra, con le categorie
     Rectangle {
         x: root.drawer ? 16px : -self.width - 30px;
         y: 16px;
-        width: 540px;
+        width: 760px;
         height: parent.height - 32px;
         animate x { duration: 240ms; easing: ease-out; }
         Sq {
@@ -1430,41 +1642,38 @@ component PlayerScreen inherits Rectangle {
         TouchArea { }
         VerticalLayout {
             padding-top: 26px;
-            padding-left: 10px;
-            padding-right: 10px;
+            padding-left: 14px;
+            padding-right: 14px;
             spacing: 12px;
-            VerticalLayout {
-                padding-left: 14px;
-                spacing: 8px;
-                Title { text: T.channels-title; }
-                Tabs {
-                    options: T.cats;
-                    current <=> root.category;
-                }
-            }
-            Rectangle {
+            Title { text: @tr("Channels"); }
+            HorizontalLayout {
+                spacing: 14px;
                 vertical-stretch: 1;
-                clip: true;
-                dl := Flickable {
-                    width: parent.width;
-                    height: parent.height;
-                    content-height: root.channels.length * 52px;
-                    for ch[i] in root.channels: ChannelLine {
-                        y: i * 52px;
-                        width: dl.width;
-                        c: ch;
-                        active: i == root.cursor;
-                        playing: i == root.selected;
-                        clicked => {
-                            root.cursor = i;
-                            root.selected = i;
-                            fs.focus();
-                        }
+                CategoryList {
+                    width: 220px;
+                    model: root.categories;
+                    current: root.category;
+                    searching: root.search != "";
+                    picked(i) => {
+                        root.pick-category(i);
+                        fs.focus();
                     }
+                }
+                dl := ChannelList {
+                    horizontal-stretch: 1;
+                    model: root.channels;
+                    cursor <=> root.cursor;
+                    playing-id: root.c.id;
+                    clicked(i) => {
+                        root.cursor = i;
+                        root.play(i);
+                        fs.focus();
+                    }
+                    activated(i) => { root.play(i); }
                 }
             }
             Text {
-                text: T.hint-list;
+                text: @tr("↑ ↓ browse   ·   Enter watch   ·   Esc close");
                 color: Theme.faint;
                 font-size: 12px;
                 horizontal-alignment: center;
@@ -1479,44 +1688,64 @@ component PlayerScreen inherits Rectangle {
 export component PipWindow inherits Window {
     in property <string> num;
     in property <string> name;
-    in property <string> now;
     in property <color> tint: #3b82f6;
     callback expand();
     callback dismiss();
     callback moved(length, length);
+    // ridimensionamento con una maniglia d'angolo: 0 alto-sinistra, 1 alto-destra,
+    // 2 basso-sinistra, 3 basso-destra; Rust mantiene le proporzioni 16:9
+    callback resize(int, length, length);
+    // rotellina: positivo ingrandisce
+    callback resize-step(float);
     title: "Sintonia mini player";
     no-frame: true;
     always-on-top: true;
     background: transparent;
     preferred-width: 360px;
     preferred-height: 203px;
-    min-width: 360px;
-    max-width: 360px;
-    min-height: 203px;
-    max-height: 203px;
+    min-width: 240px;
+    min-height: 135px;
+    default-font-family: "Bahnschrift";
+
+    // comandi visibili solo con il mouse sopra il mini player
+    property <bool> controls: area.has-hover || expand-btn.hovered || close-btn.hovered
+        || h0.has-hover || h1.has-hover || h2.has-hover || h3.has-hover;
 
     Sq { r: 24px; fill: @linear-gradient(145deg, root.tint.darker(0.2) 0%, #090a10 90%); }
     Sq { r: 24px; fill: @radial-gradient(circle, #ffffff1a 0%, transparent 70%); }
-    if !Video.ready: Text {
+    if !Video.ready && Texts.status(Video.state, Video.attempt) == "": Text {
         text: root.name;
         color: #ffffff22;
-        font-size: 40px;
+        font-size: min(40px, root.width / 9);
         font-weight: 800;
     }
     VideoView { r: 24px; }
-    Sq { r: 24px; fill: @linear-gradient(180deg, #00000000 50%, #000000b0 100%); }
-    TouchArea {
+    Sq {
+        r: 24px;
+        fill: @linear-gradient(180deg, #00000000 50%, #000000b0 100%);
+        opacity: root.controls ? 1 : 0;
+        animate opacity { duration: 200ms; }
+    }
+    if Texts.status(Video.state, Video.attempt) != "": StatusPill { small: true; }
+    area := TouchArea {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.move && self.pressed) {
                 root.moved(self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
             }
+        }
+        double-clicked => { root.expand(); }
+        scroll-event(e) => {
+            root.resize-step(e.delta-y / 1px);
+            accept
         }
     }
     Rectangle {
         x: 16px;
         y: 14px;
         height: 26px;
-        width: pl.preferred-width + 32px;
+        width: min(pl.preferred-width + 32px, root.width - 120px);
+        opacity: root.controls ? 1 : 0;
+        animate opacity { duration: 200ms; }
         Sq { r: 13px; fill: #000000a0; }
         Rectangle {
             x: 11px;
@@ -1527,10 +1756,12 @@ export component PipWindow inherits Window {
         }
         pl := Text {
             x: 24px;
+            width: parent.width - 32px;
             text: root.num + " · " + root.name;
             color: Theme.ink;
             font-size: 12px;
             font-weight: 600;
+            overflow: elide;
         }
     }
     HorizontalLayout {
@@ -1539,16 +1770,45 @@ export component PipWindow inherits Window {
         width: 80px;
         spacing: 6px;
         alignment: end;
-        IconBtn { icon: Icons.expand; size: 34px; clicked => { root.expand(); } }
-        IconBtn { icon: Icons.close; size: 34px; clicked => { root.dismiss(); } }
+        opacity: root.controls ? 1 : 0;
+        visible: self.opacity > 0.01;
+        animate opacity { duration: 200ms; }
+        expand-btn := IconBtn { icon: Icons.expand; size: 34px; clicked => { root.expand(); } }
+        close-btn := IconBtn { icon: Icons.close; size: 34px; clicked => { root.dismiss(); } }
     }
-    Text {
-        x: 18px;
-        y: root.height - self.height - 16px;
-        text: root.now;
-        color: Theme.ink;
-        font-size: 15px;
-        font-weight: 600;
+
+    // maniglie d'angolo (invisibili, con il cursore di ridimensionamento)
+    h0 := TouchArea {
+        x: 0px;
+        y: 0px;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: MouseCursor.nw-resize;
+        moved => { root.resize(0, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+    }
+    h1 := TouchArea {
+        x: root.width - 16px;
+        y: 0px;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: MouseCursor.ne-resize;
+        moved => { root.resize(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+    }
+    h2 := TouchArea {
+        x: 0px;
+        y: root.height - 16px;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: MouseCursor.sw-resize;
+        moved => { root.resize(2, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+    }
+    h3 := TouchArea {
+        x: root.width - 16px;
+        y: root.height - 16px;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: MouseCursor.se-resize;
+        moved => { root.resize(3, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
     }
 }
 
@@ -1563,104 +1823,78 @@ export component MainWindow inherits Window {
     background: Theme.bg;
     default-font-family: "Bahnschrift";
 
-    callback request-pip(Channel);
-    callback close-pip();
-    // il canale da riprodurre è cambiato (Rust aspetta un attimo prima di aprirlo: zapping veloce)
-    callback tune(int);
-    callback toggle-fullscreen();
-
     in-out property <int> page <=> Theme.page;
     in-out property <bool> playing: false;
-    in-out property <int> selected: 1;
+    in property <string> clock;
+
+    // canali della sorgente in uso, già filtrati per categoria o ricerca
+    in property <[ChannelItem]> channels;
+    in property <[CategoryItem]> categories;
+    in property <[CategoryItem]> top-categories;
+    in property <int> category: 0;
+    in-out property <string> search;
+    // riga evidenziata nell'elenco
+    in-out property <int> cursor: 0;
+    // il canale in onda
+    in property <ChannelItem> current;
+    in property <bool> has-current;
+    in property <bool> no-source: true;
+
+    // impostazioni
+    in property <[SourceItem]> sources;
+    in property <bool> working;
+    in property <SourceStatus> source-status;
+    in property <int> language;
+    in-out property <bool> reconnect: true;
+    in-out property <bool> fullscreen-start;
+    in-out property <string> user-agent;
+    in-out property <string> picked-file;
+    in-out property <int> settings-section: 0;
+
+    // player
+    in property <[TrackItem]> audio-tracks;
+    in property <[TrackItem]> sub-tracks;
+    in property <bool> any-sub-selected;
+    in property <int> aspect;
+    property <int> live-focus-tick;
+
     // c'è un riquadro video sullo schermo (Home, Live o player)
-    out property <bool> video-visible: root.playing || root.page <= 1;
-    changed selected => { root.tune(root.selected); }
-    // aprendo il player si riprende il canale se era fermo (Rust ignora il canale già in onda)
-    changed playing => {
-        if (root.playing) {
-            root.tune(root.selected);
+    out property <bool> video-visible: root.playing || (root.page <= 1 && !root.no-source);
+
+    callback play-index(int);
+    callback cursor-moved(int);
+    callback zap(int);
+    callback pick-category(int);
+    callback search-edited(string);
+    callback request-pip(int);
+    callback close-pip();
+    callback toggle-fullscreen();
+    callback verify-source(int, string, string, string);
+    callback save-source(int, string, string, string);
+    callback pick-file();
+    callback activate-source(int);
+    callback refresh-source(int);
+    callback delete-source(int);
+    callback set-language(int);
+    callback setting-changed(string, string);
+    callback load-tracks();
+    callback select-audio(int);
+    callback select-sub(int);
+    callback cycle-aspect();
+    callback playing-changed(bool);
+    changed playing => { root.playing-changed(root.playing); }
+
+    // apre il player sul canale in onda
+    public function watch-current() {
+        if (root.has-current) {
+            root.close-pip();
+            root.playing = true;
         }
     }
-
-    in property <[Channel]> channels: [
-        { num: "001", name: "Canale Uno", tint: #3b82f6, now: "Quiz: La Grande Sfida", start: "20:35", end: "21:40", progress: 0.6, next: "Film: Il Faro d'Inverno", next-time: "21:40", desc: "Sei concorrenti, dieci domande, un montepremi che cresce a ogni risposta giusta.", hd: true, fav: true },
-        { num: "002", name: "Canale Due", tint: #8b5cf6, now: "Distretto Nord, ep. 3", start: "20:30", end: "21:30", progress: 0.73, next: "Talk: Fuori Onda", next-time: "21:30", desc: "Un furto in porto riapre un caso chiuso da anni. La squadra si divide.", hd: true },
-        { num: "003", name: "Notizie 24", tint: #ef4444, now: "Edizione straordinaria", start: "21:00", end: "21:30", progress: 0.47, next: "Meteo e traffico", next-time: "21:30", desc: "Aggiornamenti in diretta dalla redazione.", hd: true, fav: true },
-        { num: "010", name: "Sport Arena", tint: #22c55e, now: "Calcio, campionato: 2° tempo", start: "20:45", end: "22:45", progress: 0.24, next: "Post partita", next-time: "22:45", desc: "Diretta dallo stadio, con commento e statistiche in tempo reale.", hd: true, fav: true },
-        { num: "011", name: "Sport Arena 2", tint: #16a34a, now: "Tennis: finale del torneo", start: "20:00", end: "22:00", progress: 0.62, next: "Basket notte", next-time: "22:00", desc: "Il terzo set decide il torneo.", hd: true },
-        { num: "020", name: "Cinema Prime", tint: #f59e0b, now: "Film: Codice Aurora", start: "21:00", end: "23:05", progress: 0.11, next: "Film: Onde Corte", next-time: "23:05", desc: "Una crittografa scopre un messaggio nascosto in una vecchia trasmissione radio.", hd: true, fav: true },
-        { num: "021", name: "Cinema Classic", tint: #d97706, now: "Film: Mezzanotte a Trieste", start: "20:15", end: "22:10", progress: 0.51, next: "Speciale registi", next-time: "22:10", desc: "Un classico noir in bianco e nero.", fav: true },
-        { num: "030", name: "Documenta", tint: #14b8a6, now: "Oceani profondi", start: "21:05", end: "22:00", progress: 0.16, next: "Il pianeta di notte", next-time: "22:00", desc: "Dieci chilometri sotto la superficie.", hd: true },
-        { num: "040", name: "Kids Planet", tint: #ec4899, now: "Cartoni: Missione Luna", start: "21:00", end: "21:25", progress: 0.56, next: "Buonanotte storie", next-time: "21:25", desc: "Canale protetto da PIN.", fav: true },
-        { num: "050", name: "Musica Live", tint: #a855f7, now: "Concerto in diretta", start: "21:00", end: "23:00", progress: 0.12, next: "Classifica della settimana", next-time: "23:00", desc: "Dal palco, senza pubblicità.", hd: true, fav: true },
-        { num: "060", name: "Viaggi HD", tint: #0ea5e9, now: "Islanda in sette giorni", start: "20:50", end: "21:45", progress: 0.44, next: "Strade d'Europa", next-time: "21:45", desc: "Un viaggio tra ghiacciai e vulcani.", hd: true },
-        { num: "070", name: "Cucina+", tint: #f97316, now: "Sfida ai fornelli", start: "20:30", end: "21:30", progress: 0.73, next: "Dolci di casa", next-time: "21:30", desc: "Due cuochi, un solo ingrediente." },
-        { num: "080", name: "Storia", tint: #78716c, now: "Le grandi esplorazioni", start: "21:00", end: "22:00", progress: 0.23, next: "Archivi segreti", next-time: "22:00", desc: "Le rotte che hanno cambiato la mappa del mondo." },
-        { num: "090", name: "Meteo", tint: #64748b, now: "Previsioni nazionali", start: "21:00", end: "21:15", progress: 0.93, next: "Previsioni della notte", next-time: "21:15", desc: "Tempo stabile al nord, nuvole al sud." },
-    ];
-
-    in property <[Film]> films: [
-        { title: "Codice Aurora", meta: "2024 · 2h 05m · Thriller", rating: "7.4", tint: #1e40af },
-        { title: "Il Giardino di Vetro", meta: "2023 · 1h 52m · Dramma", rating: "7.9", tint: #0f766e, progress: 0.62 },
-        { title: "Onde Corte", meta: "2022 · 1h 41m · Commedia", rating: "6.8", tint: #c2410c },
-        { title: "Mezzanotte a Trieste", meta: "2021 · 1h 58m · Noir", rating: "7.2", tint: #475569 },
-        { title: "L'Ultimo Segnale", meta: "2024 · 2h 12m · Fantascienza", rating: "8.1", tint: #6d28d9 },
-        { title: "Il Faro d'Inverno", meta: "2020 · 1h 47m · Dramma", rating: "7.0", tint: #0369a1 },
-        { title: "Strade di Ferro", meta: "2023 · 2h 20m · Azione", rating: "6.5", tint: #b91c1c },
-        { title: "Nord Est", meta: "2022 · 1h 36m · Commedia", rating: "6.9", tint: #a16207 },
-        { title: "La Cartografa", meta: "2024 · 1h 55m · Avventura", rating: "7.6", tint: #15803d },
-        { title: "Sotto la Pioggia", meta: "2019 · 1h 44m · Romantico", rating: "6.7", tint: #be185d },
-    ];
-
-    in property <[Film]> series: [
-        { title: "Frequenza Zero", meta: "3 stagioni · Fantascienza", rating: "8.4", tint: #b45309, progress: 0.35 },
-        { title: "Distretto Nord", meta: "5 stagioni · Poliziesco", rating: "7.7", tint: #4338ca },
-        { title: "Casa Moretti", meta: "2 stagioni · Commedia", rating: "7.0", tint: #be123c },
-        { title: "Le Isole", meta: "1 stagione · Dramma", rating: "7.9", tint: #0e7490 },
-        { title: "Turno di Notte", meta: "4 stagioni · Medico", rating: "7.3", tint: #334155 },
-        { title: "Il Cantiere", meta: "2 stagioni · Thriller", rating: "7.5", tint: #a16207 },
-        { title: "Radio Libera", meta: "1 stagione · Storico", rating: "8.0", tint: #7e22ce },
-        { title: "Alta Quota", meta: "3 stagioni · Avventura", rating: "6.9", tint: #15803d },
-    ];
-
-    in property <[GuideRow]> guide: [
-        { num: "001", name: "Canale Uno", progs: [
-            { title: "Telegiornale", start: 0, dur: 35 },
-            { title: "Quiz: La Grande Sfida", start: 35, dur: 65 },
-            { title: "Film: Il Faro d'Inverno", start: 100, dur: 80 } ] },
-        { num: "002", name: "Canale Due", progs: [
-            { title: "Distretto Nord, ep. 2", start: 0, dur: 30 },
-            { title: "Distretto Nord, ep. 3", start: 30, dur: 60 },
-            { title: "Talk: Fuori Onda", start: 90, dur: 60 },
-            { title: "Notizie", start: 150, dur: 30 } ] },
-        { num: "003", name: "Notizie 24", progs: [
-            { title: "Notiziario", start: 0, dur: 30 },
-            { title: "Approfondimento", start: 30, dur: 30 },
-            { title: "Edizione straordinaria", start: 60, dur: 30 },
-            { title: "Meteo", start: 90, dur: 15 },
-            { title: "Il punto della sera", start: 105, dur: 75 } ] },
-        { num: "010", name: "Sport Arena", progs: [
-            { title: "Pre partita", start: 0, dur: 45 },
-            { title: "Calcio, campionato", start: 45, dur: 120 },
-            { title: "Post", start: 165, dur: 15 } ] },
-        { num: "020", name: "Cinema Prime", progs: [
-            { title: "Prossimamente", start: 0, dur: 15 },
-            { title: "Corto d'autore", start: 15, dur: 45 },
-            { title: "Film: Codice Aurora", start: 60, dur: 120 } ] },
-        { num: "030", name: "Documenta", progs: [
-            { title: "Animali in città", start: 0, dur: 65 },
-            { title: "Oceani profondi", start: 65, dur: 55 },
-            { title: "Il pianeta di notte", start: 120, dur: 60 } ] },
-        { num: "050", name: "Musica Live", progs: [
-            { title: "Videoclip", start: 0, dur: 60 },
-            { title: "Concerto in diretta", start: 60, dur: 120 } ] },
-    ];
-
-    in property <[Resume]> resume: [
-        { title: "Canale Due", kind: 0, mins: 0, detail: "Distretto Nord", progress: 0.73 },
-        { title: "Il Giardino di Vetro", kind: 1, mins: 48, detail: "", progress: 0.62 },
-        { title: "Frequenza Zero", kind: 2, mins: 31, detail: "S2 · E4", progress: 0.35 },
-    ];
+    function open-settings-sources() {
+        root.settings-section = 0;
+        root.page = 4;
+    }
 
     // il bagliore di sfondo prende il colore della sezione
     if !root.playing: Rectangle {
@@ -1679,43 +1913,98 @@ export component MainWindow inherits Window {
     }
 
     if !root.playing: VerticalLayout {
-        TopBar { page <=> root.page; }
+        TopBar {
+            page <=> root.page;
+            clock: root.clock;
+            search <=> root.search;
+            search-edited(text) => {
+                root.search-edited(text);
+                if (text != "") { root.page = 1; }
+            }
+            search-done => { root.live-focus-tick += 1; }
+        }
         Rectangle {
             vertical-stretch: 1;
             clip: true;
             if root.page == 0: HomeScreen {
-                channels: root.channels;
-                resume: root.resume;
-                current: root.selected;
-                play(i) => {
-                    root.selected = i;
-                    root.close-pip();
-                    root.playing = true;
+                hero: root.current;
+                has-hero: root.has-current;
+                no-source: root.no-source;
+                categories: root.top-categories;
+                play => { root.watch-current(); }
+                pip => { root.request-pip(-1); }
+                open-category(i) => {
+                    root.pick-category(i);
+                    root.page = 1;
                 }
-                pip(i) => { root.request-pip(root.channels[i]); }
+                add-source => { root.open-settings-sources(); }
             }
             if root.page == 1: LiveScreen {
+                focus-tick: root.live-focus-tick;
                 channels: root.channels;
-                selected <=> root.selected;
-                play => {
+                categories: root.categories;
+                category: root.category;
+                search: root.search;
+                cursor <=> root.cursor;
+                playing-id: root.has-current ? root.current.id : -1;
+                no-source: root.no-source;
+                play(i) => {
                     root.close-pip();
+                    root.play-index(i);
                     root.playing = true;
                 }
-                pip => { root.request-pip(root.channels[root.selected]); }
+                pip(i) => { root.request-pip(i); }
+                pick-category(i) => { root.pick-category(i); }
+                cursor-moved(i) => { root.cursor-moved(i); }
+                add-source => { root.open-settings-sources(); }
             }
-            if root.page == 2: GuideScreen { rows: root.guide; }
-            if root.page == 3: PosterScreen {
-                films: root.films;
-                series: root.series;
+            if root.page == 2: EmptyState {
+                icon: Icons.guide;
+                title: @tr("Program guide");
+                body: @tr("The TV guide is coming in a next version of Sintonia.");
             }
-            if root.page == 4: SettingsScreen { }
+            if root.page == 3: EmptyState {
+                icon: Icons.film;
+                title: @tr("Movies & series");
+                body: @tr("Movies and series arrive with Xtream Codes sources, in a next version.");
+            }
+            if root.page == 4: SettingsScreen {
+                section <=> root.settings-section;
+                sources: root.sources;
+                working: root.working;
+                status: root.source-status;
+                language: root.language;
+                reconnect <=> root.reconnect;
+                fullscreen-start <=> root.fullscreen-start;
+                user-agent <=> root.user-agent;
+                picked-file <=> root.picked-file;
+                verify(k, n, l, u) => { root.verify-source(k, n, l, u); }
+                save(k, n, l, u) => { root.save-source(k, n, l, u); }
+                pick-file => { root.pick-file(); }
+                activate-source(id) => { root.activate-source(id); }
+                refresh-source(id) => { root.refresh-source(id); }
+                delete-source(id) => { root.delete-source(id); }
+                set-language(i) => { root.set-language(i); }
+                setting-changed(k, v) => { root.setting-changed(k, v); }
+            }
         }
-        Dock { current <=> root.page; }
+        Dock {
+            current <=> root.page;
+            labels: [@tr("Home"), @tr("Live"), @tr("Guide"), @tr("Movies & series")];
+        }
     }
 
     if root.playing: PlayerScreen {
         channels: root.channels;
-        selected <=> root.selected;
+        categories: root.categories;
+        category: root.category;
+        search: root.search;
+        c: root.current;
+        cursor <=> root.cursor;
+        audio-tracks: root.audio-tracks;
+        sub-tracks: root.sub-tracks;
+        any-sub-selected: root.any-sub-selected;
+        aspect: root.aspect;
         back => {
             root.playing = false;
             root.page = 1;
@@ -1725,10 +2014,17 @@ export component MainWindow inherits Window {
             root.page = 0;
         }
         pip => {
-            root.request-pip(root.channels[root.selected]);
+            root.request-pip(-1);
             root.playing = false;
             root.page = 1;
         }
         toggle-fullscreen => { root.toggle-fullscreen(); }
+        zap(d) => { root.zap(d); }
+        play(i) => { root.play-index(i); }
+        pick-category(i) => { root.pick-category(i); }
+        load-tracks => { root.load-tracks(); }
+        select-audio(id) => { root.select-audio(id); }
+        select-sub(id) => { root.select-sub(id); }
+        cycle-aspect => { root.cycle-aspect(); }
     }
 }

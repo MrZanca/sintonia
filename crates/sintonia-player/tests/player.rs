@@ -63,3 +63,24 @@ fn strings_with_nul_are_rejected() {
     let (player, _rx) = player();
     assert!(player.load("a\0b").is_err());
 }
+
+#[test]
+fn per_file_options_are_accepted() {
+    let (player, rx) = player();
+    let options = sintonia_player::LoadOptions {
+        user_agent: Some("Prova/1.0 (a, b)".into()),
+        referrer: Some("https://r.example/".into()),
+    };
+    player
+        .load_with("C:/questo-file-non-esiste/sintonia.ts", &options)
+        .expect("loadfile con opzioni accettato");
+    let ended = wait_for(&rx, Duration::from_secs(10), |e| {
+        matches!(e, PlayerEvent::Ended(_))
+    });
+    assert!(matches!(
+        ended,
+        Some(PlayerEvent::Ended(EndReason::Error(_)))
+    ));
+    assert!(player.tracks().is_empty());
+    player.set_user_agent(None).expect("user-agent generale");
+}

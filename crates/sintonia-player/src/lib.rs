@@ -64,6 +64,8 @@ pub struct PlayerConfig {
     pub log_level: &'static str,
     /// Secondi dopo cui mpv considera persa una connessione.
     pub network_timeout_secs: u32,
+    /// Memoria massima per i dati in arrivo (MiB). Per la TV in diretta bastano pochi secondi.
+    pub cache_mib: u32,
 }
 
 impl Default for PlayerConfig {
@@ -73,8 +75,101 @@ impl Default for PlayerConfig {
             hardware_decoding: true,
             log_level: "warn",
             network_timeout_secs: 15,
+            cache_mib: 48,
         }
     }
+}
+
+/// Opzioni di un singolo flusso (dalla playlist).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct LoadOptions {
+    /// User-agent richiesto dal canale (ha la precedenza su quello generale).
+    pub user_agent: Option<String>,
+    /// Referrer richiesto dal canale.
+    pub referrer: Option<String>,
+}
+
+impl fmt::Debug for LoadOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoadOptions")
+            .field("user_agent", &self.user_agent.is_some())
+            .field("referrer", &self.referrer.is_some())
+            .finish()
+    }
+}
+
+/// Tipo di traccia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackKind {
+    /// Audio.
+    Audio,
+    /// Sottotitoli.
+    Subtitle,
+}
+
+/// Una traccia audio o di sottotitoli del flusso.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Track {
+    /// Identificativo di mpv (per [`Player::select_track`]).
+    pub id: i64,
+    /// Tipo.
+    pub kind: TrackKind,
+    /// Lingua (codice, es. `ita`), se dichiarata.
+    pub lang: Option<String>,
+    /// Titolo, se dichiarato.
+    pub title: Option<String>,
+    /// Codec (es. `ac3`).
+    pub codec: Option<String>,
+    /// Selezionata adesso.
+    pub selected: bool,
+}
+
+/// Attese crescenti tra un tentativo di riconnessione e l'altro: 1, 2, 4, 8, 16, poi 30 secondi.
+#[derive(Debug, Clone, Default)]
+pub struct Backoff {
+    attempt: u32,
+}
+
+impl Backoff {
+    /// Tentativi dopo cui si rinuncia (circa tre minuti in tutto).
+    pub const MAX_ATTEMPTS: u32 = 10;
+
+    /// Attesa prima del prossimo tentativo, o `None` se si deve rinunciare.
+    pub fn next_delay(&mut self) -> Option<std::time::Duration> {
+        if self.attempt >= Self::MAX_ATTEMPTS {
+            return None;
+        }
+        let secs = 1u64.checked_shl(self.attempt).map_or(30, |s| s.min(30));
+        self.attempt += 1;
+        Some(std::time::Duration::from_secs(secs))
+    }
+
+    /// Tentativi fatti finora.
+    pub fn attempts(&self) -> u32 {
+        self.attempt
+    }
+
+    /// Da chiamare quando il flusso riparte.
+    pub fn reset(&mut self) {
+        self.attempt = 0;
+    }
+}
+
+/// Valore per le opzioni per-file di `loadfile`: `%n%testo` evita qualsiasi problema con
+/// virgole, uguali e virgolette.
+fn quote_option(value: &str) -> String {
+    format!("%{}%{value}", value.len())
+}
+
+fn load_options_string(options: &LoadOptions) -> String {
+    let mut parts = Vec::new();
+    if let Some(ua) = &options.user_agent {
+        parts.push(format!("user-agent={}", quote_option(ua)));
+    }
+    if let Some(referrer) = &options.referrer {
+        parts.push(format!("referrer={}", quote_option(referrer)));
+    }
+    parts.join(",")
 }
 
 /// Perché è finita la riproduzione di un flusso.
@@ -179,6 +274,9 @@ fn check(what: &'static str, code: c_int) -> Result<(), PlayerError> {
     }
 }
 
+/// User-agent quando né le impostazioni né il canale ne indicano uno.
+pub const DEFAULT_USER_AGENT: &str = concat!("Sintonia/", env!("CARGO_PKG_VERSION"), " (libmpv)");
+
 /// Identificativi delle proprietà osservate (`reply_userdata`).
 const OBSERVE_PAUSED_FOR_CACHE: u64 = 1;
 
@@ -222,10 +320,26 @@ impl Player {
                 .into(),
             ),
             ("network-timeout", config.network_timeout_secs.to_string()),
+            ("cache", "yes".into()),
+            ("demuxer-max-bytes", format!("{}MiB", config.cache_mib)),
+            ("demuxer-max-back-bytes", format!("{}MiB", (config.cache_mib / 4).max(1))),
+            // HLS: con le richieste HTTP in parallelo di FFmpeg alcuni server (es. gruppo Discovery)
+            // impiegano 25-30 s a partire; senza, circa il 40% in meno, e gli altri canali non
+            // cambiano (misurato con l'esempio `probe`)
+            ("demuxer-lavf-o", "http_multiple=0".into()),
+            // FFmpeg riprova da sé le connessioni HTTP che cadono, prima che intervenga l'app
+            (
+                "stream-lavf-o",
+                "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=4".into(),
+            ),
         ];
-        if let Some(ua) = &config.user_agent {
-            options.push(("user-agent", ua.clone()));
-        }
+        options.push((
+            "user-agent",
+            config
+                .user_agent
+                .clone()
+                .unwrap_or_else(|| DEFAULT_USER_AGENT.to_owned()),
+        ));
         for (name, value) in options {
             let (name_c, value_c) = (CString::new(name)?, CString::new(value)?);
             // SAFETY: core valido e non ancora inizializzato; le stringhe vivono fino al ritorno.
@@ -305,8 +419,75 @@ impl Player {
     /// Apre un flusso (URL o file) al posto di quello corrente. Ritorna subito: l'esito arriva
     /// con gli eventi.
     pub fn load(&self, url: &str) -> Result<(), PlayerError> {
+        self.load_with(url, &LoadOptions::default())
+    }
+
+    /// Come [`Self::load`], con user-agent e referrer del singolo canale.
+    pub fn load_with(&self, url: &str, options: &LoadOptions) -> Result<(), PlayerError> {
         log::info!("carico {}", sintonia_core::redact::redact_url(url));
-        self.command("caricamento", &["loadfile", url, "replace"])
+        let per_file = load_options_string(options);
+        if per_file.is_empty() {
+            self.command("caricamento", &["loadfile", url, "replace"])
+        } else {
+            // loadfile <url> <flag> <indice> <opzioni>: l'indice -1 è ignorato con "replace"
+            self.command(
+                "caricamento",
+                &["loadfile", url, "replace", "-1", &per_file],
+            )
+        }
+    }
+
+    /// User-agent generale (per i canali che non ne indicano uno).
+    pub fn set_user_agent(&self, user_agent: Option<&str>) -> Result<(), PlayerError> {
+        self.set_property(
+            "user-agent",
+            "user-agent",
+            user_agent.unwrap_or(DEFAULT_USER_AGENT),
+        )
+    }
+
+    /// Legge una proprietà di mpv come testo.
+    pub fn property(&self, name: &str) -> Option<String> {
+        let name = CString::new(name).ok()?;
+        get_string(&self.core, &name)
+    }
+
+    /// Tracce audio e sottotitoli del flusso corrente.
+    pub fn tracks(&self) -> Vec<Track> {
+        let count: usize = self
+            .property("track-list/count")
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        (0..count)
+            .filter_map(|i| {
+                let field = |name: &str| {
+                    self.property(&format!("track-list/{i}/{name}"))
+                        .filter(|v| !v.is_empty())
+                };
+                let kind = match field("type")?.as_str() {
+                    "audio" => TrackKind::Audio,
+                    "sub" => TrackKind::Subtitle,
+                    _ => return None,
+                };
+                Some(Track {
+                    id: field("id")?.parse().ok()?,
+                    kind,
+                    lang: field("lang"),
+                    title: field("title"),
+                    codec: field("codec"),
+                    selected: field("selected").as_deref() == Some("yes"),
+                })
+            })
+            .collect()
+    }
+
+    /// Sceglie una traccia; per i sottotitoli `None` li spegne.
+    pub fn select_track(&self, kind: TrackKind, id: Option<i64>) -> Result<(), PlayerError> {
+        let value = id.map_or_else(|| "no".to_owned(), |id| id.to_string());
+        match kind {
+            TrackKind::Audio => self.set_property("traccia audio", "aid", &value),
+            TrackKind::Subtitle => self.set_property("sottotitoli", "sid", &value),
+        }
     }
 
     /// Ferma la riproduzione.
@@ -317,6 +498,11 @@ impl Player {
     /// Mette in pausa o riprende.
     pub fn set_paused(&self, paused: bool) -> Result<(), PlayerError> {
         self.set_property("pausa", "pause", if paused { "yes" } else { "no" })
+    }
+
+    /// Imposta una proprietà di mpv (per esempio `video-aspect-override`).
+    pub fn set_option(&self, name: &str, value: &str) -> Result<(), PlayerError> {
+        self.set_property("impostazione", name, value)
     }
 
     /// Volume in percentuale (0-100, oltre amplifica).
@@ -442,8 +628,8 @@ where
     }
 }
 
-/// Legge una proprietà intera di mpv come stringa e la converte.
-fn get_int(core: &Core, name: &CStr) -> Option<u32> {
+/// Legge una proprietà di mpv come stringa.
+fn get_string(core: &Core, name: &CStr) -> Option<String> {
     // SAFETY: core valido; il risultato è NULL o una stringa allocata da mpv da liberare con mpv_free.
     let raw = unsafe { ffi::mpv_get_property_string(core.as_ptr(), name.as_ptr()) };
     if raw.is_null() {
@@ -451,10 +637,54 @@ fn get_int(core: &Core, name: &CStr) -> Option<u32> {
     }
     // SAFETY: stringa valida restituita da mpv.
     let value = unsafe { CStr::from_ptr(raw) }
-        .to_str()
-        .ok()
-        .and_then(|s| s.parse().ok());
+        .to_string_lossy()
+        .into_owned();
     // SAFETY: memoria allocata da mpv, liberata una sola volta.
     unsafe { ffi::mpv_free(raw.cast()) };
-    value
+    Some(value)
+}
+
+/// Legge una proprietà intera di mpv.
+fn get_int(core: &Core, name: &CStr) -> Option<u32> {
+    get_string(core, name).and_then(|s| s.parse().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn backoff_grows_then_gives_up() {
+        let mut backoff = Backoff::default();
+        let delays: Vec<u64> = std::iter::from_fn(|| backoff.next_delay())
+            .map(|d| d.as_secs())
+            .collect();
+        assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30, 30, 30, 30]);
+        assert_eq!(backoff.next_delay(), None);
+        backoff.reset();
+        assert_eq!(backoff.next_delay(), Some(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn per_file_options_are_length_quoted() {
+        let options = LoadOptions {
+            user_agent: Some("Mozilla/5.0 (a, b=c)".into()),
+            referrer: Some("https://r.example/".into()),
+        };
+        assert_eq!(
+            load_options_string(&options),
+            "user-agent=%20%Mozilla/5.0 (a, b=c),referrer=%18%https://r.example/"
+        );
+        assert_eq!(load_options_string(&LoadOptions::default()), "");
+    }
+
+    #[test]
+    fn load_options_debug_hides_values() {
+        let options = LoadOptions {
+            user_agent: Some("segreto".into()),
+            referrer: None,
+        };
+        assert!(!format!("{options:?}").contains("segreto"));
+    }
 }

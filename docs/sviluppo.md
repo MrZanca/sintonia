@@ -38,10 +38,15 @@ Su PC senza driver video (alcune macchine virtuali) la DLL non si carica: da ges
 
 ```powershell
 cargo run -p sintonia-app              # avvia l'app (la DLL viene copiata accanto all'eseguibile)
-cargo run -p sintonia-app -- <url>     # M0: prova un proprio flusso su tutti i canali
 cargo fmt --all --check
 cargo clippy --all-targets --all-features
 cargo test
+
+# prova tutti i canali di una playlist (stampa solo nomi ed esiti, mai gli indirizzi)
+cargo run --release -p sintonia-player --example probe -- lista.m3u 15 8
+
+# zip portatile per Windows in dist\
+powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1
 ```
 
 Log: `RUST_LOG=debug` (o `info,sintonia=debug,mpv=info`). I messaggi di mpv passano per
@@ -59,9 +64,9 @@ cargo run -p sintonia-app --features slint/mcp
 
 | Crate | Ruolo |
 |---|---|
-| `sintonia-core` | logica senza interfaccia; per ora solo `redact` (M1-M3 aggiungono M3U, Xtream, EPG, SQLite) |
-| `sintonia-player` | involucro di libmpv: `Player` (comandi ed eventi da un thread dedicato) e `RenderContext` (render API OpenGL) |
-| `sintonia-app` | finestre Slint; `video.rs` porta il video di mpv nelle finestre |
+| `sintonia-core` | logica senza interfaccia: `m3u` (parser tollerante a righe), `db` (SQLite + FTS5), `crypto` e `secrets` (indirizzi cifrati, chiave nel portachiavi), `service` (runtime tokio: download, archivio, loghi), `redact` |
+| `sintonia-player` | involucro di libmpv: `Player` (comandi, tracce, opzioni per canale, eventi da un thread dedicato), `Backoff` (riconnessione), `RenderContext` (render API OpenGL) |
+| `sintonia-app` | finestre Slint: `app.rs` (collega interfaccia, servizio e player), `channels.rs` (modello virtualizzato dei canali), `video.rs` (video di mpv nelle finestre, riconnessione), `settings.rs` |
 
 ### Il video dentro Slint (M0)
 
@@ -76,3 +81,30 @@ cargo run -p sintonia-app --features slint/mcp
   `Player::reselect_video` riaccende la traccia video. Il flusso di rete resta uno solo (molti
   fornitori ammettono una connessione sola) e la decodifica hardware resta attiva.
   Il prezzo è un attimo di nero durante il passaggio: sui flussi live, sotto il secondo.
+
+### Dati e sicurezza (M1)
+
+- Archivio: `%APPDATA%\Sintonia\data\archivio.db` (SQLite). Cache dei loghi: `%LOCALAPPDATA%\Sintonia\cache\loghi`
+  (file chiamati con l'hash dell'indirizzo, mai con l'indirizzo).
+- Gli indirizzi della playlist, della guida e di **ogni canale** sono cifrati (XChaCha20-Poly1305).
+  La chiave sta nella Gestione credenziali di Windows (servizio `Sintonia`, voce `chiave-archivio`).
+  Se la chiave sparisce, all'avvio l'archivio vecchio viene messo da parte e se ne crea uno nuovo.
+- L'interfaccia non fa I/O: tutto passa dal servizio (`Command` → `Event`).
+
+### Traduzioni
+
+- Testi in inglese con `@tr()` in `ui/app.slint`; italiano in `lang/it/LC_MESSAGES/sintonia-app.po`.
+- Compilate dentro l'eseguibile, senza contesto (`DefaultTranslationContext::None`); cambio immediato con
+  `slint::select_bundled_translation`. Nuova lingua: copiare il `.po` in `lang/<codice>/…` e tradurre.
+- Il test `tests/translations.rs` fallisce se un testo non ha la traduzione italiana.
+
+### Trabocchetti di Slint incontrati
+
+- Con una traduzione attiva, **la conversione numero → testo usa il separatore decimale della lingua**
+  (in italiano la virgola). I percorsi SVG costruiti concatenando numeri (`Sq`) si rompono: per questo
+  `Sq` lavora con interi in centesimi di pixel.
+- `row` è una proprietà predefinita degli elementi (griglie): non usarla come nome di proprietà.
+- Non si può chiamare una funzione o leggere un `id` di un elemento dentro un `if`: per passare il
+  focus a una pagina condizionale si usa una proprietà contatore con `changed`.
+- Elenchi lunghi: `ChannelList` disegna solo le righe visibili (`for i in visibili` + `model[indice]`),
+  come `ListView` ma con l'aspetto della bozza.

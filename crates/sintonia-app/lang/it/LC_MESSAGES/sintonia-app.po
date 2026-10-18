@@ -1,0 +1,248 @@
+# Sintonia: traduzione italiana dell'interfaccia.
+# Le stringhe originali (msgid) sono in inglese, in ui/app.slint; per aggiungere una lingua basta
+# copiare questo file in lang/<codice>/LC_MESSAGES/sintonia-app.po e tradurre i msgstr.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: it\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "{n} category"
+msgid_plural "{n} categories"
+msgstr[0] "{n} categoria"
+msgstr[1] "{n} categorie"
+
+msgid "{n} channel"
+msgid_plural "{n} channels"
+msgstr[0] "{n} canale"
+msgstr[1] "{n} canali"
+
+msgid "{n} line skipped"
+msgid_plural "{n} lines skipped"
+msgstr[0] "{n} riga saltata"
+msgstr[1] "{n} righe saltate"
+
+msgid "↑ ↓ browse   ·   Enter watch   ·   Esc close"
+msgstr "↑ ↓ scorri   ·   Invio guarda   ·   Esc chiudi"
+
+msgid "Add a playlist"
+msgstr "Aggiungi una playlist"
+
+msgid "Add a source"
+msgstr "Aggiungi una sorgente"
+
+msgid "Add your M3U playlist in Settings to see your channels here."
+msgstr "Aggiungi la tua playlist M3U nelle Impostazioni per vedere qui i tuoi canali."
+
+msgid "All channels"
+msgstr "Tutti i canali"
+
+msgid "Audio"
+msgstr "Audio"
+
+msgid "Auto"
+msgstr "Auto"
+
+msgid "Can't reach the server: {}"
+msgstr "Il server non risponde: {}"
+
+msgid "Can't read the file: {}"
+msgstr "Impossibile leggere il file: {}"
+
+msgid "Categories"
+msgstr "Categorie"
+
+msgid "Changes immediately, no restart needed."
+msgstr "Cambia subito, senza riavviare."
+
+msgid "Channel {}"
+msgstr "Canale {}"
+
+msgid "Channels"
+msgstr "Canali"
+
+msgid "Choose an .m3u or .m3u8 file"
+msgstr "Scegli un file .m3u o .m3u8"
+
+msgid "Choose…"
+msgstr "Scegli…"
+
+msgid "Confirm delete"
+msgstr "Conferma eliminazione"
+
+msgid "Connecting to the channel…"
+msgstr "Collegamento al canale…"
+
+msgid "Custom user-agent"
+msgstr "User-agent personalizzato"
+
+msgid "Delete"
+msgstr "Elimina"
+
+msgid "File"
+msgstr "File"
+
+msgid "Fill"
+msgstr "Riempi"
+
+msgid "Fill in the name and the address."
+msgstr "Inserisci il nome e l'indirizzo."
+
+msgid "Guide"
+msgstr "Guida"
+
+msgid "Home"
+msgstr "Home"
+
+msgid "If the stream drops, retry with growing delays."
+msgstr "Se lo stream cade, riprova con attese crescenti."
+
+msgid "In use"
+msgstr "In uso"
+
+msgid "Interface language"
+msgstr "Lingua dell'interfaccia"
+
+msgid "Language"
+msgstr "Lingua"
+
+msgid "leave empty for the default"
+msgstr "lascia vuoto per quello predefinito"
+
+msgid "Live"
+msgstr "Live"
+
+msgid "On air"
+msgstr "In diretta"
+
+msgid "M3U link"
+msgstr "Link M3U"
+
+msgid "Movies & series"
+msgstr "Film e serie"
+
+msgid "Movies and series arrive with Xtream Codes sources, in a next version."
+msgstr "Film e serie arrivano con le sorgenti Xtream Codes, in una prossima versione."
+
+msgid "My playlist"
+msgstr "La mia playlist"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "No category"
+msgstr "Senza categoria"
+
+msgid "No channels found in this playlist."
+msgstr "In questa playlist non ci sono canali."
+
+msgid "No channels match your search."
+msgstr "Nessun canale corrisponde alla ricerca."
+
+msgid "No playlist yet"
+msgstr "Ancora nessuna playlist"
+
+msgid "Off"
+msgstr "Spenti"
+
+msgid "On now"
+msgstr "In onda ora"
+
+msgid "only if your provider asks for one"
+msgstr "solo se il tuo fornitore lo richiede"
+
+msgid "Only one audio track"
+msgstr "Una sola traccia audio"
+
+msgid "Playback"
+msgstr "Riproduzione"
+
+msgid "Playlist address"
+msgstr "Indirizzo della playlist"
+
+msgid "Program guide"
+msgstr "Guida dei programmi"
+
+msgid "Reading the playlist…"
+msgstr "Lettura della playlist…"
+
+msgid "Reconnect automatically"
+msgstr "Riconnessione automatica"
+
+msgid "Reconnecting ({})…"
+msgstr "Riconnessione ({})…"
+
+msgid "Refresh"
+msgstr "Aggiorna"
+
+msgid "Results for “{}”: {}"
+msgstr "Risultati per «{}»: {}"
+
+msgid "Save"
+msgstr "Salva"
+
+msgid "Saved."
+msgstr "Salvata."
+
+msgid "Search channels"
+msgstr "Cerca canali"
+
+msgid "Sintonia doesn't provide channels: add your own M3U playlist to start."
+msgstr "Sintonia non fornisce canali: aggiungi la tua playlist M3U per cominciare."
+
+msgid "Sintonia doesn't provide channels: add your own playlist or account."
+msgstr "Sintonia non fornisce canali: aggiungi la tua playlist o il tuo account."
+
+msgid "Something went wrong: {}"
+msgstr "Qualcosa non ha funzionato: {}"
+
+msgid "Sources"
+msgstr "Sorgenti"
+
+msgid "Start in full screen"
+msgstr "Avvia a schermo intero"
+
+msgid "Subtitles"
+msgstr "Sottotitoli"
+
+msgid "The channel is not responding"
+msgstr "Il canale non risponde"
+
+msgid "The player opens full screen."
+msgstr "Il player si apre a tutto schermo."
+
+msgid "The playlist is too large."
+msgstr "La playlist è troppo grande."
+
+msgid "The server answered with error {}."
+msgstr "Il server ha risposto con l'errore {}."
+
+msgid "The TV guide is coming in a next version of Sintonia."
+msgstr "La guida TV arriva in una prossima versione di Sintonia."
+
+msgid "This channel declares a DRM protection: it may not play."
+msgstr "Questo canale dichiara una protezione DRM: potrebbe non funzionare."
+
+msgid "Use"
+msgstr "Usa"
+
+msgid "User-agent (optional)"
+msgstr "User-agent (facoltativo)"
+
+msgid "Verify"
+msgstr "Verifica"
+
+msgid "Waiting for the signal…"
+msgstr "In attesa del segnale…"
+
+msgid "Watch"
+msgstr "Guarda"
+
+msgid "Welcome to Sintonia"
+msgstr "Benvenuto in Sintonia"
+
+msgid "Xtream Codes accounts are coming in the next version."
+msgstr "Gli account Xtream Codes arrivano nella prossima versione."
+
+msgid "Your sources"
+msgstr "Le tue sorgenti"

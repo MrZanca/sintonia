@@ -18,7 +18,13 @@ Slint è usato con la licenza **GPLv3**, compatibile con la licenza di Sintonia.
 Per un eventuale modulo Premium chiuso servirà la licenza *Royalty-free* di Slint, che copre le
 app desktop proprietarie: va riverificata prima di M4.
 
+## SQLite
+
+Incluso nell'eseguibile (crate `rusqlite`, versione `bundled`): pubblico dominio.
+
 ## Crate Rust
 
-Le dipendenze Rust e le loro licenze sono elencate in `Cargo.lock`. Un riepilogo automatico
-(`cargo about` o simili) arriva con l'installer (M4).
+Le dipendenze Rust sono elencate in `Cargo.lock`; le principali (tokio, reqwest, rustls, rusqlite,
+chacha20poly1305, image, keyring) sono sotto licenze MIT, Apache-2.0, ISC o simili, compatibili con
+la GPL-3.0. La crittografia di rustls usa aws-lc-rs (Apache-2.0 e ISC, con parti OpenSSL).
+Un riepilogo automatico completo (`cargo about` o simili) arriva con l'installer (M4).
