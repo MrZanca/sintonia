@@ -10,7 +10,7 @@ M3U o il proprio account Xtream Codes.
 Stato: **M1**, prima versione usabile.
 - Playlist M3U da link o da file, più sorgenti salvate, una in uso.
 - Canali per categoria, ricerca istantanea, loghi, numerazione.
-- Player con riconnessione automatica, tracce audio e sottotitoli, mini player, schermo intero.
+- Player con riconnessione automatica, tracce audio e sottotitoli, muto, mini player, schermo intero.
 - Interfaccia in italiano e inglese, cambio immediato.
 
 Già presenti: playlist M3U, account Xtream Codes con film e serie, preferiti, «Riprendi», mini player

@@ -14,8 +14,11 @@ component TopBar inherits HorizontalLayout {
     in-out property <int> page;
     in property <string> clock;
     in-out property <string> search;
+    // a schermo intero, accanto all'ingranaggio c'è il pulsante per uscirne
+    in property <bool> fullscreen;
     callback search-edited(string);
     callback search-done();
+    callback toggle-fullscreen();
     padding-left: 44px;
     padding-right: 44px;
     padding-top: 22px;
@@ -94,6 +97,16 @@ component TopBar inherits HorizontalLayout {
         font-size: 26px;
         font-weight: 300;
         vertical-alignment: center;
+    }
+    if root.fullscreen: VerticalLayout {
+        alignment: start;
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            Sq { r: 20px; fill: fta.has-hover ? #ffffff30 : Theme.glass; }
+            Icon { commands: Icons.shrink; width: 20px; height: 20px; }
+            fta := TouchArea { clicked => { root.toggle-fullscreen(); } }
+        }
     }
     VerticalLayout {
         alignment: start;
@@ -303,6 +316,13 @@ component Preview inherits Rectangle {
     if root.live-video: VideoView { r: root.r; }
     Sq { r: root.r; fill: @linear-gradient(180deg, #00000000 55%, #000000b0 100%); }
     if root.live-video && Texts.status(Video.state, Video.attempt) != "": StatusPill { small: true; }
+    if root.live-video && (Video.ready || Video.state != 0): IconBtn {
+        x: parent.width - self.width - 12px;
+        y: 12px;
+        size: 34px;
+        icon: Video.muted ? Icons.muted : Icons.sound;
+        clicked => { Video.toggle-mute(); }
+    }
     if root.badge: Rectangle {
         x: 16px;
         y: 16px;
@@ -450,9 +470,10 @@ component HomeScreen inherits Rectangle {
             height: 262px;
             Rectangle {
                 width: 466px;
+                // sotto l'anteprima, così il suo pulsante muto riceve i clic
+                hta := TouchArea { clicked => { root.play(); } }
                 Preview { c: root.hero; }
                 Ring { on: hta.has-hover; }
-                hta := TouchArea { clicked => { root.play(); } }
             }
             VerticalLayout {
                 width: 440px;
@@ -1222,6 +1243,7 @@ component PlayerScreen inherits Rectangle {
     callback home();
     callback pip();
     callback toggle-fullscreen();
+    in property <bool> fullscreen;
     callback zap(int);
     callback play(int);
     callback pick-category(int);
@@ -1259,7 +1281,8 @@ component PlayerScreen inherits Rectangle {
     }
     property <bool> controls-hovered: back-btn.hovered || home-btn.hovered || pip-btn.hovered
         || audio-btn.hovered || sub-btn.hovered || aspect-btn.hovered || seek-ta.has-hover
-        || rew-btn.hovered || pause-btn.hovered || fwd-btn.hovered;
+        || rew-btn.hovered || pause-btn.hovered || fwd-btn.hovered || fs-btn.hovered
+        || mute-btn.hovered;
 
     function toggle-drawer() {
         root.drawer = !root.drawer;
@@ -1311,6 +1334,11 @@ component PlayerScreen inherits Rectangle {
             }
             if (event.text == "f" || event.text == "F") {
                 root.toggle-fullscreen();
+                return accept;
+            }
+            if (event.text == "m" || event.text == "M") {
+                Video.toggle-mute();
+                root.show-overlay();
                 return accept;
             }
             if (event.text == " ") {
@@ -1368,6 +1396,17 @@ component PlayerScreen inherits Rectangle {
         animate opacity { duration: 250ms; }
         back-btn := IconBtn { icon: Icons.back; clicked => { root.back(); } }
         home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
+    }
+
+    // in alto a destra: schermo intero (entra / esci)
+    fs-btn := IconBtn {
+        x: parent.width - self.width - 36px;
+        y: 28px;
+        icon: root.fullscreen ? Icons.shrink : Icons.expand;
+        opacity: root.overlay && !root.drawer ? 1 : 0;
+        visible: self.opacity > 0.01;
+        animate opacity { duration: 250ms; }
+        clicked => { root.toggle-fullscreen(); }
     }
 
     // barra in basso (più alta quando c'è la guida)
@@ -1472,6 +1511,11 @@ component PlayerScreen inherits Rectangle {
                         icon: Icons.forward;
                         size: 38px;
                         clicked => { root.seek(10); }
+                    }
+                    mute-btn := IconBtn {
+                        icon: Video.muted ? Icons.muted : Icons.sound;
+                        size: 38px;
+                        clicked => { Video.toggle-mute(); }
                     }
                     pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
                     audio-btn := Btn {
@@ -1674,7 +1718,7 @@ export component PipWindow inherits Window {
     default-font-family: "Bahnschrift";
 
     // comandi visibili solo con il mouse sopra il mini player
-    property <bool> controls: area.has-hover || expand-btn.hovered || close-btn.hovered
+    property <bool> controls: area.has-hover || expand-btn.hovered || close-btn.hovered || mute-btn.hovered
         || h0.has-hover || h1.has-hover || h2.has-hover || h3.has-hover;
 
     Sq { r: 24px; fill: @linear-gradient(145deg, root.tint.darker(0.2) 0%, #090a10 90%); }
@@ -1709,7 +1753,7 @@ export component PipWindow inherits Window {
         x: 16px;
         y: 14px;
         height: 26px;
-        width: min(pl.preferred-width + 32px, root.width - 120px);
+        width: min(pl.preferred-width + 32px, root.width - 160px);
         opacity: root.controls ? 1 : 0;
         animate opacity { duration: 200ms; }
         Sq { r: 13px; fill: #000000a0; }
@@ -1731,14 +1775,19 @@ export component PipWindow inherits Window {
         }
     }
     HorizontalLayout {
-        x: root.width - 92px;
+        x: root.width - 132px;
         y: 10px;
-        width: 80px;
+        width: 120px;
         spacing: 6px;
         alignment: end;
         opacity: root.controls ? 1 : 0;
         visible: self.opacity > 0.01;
         animate opacity { duration: 200ms; }
+        mute-btn := IconBtn {
+            icon: Video.muted ? Icons.muted : Icons.sound;
+            size: 34px;
+            clicked => { Video.toggle-mute(); }
+        }
         expand-btn := IconBtn { icon: Icons.expand; size: 34px; clicked => { root.expand(); } }
         close-btn := IconBtn { icon: Icons.close; size: 34px; clicked => { root.dismiss(); } }
     }
@@ -1813,6 +1862,8 @@ export component MainWindow inherits Window {
     in-out property <int> page <=> Theme.page;
     in-out property <bool> playing: false;
     in property <string> clock;
+    // la finestra è a schermo intero
+    in property <bool> fullscreen;
     // nel player: il puntatore va nascosto (o rimostrato)
     callback cursor-hidden(bool);
 
@@ -1973,6 +2024,8 @@ export component MainWindow inherits Window {
             page <=> root.page;
             clock: root.clock;
             search <=> root.search;
+            fullscreen: root.fullscreen;
+            toggle-fullscreen => { root.toggle-fullscreen(); }
             search-edited(text) => {
                 root.search-edited(text);
                 // la ricerca vale per la pagina in cui si è (Guida, Film e serie), altrimenti Live
@@ -2153,6 +2206,7 @@ export component MainWindow inherits Window {
         play-next => { root.play-next(); }
         cancel-next => { root.cancel-next(); }
         toggle-fullscreen => { root.toggle-fullscreen(); }
+        fullscreen: root.fullscreen;
         zap(d) => { root.zap(d); }
         play(i) => { root.play-index(i); }
         pick-category(i) => { root.pick-category(i); }
