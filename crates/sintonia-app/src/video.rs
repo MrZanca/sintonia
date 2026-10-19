@@ -116,6 +116,8 @@ pub struct VideoRouter {
     retry_timer: slint::Timer,
     /// Schermo sempre acceso mentre c'è qualcosa in riproduzione.
     keep_awake: KeepAwake,
+    /// Audio spento (vale per ogni player: c'è un solo mpv).
+    muted: Cell<bool>,
 }
 
 impl std::fmt::Debug for VideoRouter {
@@ -147,9 +149,38 @@ impl VideoRouter {
             backoff: RefCell::new(Backoff::default()),
             retry_timer: slint::Timer::default(),
             keep_awake: KeepAwake::default(),
+            muted: Cell::new(false),
         });
         ROUTER.with(|r| *r.borrow_mut() = Rc::downgrade(&router));
+        let weak = Rc::downgrade(&router);
+        main.global::<Video>().on_toggle_mute(move || {
+            if let Some(router) = weak.upgrade() {
+                router.toggle_mute();
+            }
+        });
+        let weak = Rc::downgrade(&router);
+        pip.global::<Video>().on_toggle_mute(move || {
+            if let Some(router) = weak.upgrade() {
+                router.toggle_mute();
+            }
+        });
         router
+    }
+
+    /// Accende o spegne l'audio, con il pulsante giusto in tutte e due le finestre.
+    pub fn toggle_mute(&self) {
+        let muted = !self.muted.get();
+        if let Err(err) = self.player.set_muted(muted) {
+            log::warn!("{err}");
+            return;
+        }
+        self.muted.set(muted);
+        if let Some(main) = self.main.upgrade() {
+            main.global::<Video>().set_muted(muted);
+        }
+        if let Some(pip) = self.pip.upgrade() {
+            pip.global::<Video>().set_muted(muted);
+        }
     }
 
     /// Collega il video a una finestra. Da chiamare una volta per finestra, prima di mostrarla.

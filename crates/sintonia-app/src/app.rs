@@ -2009,8 +2009,7 @@ impl App {
         main.on_cursor_hidden(with_app!(|app, hidden: bool| app.set_cursor_hidden(hidden)));
         main.on_toggle_fullscreen(on(|app| {
             if let Some(main) = app.main() {
-                let window = main.window();
-                window.set_fullscreen(!window.is_fullscreen());
+                app.set_fullscreen(!main.window().is_fullscreen());
                 app.auto_fullscreen.set(false);
             }
         }));
@@ -2408,6 +2407,14 @@ impl App {
         }
     }
 
+    /// Schermo intero sì o no; l'interfaccia lo sa per mostrare il pulsante giusto.
+    fn set_fullscreen(&self, on: bool) {
+        if let Some(main) = self.main() {
+            main.window().set_fullscreen(on);
+            main.set_fullscreen(on);
+        }
+    }
+
     fn on_playing_changed(&self, playing: bool) {
         let Some(main) = self.main() else { return };
         if !playing {
@@ -2416,10 +2423,10 @@ impl App {
         }
         let window = main.window();
         if playing && self.settings.borrow().fullscreen_start && !window.is_fullscreen() {
-            window.set_fullscreen(true);
+            self.set_fullscreen(true);
             self.auto_fullscreen.set(true);
         } else if !playing && self.auto_fullscreen.replace(false) {
-            window.set_fullscreen(false);
+            self.set_fullscreen(false);
         }
         let pip_open = self.pip.upgrade().is_some_and(|p| p.window().is_visible());
         if playing {
