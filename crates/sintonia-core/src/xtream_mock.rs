@@ -1,7 +1,8 @@
 //! Finto server Xtream Codes, solo per i test e lo sviluppo (feature `mock`).
 //!
-//! Risponde a `player_api.php` con un catalogo **inventato** (nessun canale reale) e, per i
-//! flussi, rimanda con un redirect a stream pubblici di prova. Accetta un solo utente:
+//! Risponde a `player_api.php` con un catalogo **inventato** (nessun canale reale), a
+//! `xmltv.php` con una guida inventata attorno all'ora attuale e, per i flussi, rimanda con un
+//! redirect a stream pubblici di prova. Accetta un solo utente:
 //! [`USERNAME`] / [`PASSWORD`]. Volutamente "sporco" come i server veri: numeri come testo,
 //! campi nulli, una voce rotta in ogni elenco.
 
@@ -185,6 +186,67 @@ impl Catalog {
         })
     }
 
+    /// Guida XMLTV: da ieri a tre giorni da oggi (UTC), al massimo per 2000 canali.
+    fn xmltv(&self, now: i64) -> String {
+        const TITLES: [&str; 10] = [
+            "Telegiornale",
+            "Meteo & traffico",
+            "Quiz serale",
+            "Documentario: oceani",
+            "Notte musicale",
+            "Rubrica di cucina",
+            "Talk show",
+            "Cartoni animati",
+            "Approfondimento",
+            "Sport: sintesi",
+        ];
+        const MINUTES: [i64; 6] = [30, 60, 45, 90, 30, 120];
+        let day_start = now - now.rem_euclid(86_400);
+        let (from, to) = (day_start - 86_400, day_start + 3 * 86_400);
+        let mut xml = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<tv generator-info-name=\"finto\">
+",
+        );
+        let channels = self.live.min(2000);
+        for i in 1..=channels {
+            let _ = writeln!(
+                xml,
+                "<channel id=\"prova{i}.it\"><display-name>Canale di prova {i}</display-name></channel>"
+            );
+        }
+        for i in 1..=channels {
+            let mut start = from;
+            let mut n = i;
+            while start < to {
+                let length = MINUTES[n % MINUTES.len()] * 60;
+                let title = if n % 7 == 3 {
+                    format!("Film: {}", Self::movie_title(n))
+                } else {
+                    TITLES[n % TITLES.len()].replace('&', "&amp;")
+                };
+                // un programma ogni tanto senza «stop», come in certe guide vere
+                let stop = if n % 50 == 0 {
+                    String::new()
+                } else {
+                    format!(" stop=\"{}\"", xmltv_time(start + length))
+                };
+                let _ = writeln!(
+                    xml,
+                    "<programme start=\"{}\"{stop} channel=\"prova{i}.it\"><title lang=\"it\">{title}</title><desc>Programma inventato numero {n}.</desc><category>Prova</category></programme>",
+                    xmltv_time(start)
+                );
+                start += length;
+                n += 1;
+            }
+        }
+        xml.push_str(
+            "</tv>
+",
+        );
+        xml
+    }
+
     fn movie_info(stream_id: i64) -> Value {
         json!({
             "info": {
@@ -253,6 +315,34 @@ impl MockServer {
     pub fn address(&self) -> String {
         format!("http://{}", self.address)
     }
+}
+
+/// Orario XMLTV in UTC (`20261017203000 +0000`).
+fn xmltv_time(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rest = secs.rem_euclid(86_400);
+    // da giorni dal 1970 a data (algoritmo di Howard Hinnant)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}{month:02}{day:02}{:02}{:02}{:02} +0000",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    )
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
 }
 
 fn percent_decode(text: &str) -> String {
@@ -360,6 +450,19 @@ fn route(catalog: &Catalog, path: &str, query: &str) -> String {
             &body.to_string(),
         );
     }
+    if path == "/xmltv.php" {
+        let authorized = query_param(query, "username").as_deref() == Some(USERNAME)
+            && query_param(query, "password").as_deref() == Some(PASSWORD);
+        if !authorized {
+            return response("403 Forbidden", "", "");
+        }
+        return response(
+            "200 OK",
+            "Content-Type: application/xml
+",
+            &catalog.xmltv(now()),
+        );
+    }
     // flussi: /live|movie|series/<utente>/<password>/<id>.<estensione>
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if let [kind, user, pass, file] = parts.as_slice() {
@@ -400,5 +503,24 @@ mod tests {
         assert!(stream.starts_with("HTTP/1.1 302") && stream.contains("Location: https://"));
         assert!(route(&catalog, "/live/mario/sbagliata/1.ts", "").starts_with("HTTP/1.1 403"));
         assert_eq!(percent_decode("a%20b+c"), "a b c");
+        let guide = route(&catalog, "/xmltv.php", "username=mario&password=prova123");
+        assert!(guide.contains("<programme") && guide.contains("&amp;"));
+        assert!(route(&catalog, "/xmltv.php", "username=x&password=y").starts_with("HTTP/1.1 403"));
+    }
+
+    #[test]
+    fn guide_times_are_valid() {
+        assert_eq!(xmltv_time(0), "19700101000000 +0000");
+        assert_eq!(xmltv_time(1_792_886_400), "20261025000000 +0000");
+        let guide = Catalog::sample().xmltv(1_792_886_400);
+        let mut count = 0;
+        crate::epg::parse(guide.as_bytes(), (0, i64::MAX), &mut |_| {}, &mut |_| {
+            count += 1
+        })
+        .expect("guida del finto server leggibile");
+        assert!(
+            count > 40 * 4 * 10,
+            "almeno dieci programmi al giorno per canale: {count}"
+        );
     }
 }

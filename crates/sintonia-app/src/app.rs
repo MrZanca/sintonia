@@ -9,20 +9,24 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
+use sintonia_core::db::GuideProgramme;
 use sintonia_core::db::{
     ChannelRow, EpisodeRef, HistoryEntry, ItemKind, MovieRow, NewSource, SeriesRow, SourceInfo,
     SourceKind,
 };
 use sintonia_core::service::{
-    Command, Event, LogoImage, Playable, ResolvedStream, Service, SourceError, SourceReport,
+    Command, EpgState, Event, LogoImage, Playable, ResolvedStream, Service, SourceError,
+    SourceReport,
 };
 use sintonia_core::xtream::{Episode, MovieDetail, SeriesDetail};
 use sintonia_player::TrackKind;
+use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, Model, ModelRc, PhysicalPosition, SharedString, VecModel};
 
 use crate::catalog::{
     format_number, format_rating, tint_for, CatalogModel, PosterEntry, FAVORITES,
 };
+use crate::guide::{self, GuideModel, Schedule};
 use crate::images;
 use crate::settings::{Language, Settings};
 use crate::video::VideoRouter;
@@ -33,6 +37,13 @@ use crate::{
 
 /// Attesa prima di aprire il canale evidenziato nell'elenco Live (anteprima).
 const PREVIEW_DELAY: Duration = Duration::from_millis(1500);
+/// Aggiornamento di «in onda / dopo» e della linea «adesso».
+const GUIDE_TICK: Duration = Duration::from_secs(30);
+/// Programmi tenuti in memoria per «in onda / dopo»: da qualche ora fa a domani (secondi).
+const NOW_WINDOW_PAST: i64 = 4 * 3600;
+const NOW_WINDOW_FUTURE: i64 = 28 * 3600;
+/// Dopo quanto la finestra di «in onda / dopo» si ricarica (secondi).
+const NOW_WINDOW_RELOAD: i64 = 3 * 3600;
 /// Attesa prima di cercare mentre si scrive.
 const SEARCH_DELAY: Duration = Duration::from_millis(150);
 /// Categorie mostrate nella Home.
@@ -61,13 +72,18 @@ const PIP_MARGIN: f32 = 40.0;
 /// Spostamento di uno scatto della rotellina, come lo riporta Slint (pixel logici).
 const WHEEL_NOTCH: f32 = 60.0;
 
-/// Punto che resta fermo quando il mini player cambia dimensione.
+/// Trascinamento di un angolo del mini player: tutto si calcola dalla situazione alla
+/// pressione, così la finestra che cambia sotto il mouse non fa tornare indietro la misura.
 #[derive(Debug, Clone, Copy)]
-enum PipAnchor {
-    /// L'angolo opposto a quello trascinato (`left`/`top`: lato dell'angolo trascinato).
-    Corner { left: bool, top: bool },
-    /// Il centro (rotellina del mouse).
-    Center,
+struct PipDrag {
+    left: bool,
+    top: bool,
+    /// Posizione della finestra alla pressione (pixel fisici).
+    pos: PhysicalPosition,
+    /// Larghezza alla pressione (pixel logici).
+    width: f32,
+    /// Mouse alla pressione, in coordinate dello schermo (pixel fisici).
+    cursor: (f32, f32),
 }
 
 /// Cosa c'è nel player (o sta per esserci).
@@ -215,6 +231,40 @@ pub struct App {
     auto_fullscreen: Cell<bool>,
     /// Salva la dimensione del mini player poco dopo l'ultimo ridimensionamento.
     pip_save_timer: slint::Timer,
+    pip_drag: Cell<Option<PipDrag>>,
+
+    // guida
+    /// Programmi attorno ad adesso, per «in onda / dopo».
+    now_schedule: Rc<RefCell<Schedule>>,
+    now_loaded_at: Cell<i64>,
+    now_generation: Cell<u64>,
+    /// La griglia della Guida e il giorno mostrato (0 oggi, -1 ieri…).
+    guide: Rc<GuideModel>,
+    guide_offset: Cell<i64>,
+    day_generation: Cell<u64>,
+    guide_timer: slint::Timer,
+    /// Sorgenti (con i dati della guida) e aggiornamenti della guida in corso o falliti.
+    sources: RefCell<Vec<SourceInfo>>,
+    epg_status: RefCell<HashMap<i64, EpgUi>>,
+
+    // elenchi che si aprono su quello che si sta guardando
+    /// Ultimo film o serie riprodotto (tipo e chiave).
+    last_media: RefCell<Option<(ItemKind, String)>>,
+    /// Alla prossima lista di episodi, cursore sull'episodio corrente.
+    reveal_episode: Cell<bool>,
+    reveal_timer: slint::Timer,
+}
+
+/// Stato dell'aggiornamento della guida di una sorgente, finché non riesce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EpgUi {
+    Working,
+    Failed(String),
+}
+
+/// Ora attuale (secondi Unix).
+fn unix_now() -> i64 {
+    chrono::Utc::now().timestamp()
 }
 
 impl std::fmt::Debug for App {
@@ -244,6 +294,26 @@ impl App {
         main.set_categories(ModelRc::from(Rc::clone(&channel_categories)));
         main.set_media_items(ModelRc::from(Rc::clone(&movies)));
         main.set_media_categories(ModelRc::from(Rc::clone(&media_categories)));
+
+        // «in onda / dopo» nelle righe dei canali, e la griglia che segue l'elenco dei canali
+        let now_schedule = Rc::new(RefCell::new(Schedule::default()));
+        {
+            let schedule = Rc::clone(&now_schedule);
+            channels.set_decorate(move |c: &ChannelRow, item: &mut ChannelItem| {
+                guide::fill_now_next(item, &schedule.borrow(), &c.key, unix_now());
+            });
+        }
+        let guide_model = GuideModel::new(Rc::clone(&channels));
+        {
+            let grid = Rc::downgrade(&guide_model);
+            channels.set_on_change(move || {
+                if let Some(grid) = grid.upgrade() {
+                    grid.refresh();
+                }
+            });
+        }
+        main.set_guide_rows(ModelRc::from(Rc::clone(&guide_model)));
+        main.set_guide_days(ModelRc::new(VecModel::from(guide::days())));
 
         let app = Rc::new(Self {
             main: main.as_weak(),
@@ -285,6 +355,19 @@ impl App {
             aspect: Cell::new(0),
             auto_fullscreen: Cell::new(false),
             pip_save_timer: slint::Timer::default(),
+            pip_drag: Cell::new(None),
+            now_schedule,
+            now_loaded_at: Cell::new(0),
+            now_generation: Cell::new(0),
+            guide: guide_model,
+            guide_offset: Cell::new(0),
+            day_generation: Cell::new(0),
+            guide_timer: slint::Timer::default(),
+            sources: RefCell::new(Vec::new()),
+            epg_status: RefCell::new(HashMap::new()),
+            last_media: RefCell::new(None),
+            reveal_episode: Cell::new(false),
+            reveal_timer: slint::Timer::default(),
         });
         APP.with(|a| *a.borrow_mut() = Rc::downgrade(&app));
         {
@@ -298,6 +381,7 @@ impl App {
         app.apply_language(language);
         app.connect(main, pip);
         app.start_clock();
+        app.start_guide_timer();
         app.service.send(Command::Init);
         app
     }
@@ -320,7 +404,18 @@ impl App {
                 let language = self.settings.borrow().language;
                 self.apply_settings(Settings::from_pairs(&values, language));
             }
-            Event::Sources(sources) => self.show_sources(&sources),
+            Event::Sources(sources) => {
+                *self.sources.borrow_mut() = sources;
+                self.show_sources();
+                self.update_guide_state();
+            }
+            Event::Epg { source_id, state } => self.on_epg(source_id, state),
+            Event::Guide {
+                source_id,
+                generation,
+                programmes,
+                ..
+            } => self.on_guide(source_id, generation, &programmes),
             Event::Catalog {
                 source_id,
                 channels,
@@ -385,6 +480,7 @@ impl App {
             main.set_reconnect(settings.reconnect);
             main.set_fullscreen_start(settings.fullscreen_start);
             main.set_live_preview(settings.live_preview);
+            main.set_epg_on_start(settings.epg_on_start);
             main.set_user_agent(settings.user_agent.clone().unwrap_or_default().into());
         }
         *self.settings.borrow_mut() = settings;
@@ -412,8 +508,33 @@ impl App {
             .to_string()
     }
 
-    fn show_sources(&self, sources: &[SourceInfo]) {
+    /// Data e ora brevi («18/10 14:32»).
+    fn format_date_time(&self, secs: Option<i64>) -> String {
+        let Some(date) = secs.and_then(|s| chrono::DateTime::from_timestamp(s, 0)) else {
+            return String::new();
+        };
+        let pattern = match self.settings.borrow().language {
+            Language::Italian => "%d/%m %H:%M",
+            Language::English => "%m-%d %H:%M",
+        };
+        date.with_timezone(&chrono::Local)
+            .format(pattern)
+            .to_string()
+    }
+
+    /// Stato della guida di una sorgente: 0 nessuna, 1 in aggiornamento, 2 pronta, 3 errore.
+    fn epg_state_of(&self, source: &SourceInfo) -> (i32, String) {
+        match self.epg_status.borrow().get(&source.id) {
+            Some(EpgUi::Working) => (1, String::new()),
+            Some(EpgUi::Failed(error)) => (3, error.clone()),
+            None if source.epg_refreshed_at.is_some() => (2, String::new()),
+            None => (0, String::new()),
+        }
+    }
+
+    fn show_sources(&self) {
         let Some(main) = self.main() else { return };
+        let sources = self.sources.borrow();
         let items: Vec<SourceItem> = sources
             .iter()
             .map(|s| SourceItem {
@@ -430,6 +551,10 @@ impl App {
                 series: i32::try_from(s.series_count).unwrap_or(i32::MAX),
                 expires: self.format_date(s.expires).into(),
                 active: s.active,
+                epg_state: self.epg_state_of(s).0,
+                epg_matched: i32::try_from(s.epg_matched).unwrap_or(i32::MAX),
+                epg_updated: self.format_date_time(s.epg_refreshed_at).into(),
+                epg_error: self.epg_state_of(s).1.into(),
             })
             .collect();
         main.set_no_source(items.is_empty());
@@ -512,9 +637,17 @@ impl App {
             .and_then(|k| self.channels.id_of_key(&k))
             .or_else(|| last_key.and_then(|k| self.channels.id_of_key(&k)))
             .or_else(|| self.channels.first_id());
+        if changed_source {
+            *self.now_schedule.borrow_mut() = Schedule::default();
+            let (_, date) = guide::day_start(self.guide_offset.get());
+            self.guide.set_day(date, Schedule::default());
+        }
         self.after_channels_changed(current);
         self.after_media_changed();
         self.refresh_home();
+        self.update_guide_state();
+        self.request_now();
+        self.request_day();
 
         // all'avvio riprende l'ultimo canale (l'anteprima della Home è «in onda»)
         if !self.started.replace(true) {
@@ -854,11 +987,11 @@ impl App {
         main.set_playing(true);
     }
 
-    /// Chiude il player (dopo la fine di un film, o «Annulla» sul prossimo episodio).
+    /// Chiude il player (dopo la fine di un film, o «Annulla» sul prossimo episodio) e torna
+    /// alla pagina da cui era stato aperto.
     fn leave_player(&self) {
         let Some(main) = self.main() else { return };
         if main.get_playing() {
-            main.set_page(if main.get_on_demand() { 3 } else { 1 });
             main.set_playing(false);
         } else if self.pip.upgrade().is_some_and(|p| p.window().is_visible()) {
             self.stop_playback();
@@ -915,6 +1048,7 @@ impl App {
         }
         *self.detail.borrow_mut() = Some(detail);
         main.set_media_episode_cursor(0);
+        self.reveal_episode.set(true);
         main.set_media_detail(if kind == ItemKind::Movie { 1 } else { 2 });
         self.refresh_detail_info();
         self.refresh_episodes();
@@ -1125,7 +1259,67 @@ impl App {
                 }
             })
             .collect();
+        // all'apertura della scheda: cursore sull'episodio che si sta guardando (o l'ultimo visto)
+        let current = items.iter().position(|e| e.current);
         main.set_media_episodes(ModelRc::new(VecModel::from(items)));
+        if let Some(index) = current {
+            if self.reveal_episode.replace(false) {
+                main.set_media_episode_cursor(count_i32(index));
+                self.reveal_later();
+            }
+        }
+    }
+
+    /// Fra un attimo (quando la pagina ha le sue misure) gli elenchi mostrano al centro il
+    /// cursore, cioè quello che si sta guardando.
+    fn reveal_later(&self) {
+        let main = self.main.clone();
+        self.reveal_timer.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_millis(80),
+            move || {
+                if let Some(main) = main.upgrade() {
+                    main.set_reveal_tick(main.get_reveal_tick().wrapping_add(1));
+                    if main.get_page() == 2 {
+                        main.set_guide_scroll_tick(main.get_guide_scroll_tick().wrapping_add(1));
+                    }
+                }
+            },
+        );
+    }
+
+    /// Una pagina si apre: il cursore va su quello che si sta guardando (se è nell'elenco).
+    fn on_page_changed(&self, page: i32) {
+        let Some(main) = self.main() else { return };
+        match page {
+            1 => {
+                if let Some(row) = self.current.get().and_then(|id| self.channels.row_of(id)) {
+                    main.set_cursor(count_i32(row));
+                }
+            }
+            3 => self.point_at_last_media(),
+            _ => {}
+        }
+        self.reveal_later();
+    }
+
+    /// In Film e serie: la scheda giusta (film o serie) e il cursore sull'ultimo riprodotto.
+    fn point_at_last_media(&self) {
+        let Some(main) = self.main() else { return };
+        if self.detail.borrow().is_some() {
+            return;
+        }
+        let Some((kind, key)) = self.last_media.borrow().clone() else {
+            return;
+        };
+        let mode = if kind == ItemKind::Movie { 0 } else { 1 };
+        if mode != self.media_mode.get() {
+            self.show_media_mode(mode);
+        }
+        let model = self.media_model();
+        if let Some(row) = model.id_of_key(&key).and_then(|id| model.row_of(id)) {
+            main.set_media_cursor(count_i32(row));
+        }
     }
 
     fn close_detail(&self) {
@@ -1152,6 +1346,7 @@ impl App {
 
     fn set_current(&self, id: Option<i64>) {
         self.current.set(id);
+        self.guide.set_now(unix_now(), id);
         let item = id.and_then(|id| self.channels.item(id));
         if let Some(main) = self.main() {
             main.set_has_current(item.is_some());
@@ -1290,6 +1485,7 @@ impl App {
                     });
                 } else {
                     self.start_progress_timer();
+                    *self.last_media.borrow_mut() = Some((now.kind, now.key.clone()));
                 }
                 *self.now.borrow_mut() = Some(now);
             }
@@ -1490,6 +1686,149 @@ impl App {
             .start(slint::TimerMode::Repeated, Duration::from_secs(5), update);
     }
 
+    // ───────────── guida ─────────────
+
+    /// Ricarica i programmi attorno ad adesso.
+    fn request_now(&self) {
+        let generation = self.now_generation.get() + 1;
+        self.now_generation.set(generation);
+        let now = unix_now();
+        self.now_loaded_at.set(now);
+        self.service.send(Command::LoadGuide {
+            from: now - NOW_WINDOW_PAST,
+            to: now + NOW_WINDOW_FUTURE,
+            generation,
+        });
+    }
+
+    /// Carica i programmi del giorno mostrato nella Guida.
+    fn request_day(&self) {
+        let generation = self.day_generation.get() + 1;
+        self.day_generation.set(generation);
+        let (start, _) = guide::day_start(self.guide_offset.get());
+        // un'ora in più: il giorno del cambio d'ora ne ha 25
+        self.service.send(Command::LoadGuide {
+            from: start,
+            to: start + 25 * 3600,
+            generation,
+        });
+    }
+
+    fn on_guide(&self, source_id: Option<i64>, generation: u64, programmes: &[GuideProgramme]) {
+        if source_id != self.source_id.get() {
+            return;
+        }
+        if generation == self.now_generation.get() {
+            *self.now_schedule.borrow_mut() = Schedule::new(programmes);
+            self.channels.refresh();
+            self.refresh_on_air();
+        } else if generation == self.day_generation.get() {
+            let (_, date) = guide::day_start(self.guide_offset.get());
+            self.guide.set_day(date, Schedule::new(programmes));
+        }
+    }
+
+    fn on_epg(&self, source_id: i64, state: EpgState) {
+        let reload = match state {
+            EpgState::Working => {
+                self.epg_status
+                    .borrow_mut()
+                    .insert(source_id, EpgUi::Working);
+                false
+            }
+            EpgState::Done(Ok(_)) => {
+                self.epg_status.borrow_mut().remove(&source_id);
+                true
+            }
+            EpgState::Done(Err(error)) => {
+                self.epg_status
+                    .borrow_mut()
+                    .insert(source_id, EpgUi::Failed(error));
+                false
+            }
+        };
+        self.show_sources();
+        self.update_guide_state();
+        if reload && self.source_id.get() == Some(source_id) {
+            self.request_now();
+            self.request_day();
+        }
+    }
+
+    /// Stato della guida della sorgente in uso, per la pagina Guida.
+    fn update_guide_state(&self) {
+        let Some(main) = self.main() else { return };
+        let source = self
+            .source_id
+            .get()
+            .and_then(|id| self.sources.borrow().iter().find(|s| s.id == id).cloned());
+        let (state, error) = source.map_or((0, String::new()), |s| self.epg_state_of(&s));
+        main.set_guide_state(state);
+        main.set_guide_error(error.into());
+    }
+
+    /// Il canale in onda con «in onda / dopo» aggiornati (Home, player, mini player).
+    fn refresh_on_air(&self) {
+        if self.main().is_some_and(|m| !m.get_on_demand()) {
+            self.set_current(self.current.get());
+        }
+    }
+
+    /// Minuti da mezzanotte del giorno mostrato (-1 se non è oggi).
+    fn update_now_line(&self) {
+        let Some(main) = self.main() else { return };
+        let minutes = if self.guide_offset.get() == 0 {
+            let (_, today) = guide::day_start(0);
+            i32::try_from(guide::wall_minutes(unix_now(), today)).unwrap_or(-1)
+        } else {
+            -1
+        };
+        main.set_guide_now_min(minutes);
+    }
+
+    fn start_guide_timer(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        self.guide_timer
+            .start(slint::TimerMode::Repeated, GUIDE_TICK, move || {
+                let Some(app) = weak.upgrade() else { return };
+                if unix_now() - app.now_loaded_at.get() >= NOW_WINDOW_RELOAD {
+                    app.request_now();
+                }
+                app.channels.refresh();
+                app.refresh_on_air();
+                app.update_now_line();
+            });
+    }
+
+    /// La pagina Guida si apre: giorni aggiornati, vista su adesso e sul canale in onda.
+    fn open_guide(&self) {
+        let Some(main) = self.main() else { return };
+        let days = guide::days();
+        let index = days
+            .iter()
+            .position(|d| i64::from(d.offset) == self.guide_offset.get())
+            .unwrap_or(1);
+        main.set_guide_days(ModelRc::new(VecModel::from(days)));
+        main.set_guide_day(i32::try_from(index).unwrap_or(1));
+        self.update_now_line();
+        if let Some(row) = self.current.get().and_then(|id| self.channels.row_of(id)) {
+            main.set_guide_cursor(count_i32(row));
+        }
+        main.set_guide_scroll_tick(main.get_guide_scroll_tick().wrapping_add(1));
+        // a mezzanotte «oggi» è cambiato
+        self.request_day();
+    }
+
+    fn pick_guide_day(&self, index: i32) {
+        let Some(main) = self.main() else { return };
+        let offset = i64::from(index) - 1;
+        self.guide_offset.set(offset.clamp(-1, 6));
+        main.set_guide_day(index);
+        self.update_now_line();
+        self.request_day();
+        main.set_guide_scroll_tick(main.get_guide_scroll_tick().wrapping_add(1));
+    }
+
     // ───────────── comandi dell'interfaccia ─────────────
 
     fn connect(self: &Rc<Self>, main: &MainWindow, pip: &PipWindow) {
@@ -1665,6 +2004,9 @@ impl App {
         }));
         main.on_request_pip(with_app!(|app, row: i32| app.open_pip(row)));
         main.on_close_pip(on(|app| app.router.move_to_main()));
+        // Slint cambia il puntatore solo quando il mouse si muove: per farlo sparire col mouse
+        // fermo lo si nasconde direttamente nella finestra
+        main.on_cursor_hidden(with_app!(|app, hidden: bool| app.set_cursor_hidden(hidden)));
         main.on_toggle_fullscreen(on(|app| {
             if let Some(main) = app.main() {
                 let window = main.window();
@@ -1695,6 +2037,22 @@ impl App {
         }));
         main.on_cycle_aspect(on(|app| app.cycle_aspect()));
 
+        // Guida
+        main.on_guide_opened(on(|app| app.open_guide()));
+        main.on_page_changed(with_app!(|app, page: i32| app.on_page_changed(page)));
+        main.on_guide_pick_day(with_app!(|app, index: i32| app.pick_guide_day(index)));
+        main.on_guide_watch(with_app!(|app, row: i32| {
+            if let Some((id, _)) = row_index(row).and_then(|r| app.channels.entry_at(r)) {
+                app.play_channel(id);
+            }
+        }));
+        main.on_guide_refresh(on(|app| {
+            app.service.send(Command::RefreshEpg {
+                source_id: None,
+                force: true,
+            });
+        }));
+
         // Impostazioni
         main.on_verify_source(with_app!(
             |app,
@@ -1703,7 +2061,8 @@ impl App {
              location: SharedString,
              username: SharedString,
              password: SharedString,
-             ua: SharedString| {
+             ua: SharedString,
+             epg: SharedString| {
                 app.submit_source(
                     kind,
                     SourceForm {
@@ -1712,6 +2071,7 @@ impl App {
                         username: &username,
                         password: &password,
                         user_agent: &ua,
+                        epg: &epg,
                     },
                     false,
                 )
@@ -1724,7 +2084,8 @@ impl App {
              location: SharedString,
              username: SharedString,
              password: SharedString,
-             ua: SharedString| {
+             ua: SharedString,
+             epg: SharedString| {
                 app.submit_source(
                     kind,
                     SourceForm {
@@ -1733,12 +2094,19 @@ impl App {
                         username: &username,
                         password: &password,
                         user_agent: &ua,
+                        epg: &epg,
                     },
                     true,
                 )
             }
         ));
         main.on_pick_file(on(|app| app.pick_file()));
+        main.on_set_source_epg(with_app!(|app, id: i32, url: SharedString| {
+            app.service.send(Command::SetSourceEpg {
+                source_id: i64::from(id),
+                epg_url: Some(url.trim().to_owned()).filter(|u| !u.is_empty()),
+            });
+        }));
         main.on_activate_source(with_app!(|app, id: i32| app
             .service
             .send(Command::ActivateSource(i64::from(id)))));
@@ -1785,23 +2153,15 @@ impl App {
                 }
             });
         }
-        pip.on_resize(with_app!(|app, corner: i32, dx: f32, dy: f32| {
-            let (left, top) = (corner == 0 || corner == 2, corner == 0 || corner == 1);
-            // la larghezza segue il movimento più ampio, l'altezza resta in proporzione
-            let from_x = if left { -dx } else { dx };
-            let from_y = (if top { -dy } else { dy }) / PIP_RATIO;
-            let delta = if from_x.abs() >= from_y.abs() {
-                from_x
-            } else {
-                from_y
-            };
-            app.resize_pip(|w| w + delta, PipAnchor::Corner { left, top });
+        pip.on_resize_start(with_app!(|app, corner: i32, x: f32, y: f32| {
+            app.start_pip_drag(corner, x, y);
         }));
+        pip.on_resize(with_app!(|app, x: f32, y: f32| app.drag_pip(x, y)));
         pip.on_resize_step(with_app!(|app, delta: f32| {
             // +10% per scatto della rotellina (uno scatto vale 60 px); più scatti possono
             // arrivare in un solo evento
             let factor = 1.1f32.powf(delta / WHEEL_NOTCH).clamp(0.5, 2.0);
-            app.resize_pip(|w| w * factor, PipAnchor::Center);
+            app.resize_pip(|w| w * factor);
         }));
         // «chiudi»: chiude il mini player e ferma la riproduzione
         pip.on_dismiss(on(|app| {
@@ -1938,8 +2298,73 @@ impl App {
         self.router.move_to_pip();
     }
 
-    /// Cambia la larghezza del mini player (l'altezza segue in 16:9) tenendo fermo `anchor`.
-    fn resize_pip(self: &Rc<Self>, new_width: impl FnOnce(f32) -> f32, anchor: PipAnchor) {
+    /// Il mouse in coordinate dello schermo, dal punto `(x, y)` della finestra del mini player.
+    fn pip_cursor(window: &slint::Window, x: f32, y: f32) -> (f32, f32) {
+        let (scale, pos) = (window.scale_factor(), window.position());
+        (pos.x as f32 + x * scale, pos.y as f32 + y * scale)
+    }
+
+    /// Pressione su un angolo (0 alto-sinistra, 1 alto-destra, 2 basso-sinistra,
+    /// 3 basso-destra); `(x, y)` è il mouse nella finestra.
+    fn start_pip_drag(&self, corner: i32, x: f32, y: f32) {
+        let Some(pip) = self.pip.upgrade() else {
+            return;
+        };
+        let window = pip.window();
+        self.pip_drag.set(Some(PipDrag {
+            left: corner == 0 || corner == 2,
+            top: corner == 0 || corner == 1,
+            pos: window.position(),
+            width: window.size().to_logical(window.scale_factor()).width,
+            cursor: Self::pip_cursor(window, x, y),
+        }));
+    }
+
+    /// Trascinamento di un angolo: la misura nasce dallo spostamento del mouse rispetto alla
+    /// pressione; l'angolo opposto resta fermo.
+    fn drag_pip(self: &Rc<Self>, x: f32, y: f32) {
+        let (Some(pip), Some(drag)) = (self.pip.upgrade(), self.pip_drag.get()) else {
+            return;
+        };
+        let window = pip.window();
+        let scale = window.scale_factor();
+        let cursor = Self::pip_cursor(window, x, y);
+        let (dx, dy) = (
+            (cursor.0 - drag.cursor.0) / scale,
+            (cursor.1 - drag.cursor.1) / scale,
+        );
+        // la larghezza segue il movimento più ampio, l'altezza resta in proporzione
+        let from_x = if drag.left { -dx } else { dx };
+        let from_y = (if drag.top { -dy } else { dy }) / PIP_RATIO;
+        let delta = if from_x.abs() >= from_y.abs() {
+            from_x
+        } else {
+            from_y
+        };
+        let width = (drag.width + delta)
+            .round()
+            .clamp(PIP_MIN_WIDTH, PIP_MAX_WIDTH);
+        let current = window.size().to_logical(scale).width;
+        if (width - current).abs() < 0.5 {
+            return;
+        }
+        let height = width * PIP_RATIO;
+        let start_height = drag.width * PIP_RATIO;
+        window.set_size(slint::LogicalSize::new(width, height));
+        if drag.left || drag.top {
+            let shift_x = if drag.left { drag.width - width } else { 0.0 };
+            let shift_y = if drag.top { start_height - height } else { 0.0 };
+            window.set_position(PhysicalPosition::new(
+                drag.pos.x + (shift_x * scale).round() as i32,
+                drag.pos.y + (shift_y * scale).round() as i32,
+            ));
+        }
+        self.save_pip_width_later(width);
+    }
+
+    /// Rotellina: cambia la larghezza del mini player (l'altezza segue in 16:9) tenendo fermo
+    /// il centro.
+    fn resize_pip(self: &Rc<Self>, new_width: impl FnOnce(f32) -> f32) {
         let Some(pip) = self.pip.upgrade() else {
             return;
         };
@@ -1954,18 +2379,15 @@ impl App {
         }
         let pos = window.position();
         window.set_size(slint::LogicalSize::new(width, height));
-        let (shift_x, shift_y) = match anchor {
-            PipAnchor::Corner { left, top } => {
-                (if left { dw } else { 0.0 }, if top { dh } else { 0.0 })
-            }
-            PipAnchor::Center => (dw / 2.0, dh / 2.0),
-        };
-        if shift_x != 0.0 || shift_y != 0.0 {
-            window.set_position(PhysicalPosition::new(
-                pos.x - (shift_x * scale).round() as i32,
-                pos.y - (shift_y * scale).round() as i32,
-            ));
-        }
+        window.set_position(PhysicalPosition::new(
+            pos.x - (dw / 2.0 * scale).round() as i32,
+            pos.y - (dh / 2.0 * scale).round() as i32,
+        ));
+        self.save_pip_width_later(width);
+    }
+
+    /// Salva la larghezza del mini player poco dopo l'ultimo cambiamento.
+    fn save_pip_width_later(self: &Rc<Self>, width: f32) {
         let weak = Rc::downgrade(self);
         self.pip_save_timer.start(
             slint::TimerMode::SingleShot,
@@ -1978,8 +2400,20 @@ impl App {
         );
     }
 
+    /// Nasconde (o rimostra) il puntatore del mouse sopra la finestra principale.
+    fn set_cursor_hidden(&self, hidden: bool) {
+        if let Some(main) = self.main() {
+            main.window()
+                .with_winit_window(|window| window.set_cursor_visible(!hidden));
+        }
+    }
+
     fn on_playing_changed(&self, playing: bool) {
         let Some(main) = self.main() else { return };
+        if !playing {
+            // il player si chiude: il puntatore torna in ogni caso
+            self.set_cursor_hidden(false);
+        }
         let window = main.window();
         if playing && self.settings.borrow().fullscreen_start && !window.is_fullscreen() {
             window.set_fullscreen(true);
@@ -1993,6 +2427,10 @@ impl App {
             if !main.get_on_demand() {
                 if let Some(id) = self.current.get() {
                     self.play_channel(id);
+                    // l'elenco canali del player si apre sul canale in onda
+                    if let Some(row) = self.channels.row_of(id) {
+                        main.set_cursor(count_i32(row));
+                    }
                 }
             }
         } else if main.get_on_demand() && !pip_open {
@@ -2032,6 +2470,9 @@ impl App {
             location: location.to_owned(),
             username: xtream.then(|| username.to_owned()),
             user_agent,
+            epg_url: Some(form.epg.trim())
+                .filter(|e| !e.is_empty())
+                .map(str::to_owned),
         };
         let command = match (xtream, save) {
             (true, true) => Command::AddXtream {
@@ -2137,6 +2578,7 @@ struct SourceForm<'a> {
     username: &'a str,
     password: &'a str,
     user_agent: &'a str,
+    epg: &'a str,
 }
 
 fn count_i32(n: usize) -> i32 {

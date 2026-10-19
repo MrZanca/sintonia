@@ -2,9 +2,11 @@
 // Le stringhe sono in inglese con @tr(); le traduzioni stanno in lang/<lingua>/LC_MESSAGES/sintonia-app.po.
 // I dati arrivano da Rust: qui non c'è nessun canale.
 
-import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
+import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo, NowNext } from "common.slint";
 import { MediaScreen } from "media.slint";
+import { GuideScreen, GuideRow, DayItem } from "guide.slint";
 export { Video, Texts, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
+export { GuideRow, GuideBlock, DayItem } from "guide.slint";
 
 // ───────────── Barra in alto e fascia di lancio ─────────────
 
@@ -20,24 +22,22 @@ component TopBar inherits HorizontalLayout {
     height: 70px;
     spacing: 16px;
     HorizontalLayout {
-        spacing: 8px;
+        spacing: 10px;
         alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("../../../assets/logo/sintonia-logo-64.png");
+                width: 32px;
+                height: 32px;
+            }
+        }
         Text {
             text: "Sintonia";
             color: Theme.ink;
             font-size: 24px;
             font-weight: 700;
             vertical-alignment: center;
-        }
-        VerticalLayout {
-            alignment: center;
-            padding-top: 4px;
-            Rectangle {
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: Theme.needle;
-            }
         }
     }
     Rectangle { horizontal-stretch: 1; }
@@ -123,12 +123,14 @@ component Dock inherits Rectangle {
             stroke: #ffffff1c;
             stroke-width: 1px;
         }
-        for i in 51: Rectangle {
-            x: 20px + i * root.dw / 50 - 0.5px;
+        // scala: dieci intervalli per voce; tacca lunga al centro di ogni voce (dove si ferma la
+        // lancetta), media sul confine tra due voci, corte in mezzo
+        for i in 41: Rectangle {
+            x: 20px + i * root.dw / 40 - 0.5px;
             y: parent.height - self.height - 9px;
             width: 1px;
-            height: Math.mod(i, 10) == 5 ? 7px : (Math.mod(i, 5) == 0 ? 4px : 2px);
-            background: Theme.faint;
+            height: Math.mod(i, 10) == 5 ? 7px : (Math.mod(i, 10) == 0 ? 4px : 2px);
+            background: Math.mod(i, 10) == 5 ? Theme.dim : Theme.faint;
         }
         Rectangle {
             x: 20px + root.current * root.sw + root.sw / 2 - 11px;
@@ -216,8 +218,9 @@ component ChannelLine inherits Rectangle {
                 font-weight: 600;
                 overflow: elide;
             }
+            // con la guida: il programma in onda al posto della categoria
             Text {
-                text: root.c.group;
+                text: root.c.now-title != "" ? root.c.now-title : root.c.group;
                 color: Theme.dim;
                 font-size: 12px;
                 overflow: elide;
@@ -254,6 +257,11 @@ component ChannelList inherits Rectangle {
         } else if ((root.cursor + 1) * root.row-h + fl.content-y > fl.height) {
             fl.content-y = fl.height - (root.cursor + 1) * root.row-h;
         }
+    }
+    // porta la riga del cursore al centro (quando si apre l'elenco)
+    public function center() {
+        let target = root.cursor * root.row-h - (fl.height - root.row-h) / 2;
+        fl.content-y = -max(0px, min(target, root.count * root.row-h - fl.height));
     }
     public function to-top() {
         fl.content-y = 0px;
@@ -467,6 +475,8 @@ component HomeScreen inherits Rectangle {
                     color: Theme.ink;
                     font-size: 18px;
                 }
+                if root.hero.now-title != "": Rectangle { height: 4px; }
+                if root.hero.now-title != "": NowNext { c: root.hero; bar-width: 300px; label: false; }
                 Text {
                     text: @tr("Channel {}", root.hero.num);
                     color: Theme.dim;
@@ -551,9 +561,12 @@ component LiveScreen inherits Rectangle {
     callback toggle-fav(int);
     // cambia quando la ricerca in alto passa il controllo all'elenco
     in property <int> focus-tick;
+    // cambia quando l'elenco deve mostrare al centro il canale in riproduzione
+    in property <int> reveal-tick;
     property <ChannelItem> cur: root.channels[root.cursor];
 
     changed focus-tick => { fs.focus(); }
+    changed reveal-tick => { list.center(); }
     function move(delta: int) {
         if (root.channels.length == 0) { return; }
         root.cursor = max(0, min(root.channels.length - 1, root.cursor + delta));
@@ -647,6 +660,12 @@ component LiveScreen inherits Rectangle {
                     text: root.cur.group;
                     color: Theme.dim;
                     font-size: 15px;
+                }
+                if root.channels.length > 0 && root.cur.now-title != "": Rectangle { height: 6px; }
+                if root.channels.length > 0 && root.cur.now-title != "": NowNext {
+                    c: root.cur;
+                    bar-width: 320px;
+                    title-size: 17px;
                 }
                 if root.cur.drm && root.channels.length > 0: Text {
                     text: @tr("This channel declares a DRM protection: it may not play.");
@@ -752,15 +771,19 @@ component SourceRow inherits Rectangle {
     callback activate();
     callback refresh();
     callback remove();
+    // guida scelta dall'utente ("" = quella della playlist o del server)
+    callback set-epg(string);
     property <bool> confirm: false;
-    height: 104px;
+    property <bool> editing: false;
+    property <string> epg;
+    height: inner.preferred-height;
     Sq {
         r: 20px;
         fill: root.s.active ? #ffffff1c : Theme.glass;
         stroke: root.s.active ? Theme.needle : transparent;
         stroke-width: 1.5px;
     }
-    VerticalLayout {
+    inner := VerticalLayout {
         padding-left: 20px;
         padding-right: 16px;
         padding-top: 12px;
@@ -792,21 +815,38 @@ component SourceRow inherits Rectangle {
             font-size: 12px;
             overflow: elide;
         }
+        if Texts.source-epg(root.s) != "": Text {
+            text: Texts.source-epg(root.s);
+            color: root.s.epg-state == 3 ? Theme.live : Theme.faint;
+            font-size: 12px;
+            overflow: elide;
+        }
         Rectangle { height: 4px; }
         HorizontalLayout {
             spacing: 8px;
             alignment: start;
-            if !root.s.active: Btn {
+            // durante la conferma dell'eliminazione restano solo «Conferma» e «Annulla»
+            // (con tutti i pulsanti la riga non starebbe nella colonna)
+            if !root.s.active && !root.confirm: Btn {
                 label: @tr("Use");
                 height: 30px;
                 enabled: !root.working;
                 clicked => { root.activate(); }
             }
-            Btn {
+            if !root.confirm: Btn {
                 label: @tr("Refresh");
                 height: 30px;
                 enabled: !root.working;
                 clicked => { root.refresh(); }
+            }
+            if !root.confirm: Btn {
+                label: @tr("Guide");
+                height: 30px;
+                enabled: !root.working;
+                clicked => {
+                    root.editing = !root.editing;
+                    root.epg = "";
+                }
             }
             Btn {
                 label: root.confirm ? @tr("Confirm delete") : @tr("Delete");
@@ -819,8 +859,38 @@ component SourceRow inherits Rectangle {
                         root.confirm = false;
                     } else {
                         root.confirm = true;
+                        root.editing = false;
                     }
                 }
+            }
+            if root.confirm: Btn {
+                label: @tr("Cancel");
+                height: 30px;
+                clicked => { root.confirm = false; }
+            }
+        }
+        if root.editing: Rectangle { height: 4px; }
+        if root.editing: Field {
+            label: @tr("XMLTV address or file (empty: the source's own)");
+            placeholder: "http://…/guide.xml.gz";
+            value <=> root.epg;
+        }
+        if root.editing: HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Btn {
+                label: @tr("Use this guide");
+                height: 30px;
+                primary: true;
+                clicked => {
+                    root.set-epg(root.epg);
+                    root.editing = false;
+                }
+            }
+            Btn {
+                label: @tr("Cancel");
+                height: 30px;
+                clicked => { root.editing = false; }
             }
         }
     }
@@ -871,17 +941,19 @@ component SettingsScreen inherits Rectangle {
     in-out property <bool> reconnect;
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview;
+    in-out property <bool> epg-on-start;
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     // cresce dopo un salvataggio riuscito: il modulo si svuota (password compresa)
     in property <int> form-reset;
-    // tipo, nome, indirizzo o file o server, utente, password, user-agent
-    callback verify(int, string, string, string, string, string);
-    callback save(int, string, string, string, string, string);
+    // tipo, nome, indirizzo o file o server, utente, password, user-agent, guida
+    callback verify(int, string, string, string, string, string, string);
+    callback save(int, string, string, string, string, string, string);
     callback pick-file();
     callback activate-source(int);
     callback refresh-source(int);
     callback delete-source(int);
+    callback set-source-epg(int, string);
     callback set-language(int);
     callback setting-changed(string, string);
 
@@ -893,7 +965,9 @@ component SettingsScreen inherits Rectangle {
     property <string> username;
     property <string> password;
     property <string> source-ua;
+    property <string> epg;
     changed form-reset => {
+        root.epg = "";
         root.name = "";
         root.link = "";
         root.server = "";
@@ -928,18 +1002,22 @@ component SettingsScreen inherits Rectangle {
                 width: 380px;
                 spacing: 8px;
                 Title { text: @tr("Your sources"); }
-                Flickable {
+                source-fl := Flickable {
                     vertical-stretch: 1;
-                    content-height: root.sources.length * 112px;
-                    for s[i] in root.sources: SourceRow {
-                        x: 0px;
-                        y: i * 112px;
-                        width: parent.width;
-                        s: s;
-                        working: root.working;
-                        activate => { root.activate-source(s.id); }
-                        refresh => { root.refresh-source(s.id); }
-                        remove => { root.delete-source(s.id); }
+                    content-height: source-list.preferred-height;
+                    source-list := VerticalLayout {
+                        width: source-fl.width;
+                        padding-top: 2px;
+                        alignment: start;
+                        spacing: 8px;
+                        for s[i] in root.sources: SourceRow {
+                            s: s;
+                            working: root.working;
+                            activate => { root.activate-source(s.id); }
+                            refresh => { root.refresh-source(s.id); }
+                            remove => { root.delete-source(s.id); }
+                            set-epg(url) => { root.set-source-epg(s.id, url); }
+                        }
                     }
                 }
                 Text {
@@ -988,6 +1066,11 @@ component SettingsScreen inherits Rectangle {
                     }
                 }
                 Field {
+                    label: @tr("Program guide (optional)");
+                    placeholder: root.kind == 2 ? @tr("automatic from the server") : @tr("XMLTV address or file, if the playlist doesn't give one");
+                    value <=> root.epg;
+                }
+                Field {
                     label: @tr("User-agent (optional)");
                     placeholder: @tr("only if your provider asks for one");
                     value <=> root.source-ua;
@@ -998,13 +1081,13 @@ component SettingsScreen inherits Rectangle {
                     Btn {
                         label: @tr("Verify");
                         enabled: !root.working;
-                        clicked => { root.verify(root.kind, root.name, root.location(), root.username, root.password, root.source-ua); }
+                        clicked => { root.verify(root.kind, root.name, root.location(), root.username, root.password, root.source-ua, root.epg); }
                     }
                     Btn {
                         label: @tr("Save");
                         primary: true;
                         enabled: !root.working;
-                        clicked => { root.save(root.kind, root.name, root.location(), root.username, root.password, root.source-ua); }
+                        clicked => { root.save(root.kind, root.name, root.location(), root.username, root.password, root.source-ua, root.epg); }
                     }
                 }
                 if root.status.state != 0: Text {
@@ -1076,6 +1159,12 @@ component SettingsScreen inherits Rectangle {
                 on <=> root.live-preview;
                 toggled(v) => { root.setting-changed("live_preview", v ? "1" : "0"); }
             }
+            SwitchRow {
+                label: @tr("Refresh the guide at startup");
+                detail: @tr("Downloads the program guide when you open Sintonia, if it is more than 12 hours old.");
+                on <=> root.epg-on-start;
+                toggled(v) => { root.setting-changed("epg_on_start", v ? "1" : "0"); }
+            }
             Rectangle { height: 6px; }
             Field {
                 label: @tr("Custom user-agent");
@@ -1142,12 +1231,16 @@ component PlayerScreen inherits Rectangle {
     callback cycle-aspect();
     property <bool> overlay: true;
     property <bool> drawer: false;
+    // il puntatore sparisce insieme alle informazioni (Rust lo nasconde anche col mouse fermo)
+    callback cursor-hidden(bool);
+    property <bool> hide-cursor: !root.overlay && !root.drawer;
+    changed hide-cursor => { root.cursor-hidden(self.hide-cursor); }
     background: #000000;
 
     // Le informazioni sul video spariscono dopo qualche secondo senza movimenti del mouse o tasti;
     // restano finché il puntatore è sopra i pulsanti o l'elenco canali è aperto.
     hide-timer := Timer {
-        interval: 3s;
+        interval: 5s;
         running: false;
         triggered => {
             self.stop();
@@ -1171,7 +1264,7 @@ component PlayerScreen inherits Rectangle {
     function toggle-drawer() {
         root.drawer = !root.drawer;
         if (root.drawer) {
-            dl.ensure-visible();
+            dl.center();
         }
     }
     function move(delta: int) {
@@ -1277,14 +1370,14 @@ component PlayerScreen inherits Rectangle {
         home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
     }
 
-    // barra in basso
+    // barra in basso (più alta quando c'è la guida)
     Rectangle {
         y: parent.height - self.height;
-        height: 190px;
+        height: !root.on-demand && root.c.now-title != "" ? 260px : 190px;
         opacity: root.overlay ? 1 : 0;
         visible: self.opacity > 0.01;
         animate opacity { duration: 250ms; }
-        background: @linear-gradient(180deg, #00000000 0%, #000000d0 100%);
+        background: @linear-gradient(180deg, #00000000 0%, #000000b0 45%, #000000e0 100%);
         // barra di avanzamento (film ed episodi), cliccabile per saltare
         if root.on-demand: Rectangle {
             x: 40px;
@@ -1344,10 +1437,15 @@ component PlayerScreen inherits Rectangle {
                     font-weight: 600;
                     overflow: elide;
                 }
-                Text {
+                if root.on-demand || root.c.now-title == "": Text {
                     text: root.c.group;
                     color: Theme.dim;
                     font-size: 13px;
+                }
+                if !root.on-demand && root.c.now-title != "": NowNext {
+                    c: root.c;
+                    bar-width: 360px;
+                    title-size: 15px;
                 }
             }
             VerticalLayout {
@@ -1557,12 +1655,15 @@ export component PipWindow inherits Window {
     callback expand();
     callback dismiss();
     callback moved(length, length);
-    // ridimensionamento con una maniglia d'angolo: 0 alto-sinistra, 1 alto-destra,
-    // 2 basso-sinistra, 3 basso-destra; Rust mantiene le proporzioni 16:9
-    callback resize(int, length, length);
+    // ridimensionamento con una maniglia d'angolo: alla pressione l'angolo (0 alto-sinistra,
+    // 1 alto-destra, 2 basso-sinistra, 3 basso-destra) e il mouse nella finestra, poi solo il
+    // mouse; Rust mantiene le proporzioni 16:9
+    callback resize-start(int, length, length);
+    callback resize(length, length);
     // rotellina: positivo ingrandisce
     callback resize-step(float);
     title: "Sintonia mini player";
+    icon: @image-url("../../../assets/logo/sintonia-logo-64.png");
     no-frame: true;
     always-on-top: true;
     background: transparent;
@@ -1649,7 +1750,12 @@ export component PipWindow inherits Window {
         width: 16px;
         height: 16px;
         mouse-cursor: MouseCursor.nw-resize;
-        moved => { root.resize(0, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.resize-start(0, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => { root.resize(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
     }
     h1 := TouchArea {
         x: root.width - 16px;
@@ -1657,7 +1763,12 @@ export component PipWindow inherits Window {
         width: 16px;
         height: 16px;
         mouse-cursor: MouseCursor.ne-resize;
-        moved => { root.resize(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.resize-start(1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => { root.resize(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
     }
     h2 := TouchArea {
         x: 0px;
@@ -1665,7 +1776,12 @@ export component PipWindow inherits Window {
         width: 16px;
         height: 16px;
         mouse-cursor: MouseCursor.sw-resize;
-        moved => { root.resize(2, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.resize-start(2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => { root.resize(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
     }
     h3 := TouchArea {
         x: root.width - 16px;
@@ -1673,7 +1789,12 @@ export component PipWindow inherits Window {
         width: 16px;
         height: 16px;
         mouse-cursor: MouseCursor.se-resize;
-        moved => { root.resize(3, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.resize-start(3, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => { root.resize(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
     }
 }
 
@@ -1681,6 +1802,7 @@ export component PipWindow inherits Window {
 
 export component MainWindow inherits Window {
     title: "Sintonia";
+    icon: @image-url("../../../assets/logo/sintonia-logo-64.png");
     preferred-width: 1320px;
     preferred-height: 800px;
     min-width: 1100px;
@@ -1691,6 +1813,8 @@ export component MainWindow inherits Window {
     in-out property <int> page <=> Theme.page;
     in-out property <bool> playing: false;
     in property <string> clock;
+    // nel player: il puntatore va nascosto (o rimostrato)
+    callback cursor-hidden(bool);
 
     // canali della sorgente in uso, già filtrati per categoria o ricerca
     in property <[ChannelItem]> channels;
@@ -1723,6 +1847,17 @@ export component MainWindow inherits Window {
     in-out property <int> media-episode-cursor;
     property <int> media-focus-tick;
 
+    // Guida
+    in property <[GuideRow]> guide-rows;
+    in property <[DayItem]> guide-days;
+    in property <int> guide-day: 1;
+    in property <int> guide-now-min: -1;
+    in property <int> guide-state;
+    in property <string> guide-error;
+    in-out property <int> guide-cursor;
+    in property <int> guide-scroll-tick;
+    property <int> guide-focus-tick;
+
     // impostazioni
     in property <[SourceItem]> sources;
     in property <bool> working;
@@ -1731,6 +1866,7 @@ export component MainWindow inherits Window {
     in-out property <bool> reconnect: true;
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview: true;
+    in-out property <bool> epg-on-start: true;
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     in-out property <int> settings-section: 0;
@@ -1760,8 +1896,12 @@ export component MainWindow inherits Window {
     callback request-pip(int);
     callback close-pip();
     callback toggle-fullscreen();
-    callback verify-source(int, string, string, string, string, string);
-    callback save-source(int, string, string, string, string, string);
+    callback verify-source(int, string, string, string, string, string, string);
+    callback save-source(int, string, string, string, string, string, string);
+    callback guide-opened();
+    callback guide-pick-day(int);
+    callback guide-watch(int);
+    callback guide-refresh();
     callback toggle-fav-channel(int);
     callback open-resume(int);
     callback open-favorite(int);
@@ -1783,6 +1923,7 @@ export component MainWindow inherits Window {
     callback activate-source(int);
     callback refresh-source(int);
     callback delete-source(int);
+    callback set-source-epg(int, string);
     callback set-language(int);
     callback setting-changed(string, string);
     callback load-tracks();
@@ -1791,6 +1932,13 @@ export component MainWindow inherits Window {
     callback cycle-aspect();
     callback playing-changed(bool);
     changed playing => { root.playing-changed(root.playing); }
+    changed page => {
+        root.page-changed(root.page);
+        if (root.page == 2) { root.guide-opened(); }
+    }
+    // cresce quando gli elenchi devono mostrare al centro quello che si sta guardando
+    in property <int> reveal-tick;
+    callback page-changed(int);
 
     // apre il player sul canale in onda
     public function watch-current() {
@@ -1827,12 +1975,13 @@ export component MainWindow inherits Window {
             search <=> root.search;
             search-edited(text) => {
                 root.search-edited(text);
-                // la ricerca vale per la pagina Film e serie se si è lì, altrimenti per Live
-                if (text != "" && root.page != 3) { root.page = 1; }
+                // la ricerca vale per la pagina in cui si è (Guida, Film e serie), altrimenti Live
+                if (text != "" && root.page != 2 && root.page != 3) { root.page = 1; }
             }
             search-done => {
                 root.live-focus-tick += 1;
                 root.media-focus-tick += 1;
+                root.guide-focus-tick += 1;
             }
         }
         Rectangle {
@@ -1857,6 +2006,7 @@ export component MainWindow inherits Window {
             }
             if root.page == 1: LiveScreen {
                 focus-tick: root.live-focus-tick;
+                reveal-tick: root.reveal-tick;
                 channels: root.channels;
                 categories: root.categories;
                 category: root.category;
@@ -1875,10 +2025,29 @@ export component MainWindow inherits Window {
                 toggle-fav(i) => { root.toggle-fav-channel(i); }
                 add-source => { root.open-settings-sources(); }
             }
-            if root.page == 2: EmptyState {
-                icon: Icons.guide;
-                title: @tr("Program guide");
-                body: @tr("The TV guide is coming in a next version of Sintonia.");
+            if root.page == 2: GuideScreen {
+                rows: root.guide-rows;
+                categories: root.categories;
+                category: root.category;
+                search: root.search;
+                days: root.guide-days;
+                day: root.guide-day;
+                now-min: root.guide-now-min;
+                state: root.guide-state;
+                error: root.guide-error;
+                no-source: root.no-source;
+                cursor <=> root.guide-cursor;
+                focus-tick: root.guide-focus-tick;
+                scroll-tick: root.guide-scroll-tick;
+                pick-day(i) => { root.guide-pick-day(i); }
+                pick-category(i) => { root.pick-category(i); }
+                watch(i) => {
+                    root.close-pip();
+                    root.guide-watch(i);
+                    root.playing = true;
+                }
+                refresh => { root.guide-refresh(); }
+                add-source => { root.open-settings-sources(); }
             }
             if root.page == 3: MediaScreen {
                 available: root.media-available;
@@ -1895,6 +2064,7 @@ export component MainWindow inherits Window {
                 episodes: root.media-episodes;
                 episode-cursor <=> root.media-episode-cursor;
                 focus-tick: root.media-focus-tick;
+                reveal-tick: root.reveal-tick;
                 pick-mode(m) => { root.media-pick-mode(m); }
                 pick-category(i) => { root.media-pick-category(i); }
                 open(i) => { root.media-open(i); }
@@ -1927,15 +2097,17 @@ export component MainWindow inherits Window {
                 reconnect <=> root.reconnect;
                 fullscreen-start <=> root.fullscreen-start;
                 live-preview <=> root.live-preview;
+                epg-on-start <=> root.epg-on-start;
                 user-agent <=> root.user-agent;
                 picked-file <=> root.picked-file;
                 form-reset: root.form-reset;
-                verify(k, n, l, u, p, a) => { root.verify-source(k, n, l, u, p, a); }
-                save(k, n, l, u, p, a) => { root.save-source(k, n, l, u, p, a); }
+                verify(k, n, l, u, p, a, g) => { root.verify-source(k, n, l, u, p, a, g); }
+                save(k, n, l, u, p, a, g) => { root.save-source(k, n, l, u, p, a, g); }
                 pick-file => { root.pick-file(); }
                 activate-source(id) => { root.activate-source(id); }
                 refresh-source(id) => { root.refresh-source(id); }
                 delete-source(id) => { root.delete-source(id); }
+                set-source-epg(id, url) => { root.set-source-epg(id, url); }
                 set-language(i) => { root.set-language(i); }
                 setting-changed(k, v) => { root.setting-changed(k, v); }
             }
@@ -1963,9 +2135,9 @@ export component MainWindow inherits Window {
         paused: root.paused;
         next-countdown: root.next-countdown;
         next-label: root.next-label;
+        // la pagina sotto il player non cambia mentre si guarda: chiudendolo si torna lì
         back => {
             root.playing = false;
-            root.page = root.on-demand ? 3 : 1;
         }
         home => {
             root.playing = false;
@@ -1974,7 +2146,6 @@ export component MainWindow inherits Window {
         pip => {
             root.request-pip(-1);
             root.playing = false;
-            root.page = root.on-demand ? 3 : 1;
         }
         toggle-pause => { root.toggle-pause(); }
         seek(s) => { root.seek(s); }
@@ -1989,5 +2160,6 @@ export component MainWindow inherits Window {
         select-audio(id) => { root.select-audio(id); }
         select-sub(id) => { root.select-sub(id); }
         cycle-aspect => { root.cycle-aspect(); }
+        cursor-hidden(h) => { root.cursor-hidden(h); }
     }
 }

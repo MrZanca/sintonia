@@ -45,6 +45,9 @@ cargo test
 # prova tutti i canali di una playlist (stampa solo nomi ed esiti, mai gli indirizzi)
 cargo run --release -p sintonia-player --example probe -- lista.m3u 15 8
 
+# legge una guida XMLTV (anche .gz) e conta i canali abbinati a una playlist (solo conteggi)
+cargo run --release -p sintonia-core --example leggi_guida -- guida.xml.gz lista.m3u
+
 # zip portatile per Windows in dist\
 powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1          # -Prova: aggiunge finto_xtream.exe
 ```
@@ -59,6 +62,7 @@ preferiti senza un account vero:
 ```powershell
 cargo run -p sintonia-core --features mock --example finto_xtream   # http://127.0.0.1:8899
 # nell'app: Impostazioni › Xtream Codes, server http://127.0.0.1:8899, utente mario, password prova123
+# il finto server ha anche la guida (xmltv.php), con programmi inventati attorno all'ora attuale
 cargo run -p sintonia-core --features mock --example finto_xtream -- 8899 20000 30000 2000   # catalogo grande
 ```
 
@@ -73,9 +77,13 @@ cargo run -p sintonia-app --features slint/mcp
 
 | Crate | Ruolo |
 |---|---|
-| `sintonia-core` | logica senza interfaccia: `m3u` (parser tollerante a righe), `xtream` (client `player_api.php`, risposte lette con tolleranza) e `xtream_mock` (finto server, solo test ed esempio), `db` (SQLite + FTS5: canali, film, serie, preferiti, cronologia), `crypto` e `secrets` (indirizzi cifrati, chiave e password Xtream nel portachiavi), `service` (runtime tokio: download, archivio, immagini), `redact` |
+| `sintonia-core` | logica senza interfaccia: `m3u` (parser tollerante a righe), `epg` (XMLTV a flusso, anche `.gz`, e abbinamento ai canali), `xtream` (client `player_api.php`, risposte lette con tolleranza) e `xtream_mock` (finto server, solo test ed esempio), `db` (SQLite + FTS5: canali, film, serie, preferiti, cronologia, guida), `crypto` e `secrets` (indirizzi cifrati, chiave e password Xtream nel portachiavi), `service` (runtime tokio: download, archivio, immagini), `redact` |
 | `sintonia-player` | involucro di libmpv: `Player` (comandi, tracce, opzioni per canale, eventi da un thread dedicato), `Backoff` (riconnessione), `RenderContext` (render API OpenGL) |
-| `sintonia-app` | finestre Slint: `app.rs` (collega interfaccia, servizio e player; ripresa, prossimo episodio), `catalog.rs` (modello virtualizzato per canali, film e serie, con preferiti), `images.rs` (locandine ritagliate con gli angoli di `Sq`), `video.rs` (video di mpv nelle finestre, riconnessione, fine dei film), `settings.rs` |
+| `sintonia-app` | finestre Slint: `app.rs` (collega interfaccia, servizio e player; ripresa, prossimo episodio), `catalog.rs` (modello virtualizzato per canali, film e serie, con preferiti), `guide.rs` (palinsesto in memoria, «in onda / dopo», griglia della Guida), `images.rs` (locandine ritagliate con gli angoli di `Sq`), `video.rs` (video di mpv nelle finestre, riconnessione, fine dei film), `settings.rs` |
+
+Il logo sta in `assets/logo/` (SVG d'origine, PNG da 32 a 1024 px, `sintonia.ico`): l'icona
+dell'eseguibile entra da `crates/sintonia-app/sintonia.rc` (build script, `embed-resource`), quella
+delle finestre e il logo della barra in alto da `ui/app.slint`.
 
 ### Il video dentro Slint (M0)
 
@@ -109,6 +117,23 @@ cargo run -p sintonia-app --features slint/mcp
 - Film ed episodi salvano il punto ogni 10 s e all'uscita; oltre il 95% (o a meno di un minuto dalla
   fine) sono «visti»: il film esce da «Riprendi», la serie passa all'episodio successivo.
 - `VideoRouter::play` toglie sempre la pausa: in mpv la pausa vale per il core, non per il file.
+
+### Guida dei programmi (M3)
+
+- Da dove: la guida scelta per la sorgente (Impostazioni › Sorgenti › Guida, indirizzo o file),
+  altrimenti `xmltv.php` per Xtream o `url-tvg`/`x-tvg-url` della playlist. Gli indirizzi sono
+  cifrati come gli altri; quello Xtream contiene la password e non si salva mai.
+- Lettura a flusso con `quick-xml` (gzip riconosciuto dai primi byte), importazione a blocchi di
+  5000 programmi in righe «in attesa» (`pending = 1`): la guida vecchia resta visibile finché la
+  nuova non è completa, e un'importazione interrotta si scarta all'avvio. Si tengono i programmi
+  da ieri a +8 giorni.
+- Abbinamento (`epg::Matcher`, tabella `epg_map`): `tvg-id` uguale, poi identificativo o nome
+  normalizzati («Tele 1 HD», «Tele.1.HD..101.it» e «Tele1.it» diventano «tele1»); a parità vincono i
+  canali della guida con programmi. Si rifà a ogni aggiornamento della playlist o della guida.
+- Aggiornamento: dopo il salvataggio o l'aggiornamento di una sorgente, e all'avvio se la guida ha
+  più di 12 ore (impostazione «Aggiorna la guida all'avvio»).
+- L'interfaccia chiede finestre di programmi (`LoadGuide`): una attorno ad adesso per «in onda /
+  dopo» e una per il giorno della Guida; la griglia disegna solo le righe e i programmi visibili.
 
 ### Traduzioni
 

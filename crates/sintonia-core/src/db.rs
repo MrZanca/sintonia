@@ -1,5 +1,5 @@
-//! Archivio SQLite: sorgenti, canali, film, serie, preferiti, cronologia, impostazioni, ricerca
-//! full-text (FTS5).
+//! Archivio SQLite: sorgenti, canali, film, serie, preferiti, cronologia, guida dei programmi,
+//! impostazioni, ricerca full-text (FTS5).
 //!
 //! Gli indirizzi (della playlist e di ogni canale M3U) e le credenziali Xtream (server e utente)
 //! sono cifrati con [`Cipher`]; la password Xtream non sta qui ma nel portachiavi
@@ -15,10 +15,11 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
 
 use crate::crypto::{Cipher, CryptoError};
+use crate::epg::{Matcher, Programme, XmltvChannel};
 use crate::m3u::Entry;
 use crate::redact::redact_url;
 
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 /// Errori dell'archivio.
 #[derive(Debug, thiserror::Error)]
@@ -92,6 +93,12 @@ pub struct SourceInfo {
     pub refreshed_at: Option<i64>,
     /// Scadenza dell'account Xtream (secondi Unix), se nota.
     pub expires: Option<i64>,
+    /// Ultimo aggiornamento della guida (secondi Unix).
+    pub epg_refreshed_at: Option<i64>,
+    /// Canali con la guida.
+    pub epg_matched: u32,
+    /// Programmi in archivio.
+    pub epg_programmes: u32,
 }
 
 /// Dati di una sorgente (nuova, o letta per aggiornarla).
@@ -107,6 +114,9 @@ pub struct NewSource {
     pub username: Option<String>,
     /// User-agent per la playlist.
     pub user_agent: Option<String>,
+    /// Guida dei programmi scelta dall'utente (indirizzo o file), al posto di quella indicata
+    /// dalla playlist o dal server (sensibile come la playlist).
+    pub epg_url: Option<String>,
 }
 
 impl std::fmt::Debug for NewSource {
@@ -341,6 +351,43 @@ pub enum ChannelStream {
     },
 }
 
+/// Un programma della guida, già abbinato a un canale della sorgente.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuideProgramme {
+    /// Chiave stabile del canale.
+    pub channel_key: String,
+    /// Inizio (secondi Unix).
+    pub start: i64,
+    /// Fine (secondi Unix).
+    pub stop: i64,
+    /// Titolo.
+    pub title: String,
+    /// Sottotitolo.
+    pub subtitle: Option<String>,
+    /// Categoria.
+    pub category: Option<String>,
+}
+
+/// Dettagli di un programma.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProgrammeDetail {
+    /// Descrizione.
+    pub description: Option<String>,
+    /// Episodio.
+    pub episode: Option<String>,
+}
+
+/// Esito di un'importazione della guida.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EpgSummary {
+    /// Programmi in archivio.
+    pub programmes: u32,
+    /// Canali nella guida.
+    pub channels: u32,
+    /// Canali della sorgente abbinati a un canale della guida con programmi.
+    pub matched: u32,
+}
+
 /// L'archivio.
 #[derive(Debug)]
 pub struct Store {
@@ -378,6 +425,18 @@ impl Store {
         store.salt = store.load_salt()?;
         if version < 2 {
             store.migrate_v2()?;
+        }
+        if version < 3 {
+            let tx = store.conn.transaction()?;
+            tx.execute_batch(SCHEMA_V3)?;
+            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            tx.commit()?;
+        }
+        // un'importazione della guida interrotta (chiusura, crash) lascia righe in attesa
+        for table in ["epg_programmes", "epg_channels"] {
+            store
+                .conn
+                .execute(&format!("DELETE FROM {table} WHERE pending = 1"), [])?;
         }
         Ok(store)
     }
@@ -427,7 +486,7 @@ impl Store {
                 update.execute(params![id, key])?;
             }
         }
-        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        tx.pragma_update(None, "user_version", 2)?;
         tx.commit()?;
         Ok(())
     }
@@ -451,6 +510,13 @@ impl Store {
             None => source.location.clone(),
         };
         let location = self.cipher.encrypt(&secret)?;
+        let epg_custom = source
+            .epg_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(|u| self.cipher.encrypt(u))
+            .transpose()?;
         let tx = self.conn.transaction()?;
         let has_active: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM sources WHERE active = 1)",
@@ -458,15 +524,16 @@ impl Store {
             |r| r.get(0),
         )?;
         tx.execute(
-            "INSERT INTO sources(name, kind, location, display, user_agent, active)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO sources(name, kind, location, display, user_agent, active, epg_custom)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 source.name,
                 source.kind.as_str(),
                 location,
                 display,
                 source.user_agent,
-                !has_active
+                !has_active,
+                epg_custom
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -478,7 +545,8 @@ impl Store {
     pub fn sources(&self) -> Result<Vec<SourceInfo>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, kind, display, user_agent, active, channel_count, movie_count,
-                    series_count, refreshed_at, expires
+                    series_count, refreshed_at, expires, epg_refreshed_at, epg_matched,
+                    epg_programmes
              FROM sources ORDER BY id",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -494,6 +562,9 @@ impl Store {
                 series_count: r.get(8)?,
                 refreshed_at: r.get(9)?,
                 expires: r.get(10)?,
+                epg_refreshed_at: r.get(11)?,
+                epg_matched: r.get(12)?,
+                epg_programmes: r.get(13)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -509,15 +580,19 @@ impl Store {
 
     /// Dati della sorgente in chiaro (indirizzo, utente Xtream), con il tipo e l'user-agent.
     pub fn source_location(&self, id: i64) -> Result<NewSource, StoreError> {
-        let (name, kind, location, user_agent): (String, String, Vec<u8>, Option<String>) = self
+        type Row = (String, String, Vec<u8>, Option<String>, Option<Vec<u8>>);
+        let (name, kind, location, user_agent, epg_custom): Row = self
             .conn
             .query_row(
-                "SELECT name, kind, location, user_agent FROM sources WHERE id = ?1",
+                "SELECT name, kind, location, user_agent, epg_custom FROM sources WHERE id = ?1",
                 [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()?
             .ok_or(StoreError::NotFound)?;
+        let epg_url = epg_custom
+            .map(|blob| self.cipher.decrypt(&blob))
+            .transpose()?;
         let kind = SourceKind::parse(&kind).unwrap_or(SourceKind::M3uUrl);
         let secret = self.cipher.decrypt(&location)?;
         let (location, username) = match (kind, secret.split_once('\n')) {
@@ -532,6 +607,7 @@ impl Store {
             location,
             username,
             user_agent,
+            epg_url,
         })
     }
 
@@ -718,8 +794,201 @@ impl Store {
             return Err(StoreError::NotFound);
         }
         rebuild_fts(&tx)?;
+        // canali nuovi o rinominati: si rifà l'abbinamento con la guida già in archivio
+        rebuild_epg_map(&tx, source_id)?;
         tx.commit()?;
         Ok(count)
+    }
+
+    // ───────────── guida dei programmi ─────────────
+
+    /// Prepara l'importazione di una guida: toglie i resti di un'importazione interrotta.
+    /// I dati nuovi restano «in attesa» finché [`Self::epg_commit`] non li sostituisce ai vecchi:
+    /// intanto la guida precedente resta visibile.
+    pub fn epg_begin(&mut self, source_id: i64) -> Result<(), StoreError> {
+        let tx = self.conn.transaction()?;
+        for table in ["epg_programmes", "epg_channels"] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE source_id = ?1 AND pending = 1"),
+                [source_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Aggiunge un blocco di canali e programmi all'importazione in corso.
+    pub fn epg_insert(
+        &mut self,
+        source_id: i64,
+        channels: &[XmltvChannel],
+        programmes: &[Programme],
+    ) -> Result<(), StoreError> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut insert = tx.prepare_cached(
+                "INSERT INTO epg_channels(source_id, pending, xmltv_id, names)
+                 VALUES (?1, 1, ?2, ?3)",
+            )?;
+            for c in channels {
+                insert.execute(params![source_id, c.id, c.names.join("\n")])?;
+            }
+            let mut insert = tx.prepare_cached(
+                "INSERT INTO epg_programmes(source_id, pending, xmltv_id, start, stop, title,
+                    subtitle, description, category, episode)
+                 VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for p in programmes {
+                insert.execute(params![
+                    source_id,
+                    p.channel,
+                    p.start,
+                    p.stop,
+                    p.title,
+                    p.subtitle,
+                    p.description,
+                    p.category,
+                    p.episode
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Sostituisce la guida della sorgente con quella appena importata e rifà l'abbinamento.
+    pub fn epg_commit(&mut self, source_id: i64, now: i64) -> Result<EpgSummary, StoreError> {
+        let tx = self.conn.transaction()?;
+        for table in ["epg_programmes", "epg_channels"] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE source_id = ?1 AND pending = 0"),
+                [source_id],
+            )?;
+            tx.execute(
+                &format!("UPDATE {table} SET pending = 0 WHERE source_id = ?1"),
+                [source_id],
+            )?;
+        }
+        let matched = rebuild_epg_map(&tx, source_id)?;
+        let count = |table: &str| -> Result<u32, StoreError> {
+            Ok(tx.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE source_id = ?1"),
+                [source_id],
+                |r| r.get(0),
+            )?)
+        };
+        let programmes = count("epg_programmes")?;
+        let channels = count("epg_channels")?;
+        tx.execute(
+            "UPDATE sources SET epg_refreshed_at = ?2, epg_programmes = ?3 WHERE id = ?1",
+            params![source_id, now, programmes],
+        )?;
+        tx.commit()?;
+        Ok(EpgSummary {
+            programmes,
+            channels,
+            matched,
+        })
+    }
+
+    /// Annulla un'importazione non riuscita (la guida precedente resta).
+    pub fn epg_abort(&mut self, source_id: i64) -> Result<(), StoreError> {
+        self.epg_begin(source_id)
+    }
+
+    /// Guida scelta dall'utente per una sorgente (`None`: quella della playlist o del server).
+    /// La guida già importata si toglie: la prossima importazione userà la nuova.
+    pub fn set_epg_custom(&mut self, source_id: i64, url: Option<&str>) -> Result<(), StoreError> {
+        let blob = url
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(|u| self.cipher.encrypt(u))
+            .transpose()?;
+        let tx = self.conn.transaction()?;
+        let changed = tx.execute(
+            "UPDATE sources SET epg_custom = ?2, epg_refreshed_at = NULL, epg_matched = 0,
+                epg_programmes = 0
+             WHERE id = ?1",
+            params![source_id, blob],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound);
+        }
+        for table in ["epg_programmes", "epg_channels", "epg_map"] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE source_id = ?1"),
+                [source_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Ultimo aggiornamento della guida di una sorgente.
+    pub fn epg_refreshed_at(&self, source_id: i64) -> Result<Option<i64>, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT epg_refreshed_at FROM sources WHERE id = ?1",
+                [source_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)
+    }
+
+    /// I programmi della sorgente tra `from` e `to` (secondi Unix), per canale e in ordine.
+    pub fn guide(
+        &self,
+        source_id: i64,
+        from: i64,
+        to: i64,
+    ) -> Result<Vec<GuideProgramme>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.channel_key, p.start, p.stop, p.title, p.subtitle, p.category
+             FROM epg_map m
+             JOIN epg_programmes p
+               ON p.source_id = m.source_id AND p.pending = 0 AND p.xmltv_id = m.xmltv_id
+              AND p.start < ?3 AND p.stop > ?2
+             WHERE m.source_id = ?1
+             ORDER BY m.channel_key, p.start",
+        )?;
+        let rows = stmt.query_map(params![source_id, from, to], |r| {
+            Ok(GuideProgramme {
+                channel_key: r.get(0)?,
+                start: r.get(1)?,
+                stop: r.get(2)?,
+                title: r.get(3)?,
+                subtitle: r.get(4)?,
+                category: r.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Descrizione ed episodio di un programma.
+    pub fn programme_detail(
+        &self,
+        source_id: i64,
+        channel_key: &str,
+        start: i64,
+    ) -> Result<Option<ProgrammeDetail>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT p.description, p.episode
+                 FROM epg_map m
+                 JOIN epg_programmes p
+                   ON p.source_id = m.source_id AND p.pending = 0 AND p.xmltv_id = m.xmltv_id
+                 WHERE m.source_id = ?1 AND m.channel_key = ?2 AND p.start = ?3",
+                params![source_id, channel_key, start],
+                |r| {
+                    Ok(ProgrammeDetail {
+                        description: r.get(0)?,
+                        episode: r.get(1)?,
+                    })
+                },
+            )
+            .optional()?)
     }
 
     // ───────────── canali, film, serie ─────────────
@@ -1184,6 +1453,41 @@ const SCHEMA_V2: &str = "
     );
 ";
 
+/// Versione 3: guida dei programmi. Le righe con `pending = 1` sono un'importazione in corso.
+const SCHEMA_V3: &str = "
+    ALTER TABLE sources ADD COLUMN epg_custom BLOB;
+    ALTER TABLE sources ADD COLUMN epg_refreshed_at INTEGER;
+    ALTER TABLE sources ADD COLUMN epg_matched INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sources ADD COLUMN epg_programmes INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE epg_channels(
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        pending INTEGER NOT NULL DEFAULT 0,
+        xmltv_id TEXT NOT NULL,
+        names TEXT NOT NULL
+    );
+    CREATE INDEX epg_channels_by_source ON epg_channels(source_id, pending);
+    CREATE TABLE epg_programmes(
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        pending INTEGER NOT NULL DEFAULT 0,
+        xmltv_id TEXT NOT NULL,
+        start INTEGER NOT NULL,
+        stop INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        subtitle TEXT,
+        description TEXT,
+        category TEXT,
+        episode TEXT
+    );
+    CREATE INDEX epg_programmes_by_channel
+        ON epg_programmes(source_id, pending, xmltv_id, start);
+    CREATE TABLE epg_map(
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        channel_key TEXT NOT NULL,
+        xmltv_id TEXT NOT NULL,
+        PRIMARY KEY(source_id, channel_key)
+    );
+";
+
 fn insert_vod(
     tx: &Transaction<'_>,
     source_id: i64,
@@ -1243,6 +1547,66 @@ fn rebuild_fts(tx: &Transaction<'_>) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Abbina i canali della sorgente ai canali della guida (vedi [`Matcher`]) e salva `epg_map`.
+/// A parità di nome vincono i canali della guida che hanno programmi.
+fn rebuild_epg_map(tx: &Transaction<'_>, source_id: i64) -> Result<u32, StoreError> {
+    tx.execute("DELETE FROM epg_map WHERE source_id = ?1", [source_id])?;
+    let mut guide: Vec<(String, Vec<String>, bool)> = {
+        let mut stmt = tx.prepare(
+            "SELECT c.xmltv_id, c.names,
+                    EXISTS(SELECT 1 FROM epg_programmes p
+                           WHERE p.source_id = c.source_id AND p.pending = 0
+                             AND p.xmltv_id = c.xmltv_id)
+             FROM epg_channels c WHERE c.source_id = ?1 AND c.pending = 0",
+        )?;
+        let rows = stmt.query_map([source_id], |r| {
+            let names: String = r.get(1)?;
+            Ok((
+                r.get::<_, String>(0)?,
+                names.lines().map(str::to_owned).collect(),
+                r.get::<_, bool>(2)?,
+            ))
+        })?;
+        rows.collect::<Result<_, _>>()?
+    };
+    guide.sort_by_key(|(_, _, has_programmes)| !has_programmes);
+    let with_programmes: std::collections::HashSet<&str> = guide
+        .iter()
+        .filter(|(_, _, has)| *has)
+        .map(|(id, _, _)| id.as_str())
+        .collect();
+    let matcher = Matcher::new(
+        guide
+            .iter()
+            .map(|(id, names, _)| (id.as_str(), names.as_slice())),
+    );
+    let channels: Vec<(String, String, Option<String>)> = {
+        let mut stmt =
+            tx.prepare("SELECT stable_key, name, tvg_id FROM channels WHERE source_id = ?1")?;
+        let rows = stmt.query_map([source_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let mut matched = 0u32;
+    if !guide.is_empty() {
+        let mut insert = tx.prepare(
+            "INSERT OR REPLACE INTO epg_map(source_id, channel_key, xmltv_id) VALUES (?1, ?2, ?3)",
+        )?;
+        for (key, name, tvg_id) in &channels {
+            if let Some(id) = matcher.find(tvg_id.as_deref(), name) {
+                insert.execute(params![source_id, key, id])?;
+                if with_programmes.contains(id) {
+                    matched += 1;
+                }
+            }
+        }
+    }
+    tx.execute(
+        "UPDATE sources SET epg_matched = ?2 WHERE id = ?1",
+        params![source_id, matched],
+    )?;
+    Ok(matched)
+}
+
 fn parse_episode_ref(text: &str) -> Option<EpisodeRef> {
     let mut parts = text.splitn(4, '|');
     Some(EpisodeRef {
@@ -1280,6 +1644,7 @@ mod tests {
                 location: "http://prov.example/get.php?username=mario&password=segreta".into(),
                 username: None,
                 user_agent: None,
+                epg_url: None,
             })
             .unwrap()
     }
@@ -1322,6 +1687,7 @@ mod tests {
                 location: "http://tv.example:8080".into(),
                 username: Some("mario".into()),
                 user_agent: None,
+                epg_url: None,
             })
             .unwrap();
         let info = &store.sources().unwrap()[0];
@@ -1574,6 +1940,175 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    fn programme(channel: &str, start: i64, title: &str) -> Programme {
+        Programme {
+            channel: channel.into(),
+            start,
+            stop: start + 1800,
+            title: title.into(),
+            ..Programme::default()
+        }
+    }
+
+    fn guide_channel(id: &str, name: &str) -> XmltvChannel {
+        XmltvChannel {
+            id: id.into(),
+            names: vec![name.into()],
+        }
+    }
+
+    #[test]
+    fn guide_import_replaces_matches_and_queries() {
+        let mut store = store();
+        let id = source(&mut store, "Casa");
+        // Rai Sport HD (nome), Tèle Città (nessuna guida), Senza gruppo (tvg-id assente)
+        store
+            .replace_channels(id, &parse_str(LIST).entries, &[], 1)
+            .unwrap();
+        let keys: Vec<String> = store
+            .channels(id)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.key)
+            .collect();
+
+        store.epg_begin(id).unwrap();
+        store
+            .epg_insert(
+                id,
+                &[
+                    guide_channel("RaiSport.it", "Rai Sport"),
+                    guide_channel("Vuoto.it", "Senza gruppo"),
+                ],
+                &[programme("RaiSport.it", 1000, "Calcio")],
+            )
+            .unwrap();
+        // finché non è confermata, la guida nuova non si vede
+        assert!(store.guide(id, 0, 10_000).unwrap().is_empty());
+        let summary = store.epg_commit(id, 50).unwrap();
+        assert_eq!(
+            summary,
+            EpgSummary {
+                programmes: 1,
+                channels: 2,
+                matched: 1
+            },
+            "«Senza gruppo» è abbinato ma senza programmi: non conta"
+        );
+        let guide = store.guide(id, 0, 10_000).unwrap();
+        assert_eq!(guide.len(), 1);
+        assert_eq!(guide[0].channel_key, keys[0]);
+        assert_eq!(guide[0].title, "Calcio");
+        assert!(
+            store.guide(id, 2800, 9_000).unwrap().is_empty(),
+            "fuori finestra"
+        );
+        let info = &store.sources().unwrap()[0];
+        assert_eq!(
+            (info.epg_refreshed_at, info.epg_matched, info.epg_programmes),
+            (Some(50), 1, 1)
+        );
+
+        // seconda importazione: sostituisce, e un'importazione annullata non tocca niente
+        store.epg_begin(id).unwrap();
+        store
+            .epg_insert(
+                id,
+                &[guide_channel("RaiSport.it", "Rai Sport")],
+                &[
+                    programme("RaiSport.it", 2000, "Tennis"),
+                    programme("RaiSport.it", 3800, "Golf"),
+                ],
+            )
+            .unwrap();
+        store.epg_commit(id, 60).unwrap();
+        store.epg_begin(id).unwrap();
+        store
+            .epg_insert(id, &[], &[programme("RaiSport.it", 9000, "Mai")])
+            .unwrap();
+        store.epg_abort(id).unwrap();
+        let titles: Vec<String> = store
+            .guide(id, 0, 100_000)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.title)
+            .collect();
+        assert_eq!(titles, ["Tennis", "Golf"]);
+
+        // la playlist si aggiorna: l'abbinamento si rifà con la guida già in archivio
+        store
+            .replace_channels(id, &parse_str(LIST).entries[1..], &[], 2)
+            .unwrap();
+        assert!(store.guide(id, 0, 100_000).unwrap().is_empty());
+        assert_eq!(store.sources().unwrap()[0].epg_matched, 0);
+        // guida scelta dall'utente: la vecchia si toglie, l'indirizzo resta cifrato
+        store
+            .set_epg_custom(id, Some("http://epg.example/guida.xml.gz"))
+            .unwrap();
+        assert_eq!(
+            store.source_location(id).unwrap().epg_url.as_deref(),
+            Some("http://epg.example/guida.xml.gz")
+        );
+        assert_eq!(store.sources().unwrap()[0].epg_refreshed_at, None);
+        store.set_epg_custom(id, None).unwrap();
+        assert_eq!(store.source_location(id).unwrap().epg_url, None);
+        store.delete_source(id).unwrap();
+        let left: u32 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM epg_programmes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "la guida se ne va con la sorgente");
+    }
+
+    #[test]
+    fn large_guide_is_imported_and_read_quickly() {
+        let mut store = store();
+        let id = source(&mut store, "Grande");
+        let entries: Vec<Entry> = (0..2_000)
+            .map(|i| Entry {
+                name: format!("Canale {i}"),
+                tvg_id: Some(format!("c{i}.it")),
+                url: format!("http://h/live/u/p/{i}.ts"),
+                ..Entry::default()
+            })
+            .collect();
+        store.replace_channels(id, &entries, &[], 1).unwrap();
+        let channels: Vec<XmltvChannel> = (0..2_000)
+            .map(|i| guide_channel(&format!("c{i}.it"), &format!("Canale {i}")))
+            .collect();
+        let start = std::time::Instant::now();
+        store.epg_begin(id).unwrap();
+        // 2000 canali × 100 programmi, a blocchi come fa il servizio
+        let mut batch = Vec::new();
+        for i in 0..2_000 {
+            for n in 0..100 {
+                batch.push(programme(&format!("c{i}.it"), n * 1800, "Programma"));
+            }
+            if batch.len() >= 5_000 {
+                store.epg_insert(id, &[], &batch).unwrap();
+                batch.clear();
+            }
+        }
+        store.epg_insert(id, &channels, &batch).unwrap();
+        let summary = store.epg_commit(id, 1).unwrap();
+        let imported = start.elapsed();
+        assert_eq!(summary.programmes, 200_000);
+        assert_eq!(summary.matched, 2_000);
+        let start = std::time::Instant::now();
+        let day = store.guide(id, 0, 86_400).unwrap();
+        let read = start.elapsed();
+        assert_eq!(day.len(), 2_000 * 48);
+        // limiti larghi: valgono anche per le build di debug
+        assert!(
+            imported < std::time::Duration::from_secs(60),
+            "importazione: {imported:?}"
+        );
+        assert!(
+            read < std::time::Duration::from_secs(5),
+            "lettura: {read:?}"
+        );
     }
 
     #[test]

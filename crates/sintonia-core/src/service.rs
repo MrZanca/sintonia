@@ -5,21 +5,25 @@
 //! Gli eventi arrivano da thread del runtime attraverso la funzione passata a [`Service::start`]:
 //! l'app li inoltra al suo thread (con Slint: `invoke_from_event_loop`).
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::crypto::Cipher;
 use crate::db::{
-    ChannelInput, ChannelRow, ChannelStream, EpisodeRef, HistoryEntry, ItemKind, MovieRow,
-    NewSource, SeriesRow, SourceInfo, SourceKind, Store, StoreError, StreamInfo,
+    ChannelInput, ChannelRow, ChannelStream, EpgSummary, EpisodeRef, GuideProgramme, HistoryEntry,
+    ItemKind, MovieRow, NewSource, SeriesRow, SourceInfo, SourceKind, Store, StoreError,
+    StreamInfo,
 };
+use crate::epg::{self, EpgError, ParseStats, Programme, XmltvChannel};
 use crate::m3u::{self, Parser, Playlist};
 use crate::secrets::{source_password_name, SecretStore};
 use crate::xtream::{self, AccountInfo, Credentials, MovieDetail, SeriesDetail, XtreamError};
@@ -37,6 +41,15 @@ const LOGO_MAX_SIDE: u32 = 128;
 const POSTER_MAX_SIDE: u32 = 360;
 /// Voci di cronologia mandate all'interfaccia.
 const HISTORY_LIMIT: u32 = 30;
+/// Dimensione massima di una guida scaricata (anche compressa).
+const MAX_EPG_BYTES: u64 = 1024 * 1024 * 1024;
+/// Età oltre la quale la guida si aggiorna da sola (secondi).
+const EPG_MAX_AGE: i64 = 12 * 3600;
+/// Programmi tenuti: da un giorno fa a otto giorni da adesso (secondi).
+const EPG_PAST: i64 = 86_400;
+const EPG_FUTURE: i64 = 8 * 86_400;
+/// Programmi scritti nell'archivio per volta (l'archivio resta libero tra un blocco e l'altro).
+const EPG_BATCH: usize = 5_000;
 
 /// Configurazione del servizio.
 #[derive(Debug)]
@@ -146,6 +159,31 @@ pub enum Command {
         kind: ItemKind,
         /// Chiave.
         key: String,
+    },
+    /// Scarica e importa la guida dei programmi di una sorgente (`None`: quella in uso). Senza
+    /// `force` solo se l'aggiornamento automatico è acceso e la guida è vecchia.
+    RefreshEpg {
+        /// Sorgente.
+        source_id: Option<i64>,
+        /// Anche se recente.
+        force: bool,
+    },
+    /// Cambia la guida di una sorgente (indirizzo o file; `None` o vuoto: quella della
+    /// playlist o del server) e la scarica subito.
+    SetSourceEpg {
+        /// Sorgente.
+        source_id: i64,
+        /// Indirizzo o percorso.
+        epg_url: Option<String>,
+    },
+    /// Programmi della sorgente in uso tra `from` e `to` (secondi Unix).
+    LoadGuide {
+        /// Inizio.
+        from: i64,
+        /// Fine.
+        to: i64,
+        /// Numero della richiesta.
+        generation: u64,
     },
     /// Salva un'impostazione.
     SetSetting {
@@ -329,8 +367,37 @@ pub enum Event {
         /// Immagine.
         image: Option<LogoImage>,
     },
+    /// Aggiornamento della guida di una sorgente.
+    Epg {
+        /// Sorgente.
+        source_id: i64,
+        /// Stato.
+        state: EpgState,
+    },
+    /// Programmi richiesti con [`Command::LoadGuide`].
+    Guide {
+        /// Sorgente in uso.
+        source_id: Option<i64>,
+        /// Inizio.
+        from: i64,
+        /// Fine.
+        to: i64,
+        /// Numero della richiesta.
+        generation: u64,
+        /// Programmi, per canale e in ordine di inizio.
+        programmes: Arc<Vec<GuideProgramme>>,
+    },
     /// Errore da mostrare.
     Error(String),
+}
+
+/// Stato dell'aggiornamento della guida.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EpgState {
+    /// Download e importazione in corso.
+    Working,
+    /// Finito (con l'esito).
+    Done(Result<EpgSummary, String>),
 }
 
 /// Errori di avvio del servizio.
@@ -364,6 +431,8 @@ struct Shared {
     cache_dir: PathBuf,
     images: Semaphore,
     images_in_flight: Mutex<HashSet<(String, bool)>>,
+    /// Sorgenti di cui si sta importando la guida.
+    epg_in_flight: Mutex<HashSet<i64>>,
 }
 
 impl Shared {
@@ -453,6 +522,7 @@ impl Service {
             cache_dir: config.cache_dir,
             images: Semaphore::new(IMAGE_PARALLELISM),
             images_in_flight: Mutex::new(HashSet::new()),
+            epg_in_flight: Mutex::new(HashSet::new()),
         });
         let (commands, mut inbox) = mpsc::unbounded_channel::<Command>();
         let thread = std::thread::Builder::new()
@@ -509,6 +579,7 @@ async fn handle(shared: Arc<Shared>, command: Command) {
                 Err(err) => shared.emit(Event::Error(err.to_string())),
             }
             emit_everything(&shared).await;
+            refresh_epg(&shared, None, false).await;
         }
         Command::VerifySource(source) => {
             shared.emit(Event::Working(true));
@@ -542,6 +613,7 @@ async fn handle(shared: Arc<Shared>, command: Command) {
                 shared.emit(Event::Error(err.to_string()));
             }
             emit_everything(&shared).await;
+            refresh_epg(&shared, Some(id), false).await;
         }
         Command::DeleteSource(id) => {
             if let Err(err) = shared.with_store(move |s| s.delete_source(id)).await {
@@ -655,6 +727,42 @@ async fn handle(shared: Arc<Shared>, command: Command) {
                 Err(err) => shared.emit(Event::Error(err.to_string())),
             }
         }
+        Command::RefreshEpg { source_id, force } => refresh_epg(&shared, source_id, force).await,
+        Command::SetSourceEpg { source_id, epg_url } => {
+            let result = shared
+                .with_store(move |s| {
+                    s.set_epg_custom(source_id, epg_url.as_deref())?;
+                    s.sources()
+                })
+                .await;
+            match result {
+                Ok(sources) => shared.emit(Event::Sources(sources)),
+                Err(err) => shared.emit(Event::Error(err.to_string())),
+            }
+            refresh_epg(&shared, Some(source_id), true).await;
+        }
+        Command::LoadGuide {
+            from,
+            to,
+            generation,
+        } => {
+            let result = shared
+                .with_store(move |s| match s.active_source()? {
+                    Some(id) => Ok((Some(id), s.guide(id, from, to)?)),
+                    None => Ok((None, Vec::new())),
+                })
+                .await;
+            match result {
+                Ok((source_id, programmes)) => shared.emit(Event::Guide {
+                    source_id,
+                    from,
+                    to,
+                    generation,
+                    programmes: Arc::new(programmes),
+                }),
+                Err(err) => shared.emit(Event::Error(err.to_string())),
+            }
+        }
         Command::SetSetting { key, value } => {
             if let Err(err) = shared
                 .with_store(move |s| s.set_setting(&key, &value))
@@ -674,6 +782,232 @@ async fn finish_save(shared: &Arc<Shared>, result: Result<(i64, SourceReport), S
     };
     shared.emit(Event::SourceSaved { source_id, result });
     emit_everything(shared).await;
+    // sorgente nuova o appena aggiornata: anche la guida
+    if let Some(id) = source_id {
+        refresh_epg(shared, Some(id), true).await;
+    }
+}
+
+// ───────────── guida dei programmi ─────────────
+
+/// Aggiorna la guida di una sorgente, se ne ha una. Una sola importazione per sorgente alla
+/// volta; l'esito arriva con [`Event::Epg`], poi le sorgenti (con i conteggi nuovi).
+async fn refresh_epg(shared: &Arc<Shared>, source_id: Option<i64>, force: bool) {
+    let id = match source_id {
+        Some(id) => id,
+        None => match shared.with_store(|s| s.active_source()).await {
+            Ok(Some(id)) => id,
+            _ => return,
+        },
+    };
+    if !force {
+        let check = shared
+            .with_store(move |s| {
+                Ok((
+                    s.setting("epg_on_start")?.as_deref() != Some("0"),
+                    s.epg_refreshed_at(id)?,
+                ))
+            })
+            .await;
+        match check {
+            Ok((true, last)) if last.is_none_or(|t| now() - t >= EPG_MAX_AGE) => {}
+            Ok(_) => return,
+            Err(err) => {
+                log::warn!("guida: {err}");
+                return;
+            }
+        }
+    }
+    let locations = match epg_locations(shared, id).await {
+        Ok(locations) if !locations.is_empty() => locations,
+        Ok(_) => return,
+        Err(err) => {
+            shared.emit(Event::Epg {
+                source_id: id,
+                state: EpgState::Done(Err(err.to_string())),
+            });
+            return;
+        }
+    };
+    if !shared
+        .epg_in_flight
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(id)
+    {
+        return;
+    }
+    shared.emit(Event::Epg {
+        source_id: id,
+        state: EpgState::Working,
+    });
+    let result = import_epg(shared, id, &locations).await;
+    shared
+        .epg_in_flight
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(&id);
+    match &result {
+        Ok(summary) => log::info!(
+            "guida: {} programmi, {} canali abbinati",
+            summary.programmes,
+            summary.matched
+        ),
+        Err(err) => log::warn!("guida non aggiornata: {err}"),
+    }
+    shared.emit(Event::Epg {
+        source_id: id,
+        state: EpgState::Done(result.map_err(|e| e.to_string())),
+    });
+    if let Ok(sources) = shared.with_store(|s| s.sources()).await {
+        shared.emit(Event::Sources(sources));
+    }
+}
+
+/// Da dove leggere la guida: quella scelta dall'utente, altrimenti quella del server Xtream o
+/// quelle indicate dalla playlist. Gli indirizzi possono contenere credenziali: mai nei log.
+async fn epg_locations(shared: &Arc<Shared>, id: i64) -> Result<Vec<String>, SourceError> {
+    let source = shared.with_store(move |s| s.source_location(id)).await?;
+    if let Some(custom) = source.epg_url.filter(|u| !u.trim().is_empty()) {
+        return Ok(vec![custom.trim().to_owned()]);
+    }
+    if source.kind == SourceKind::Xtream {
+        let (client, _) = shared.xtream_client(id).await?;
+        return Ok(vec![client.xmltv_url()]);
+    }
+    Ok(shared.with_store(move |s| s.epg_urls(id)).await?)
+}
+
+async fn import_epg(
+    shared: &Arc<Shared>,
+    id: i64,
+    locations: &[String],
+) -> Result<EpgSummary, SourceError> {
+    shared.with_store(move |s| s.epg_begin(id)).await?;
+    let window = (now() - EPG_PAST, now() + EPG_FUTURE);
+    let mut imported = false;
+    let mut last_error = None;
+    for (n, location) in locations.iter().enumerate() {
+        let remote = location.starts_with("http://") || location.starts_with("https://");
+        let path = if remote {
+            let path = shared.cache_dir.join(format!("guida-{id}-{n}.tmp"));
+            if let Err(err) = download_to_file(&shared.http, location, &path).await {
+                let _ = tokio::fs::remove_file(&path).await;
+                last_error = Some(err);
+                continue;
+            }
+            path
+        } else {
+            PathBuf::from(location)
+        };
+        let worker = Arc::clone(shared);
+        let file = path.clone();
+        let result = tokio::task::spawn_blocking(move || import_file(&worker, id, &file, window))
+            .await
+            .unwrap_or_else(|e| Err(SourceError::File(e.to_string())));
+        if remote {
+            let _ = tokio::fs::remove_file(&path).await;
+        }
+        match result {
+            Ok(stats) if stats.programmes > 0 => imported = true,
+            Ok(_) => last_error = Some(SourceError::Empty),
+            Err(err) => last_error = Some(err),
+        }
+    }
+    if !imported {
+        let _ = shared.with_store(move |s| s.epg_abort(id)).await;
+        return Err(last_error.unwrap_or(SourceError::Empty));
+    }
+    Ok(shared.with_store(move |s| s.epg_commit(id, now())).await?)
+}
+
+/// Scarica un file sul disco, a flusso e con un limite di dimensione.
+async fn download_to_file(
+    http: &reqwest::Client,
+    url: &str,
+    path: &Path,
+) -> Result<(), SourceError> {
+    let network = |e: reqwest::Error| SourceError::Network(e.without_url().to_string());
+    let response = http.get(url).send().await.map_err(network)?;
+    if !response.status().is_success() {
+        return Err(SourceError::Http(response.status().as_u16()));
+    }
+    if response
+        .content_length()
+        .is_some_and(|len| len > MAX_EPG_BYTES)
+    {
+        return Err(SourceError::TooLarge);
+    }
+    let file_error = |e: std::io::Error| SourceError::File(e.to_string());
+    let mut file = tokio::fs::File::create(path).await.map_err(file_error)?;
+    let mut total: u64 = 0;
+    let mut body = response.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(network)?;
+        total += chunk.len() as u64;
+        if total > MAX_EPG_BYTES {
+            return Err(SourceError::TooLarge);
+        }
+        file.write_all(&chunk).await.map_err(file_error)?;
+    }
+    file.flush().await.map_err(file_error)?;
+    Ok(())
+}
+
+/// Blocco in preparazione durante la lettura di una guida.
+#[derive(Default)]
+struct EpgBatch {
+    channels: Vec<XmltvChannel>,
+    programmes: Vec<Programme>,
+    failure: Option<StoreError>,
+}
+
+impl EpgBatch {
+    fn flush(&mut self, shared: &Shared, id: i64) {
+        if self.failure.is_some() || (self.channels.is_empty() && self.programmes.is_empty()) {
+            return;
+        }
+        let mut store = shared.store.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Err(err) = store.epg_insert(id, &self.channels, &self.programmes) {
+            self.failure = Some(err);
+        }
+        self.channels.clear();
+        self.programmes.clear();
+    }
+}
+
+/// Legge un file della guida (thread bloccante) e lo scrive nell'archivio a blocchi.
+fn import_file(
+    shared: &Shared,
+    id: i64,
+    path: &Path,
+    window: (i64, i64),
+) -> Result<ParseStats, SourceError> {
+    let file = std::fs::File::open(path).map_err(|e| SourceError::File(e.to_string()))?;
+    let reader = epg::open(file).map_err(|e| SourceError::File(e.to_string()))?;
+    let batch = RefCell::new(EpgBatch::default());
+    let stats = epg::parse(
+        reader,
+        window,
+        &mut |channel| batch.borrow_mut().channels.push(channel),
+        &mut |programme| {
+            let mut batch = batch.borrow_mut();
+            batch.programmes.push(programme);
+            if batch.programmes.len() >= EPG_BATCH {
+                batch.flush(shared, id);
+            }
+        },
+    )
+    .map_err(|e| match e {
+        EpgError::Io(text) => SourceError::File(text),
+        EpgError::Xml(text) => SourceError::Format(text),
+    })?;
+    let mut batch = batch.into_inner();
+    batch.flush(shared, id);
+    match batch.failure {
+        Some(err) => Err(err.into()),
+        None => Ok(stats),
+    }
 }
 
 /// Sorgenti, catalogo della sorgente in uso, preferiti e cronologia.
@@ -1256,6 +1590,7 @@ mod tests {
             location: file.to_string_lossy().into_owned(),
             username: None,
             user_agent: None,
+            epg_url: None,
         }));
         let saved = wait(&rx, |e| match e {
             Event::SourceSaved { result, .. } => Some(result),
@@ -1318,6 +1653,7 @@ mod tests {
                 .into_owned(),
             username: None,
             user_agent: None,
+            epg_url: None,
         }));
         let result = wait(&rx, |e| match e {
             Event::Verified(result) => Some(result),
@@ -1367,6 +1703,7 @@ mod tests {
             location: server.address(),
             username: Some("mario".into()),
             user_agent: None,
+            epg_url: None,
         };
         // password sbagliata
         service.send(Command::VerifyXtream {
@@ -1425,6 +1762,52 @@ mod tests {
         })
         .unwrap();
         assert!(!detail.episodes.is_empty());
+
+        // la guida dell'account arriva da sola dopo il salvataggio (xmltv.php)
+        let summary = wait(&rx, |e| match e {
+            Event::Epg {
+                state: EpgState::Done(result),
+                ..
+            } => Some(result),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(summary.matched as usize, channels.len(), "{summary:?}");
+        service.send(Command::LoadGuide {
+            from: now(),
+            to: now() + 3600,
+            generation: 9,
+        });
+        let guide = wait(&rx, |e| match e {
+            Event::Guide {
+                generation: 9,
+                programmes,
+                ..
+            } => Some(programmes),
+            _ => None,
+        });
+        let first_key = &channels[0].key;
+        assert!(
+            guide
+                .iter()
+                .any(|p| &p.channel_key == first_key && p.start <= now()),
+            "programma in onda sul primo canale"
+        );
+        // già aggiornata: senza «force» non si riscarica
+        service.send(Command::RefreshEpg {
+            source_id: Some(source_id),
+            force: false,
+        });
+        service.send(Command::LoadGuide {
+            from: 0,
+            to: 1,
+            generation: 10,
+        });
+        wait(&rx, |e| match e {
+            Event::Epg { .. } => panic!("guida riscaricata senza motivo"),
+            Event::Guide { generation: 10, .. } => Some(()),
+            _ => None,
+        });
 
         service.send(Command::DeleteSource(source_id));
         let _ = catalog(&rx);

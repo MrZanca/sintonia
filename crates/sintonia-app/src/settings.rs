@@ -56,6 +56,8 @@ pub struct Settings {
     pub fullscreen_start: bool,
     /// Nell'elenco Live il canale evidenziato si apre da solo dopo un attimo.
     pub live_preview: bool,
+    /// All'avvio la guida si aggiorna da sola se è vecchia (l'impostazione la legge il servizio).
+    pub epg_on_start: bool,
     /// User-agent generale (vuoto = quello di Sintonia).
     pub user_agent: Option<String>,
     /// Chiave stabile dell'ultimo canale visto.
@@ -71,6 +73,7 @@ impl Settings {
             reconnect: true,
             fullscreen_start: false,
             live_preview: true,
+            epg_on_start: true,
             user_agent: None,
             last_channel: None,
             pip_width: None,
@@ -98,6 +101,7 @@ impl Settings {
             "reconnect" => self.reconnect = flag,
             "fullscreen_start" => self.fullscreen_start = flag,
             "live_preview" => self.live_preview = flag,
+            "epg_on_start" => self.epg_on_start = flag,
             "user_agent" => {
                 self.user_agent = Some(value.trim())
                     .filter(|v| !v.is_empty())

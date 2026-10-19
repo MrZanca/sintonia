@@ -1,8 +1,9 @@
 //! Logica di Sintonia senza interfaccia: sorgenti (M3U, Xtream Codes), archivio, servizio di I/O.
-//! La guida XMLTV arriva con M3.
+//! Guida dei programmi XMLTV letta a flusso ([`epg`]).
 
 pub mod crypto;
 pub mod db;
+pub mod epg;
 pub mod m3u;
 pub mod redact;
 pub mod secrets;

@@ -14,6 +14,13 @@ export struct ChannelItem {
     radio: bool,
     drm: bool,
     fav: bool,
+    // guida: programma in onda ("" se non c'è), orari "20:30 – 21:30", avanzamento 0..1
+    // (-1 se non c'è) e il successivo
+    now-title: string,
+    now-time: string,
+    now-progress: float,
+    next-title: string,
+    next-time: string,
 }
 
 // kind: 0 tutti, 1 categoria della sorgente, 2 senza categoria, 3 preferiti
@@ -30,6 +37,11 @@ export struct SourceItem {
     series: int,
     expires: string,
     active: bool,
+    // guida: 0 nessuna ancora, 1 aggiornamento in corso, 2 pronta, 3 errore
+    epg-state: int,
+    epg-matched: int,
+    epg-updated: string,
+    epg-error: string,
 }
 
 export struct TrackItem { id: int, label: string, selected: bool }
@@ -161,6 +173,17 @@ export global Texts {
         let m = Math.floor(Math.mod(secs, 3600) / 60);
         let s = Math.mod(secs, 60);
         return (h > 0 ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (s < 10 ? "0" : "") + s;
+    }
+    // giorno della settimana abbreviato, 0 = lunedì
+    public pure function weekday(n: int) -> string {
+        return n == 0 ? @tr("Mon") : (n == 1 ? @tr("Tue") : (n == 2 ? @tr("Wed")
+            : (n == 3 ? @tr("Thu") : (n == 4 ? @tr("Fri") : (n == 5 ? @tr("Sat") : @tr("Sun"))))));
+    }
+    // la riga della guida di una sorgente nelle Impostazioni
+    public pure function source-epg(s: SourceItem) -> string {
+        return s.epg-state == 1 ? @tr("Guide: updating…")
+            : (s.epg-state == 2 ? @tr("Guide: {n} channel" | "Guide: {n} channels" % s.epg-matched) + " · " + @tr("updated {}", s.epg-updated)
+            : (s.epg-state == 3 ? @tr("Guide not updated: {}", s.epg-error) : ""));
     }
     // testi composti dal codice Rust (schede di film e serie)
     public pure function season(n: int) -> string {
@@ -360,6 +383,49 @@ export component Tabs inherits HorizontalLayout {
                 root.clicked(i);
             }
         }
+    }
+}
+
+// Programma in onda e successivo di un canale (se la guida li conosce)
+export component NowNext inherits VerticalLayout {
+    in property <ChannelItem> c;
+    in property <length> bar-width: 300px;
+    in property <length> title-size: 16px;
+    // «In onda ora» davanti agli orari (non serve dove è già scritto sopra)
+    in property <bool> label: true;
+    spacing: 4px;
+    Text {
+        text: root.label ? @tr("On now") + " · " + root.c.now-time : root.c.now-time;
+        color: Theme.dim;
+        font-size: 12px;
+    }
+    Text {
+        text: root.c.now-title;
+        color: Theme.ink;
+        font-size: root.title-size;
+        font-weight: 600;
+        overflow: elide;
+    }
+    if root.c.now-progress >= 0: HorizontalLayout {
+        alignment: start;
+        Rectangle {
+            width: root.bar-width;
+            height: 4px;
+            Sq { r: 2px; fill: #ffffff2a; }
+            Sq {
+                x: 0px;
+                width: max(4px, parent.width * min(1.0, root.c.now-progress));
+                height: parent.height;
+                r: 2px;
+                fill: Theme.needle;
+            }
+        }
+    }
+    if root.c.next-title != "": Text {
+        text: @tr("Next: {} {}", root.c.next-time, root.c.next-title);
+        color: Theme.dim;
+        font-size: 12px;
+        overflow: elide;
     }
 }
 

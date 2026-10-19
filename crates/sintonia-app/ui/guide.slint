@@ -1,0 +1,344 @@
+// La Guida: giorni e categorie in alto, griglia dei programmi con la linea «adesso».
+// La griglia disegna solo le righe visibili (i canali possono essere decine di migliaia) e ogni
+// riga solo i programmi del giorno scelto.
+
+import { Theme, Texts, Sq, Icons, IconBtn, Btn, EmptyState, CategoryItem } from "common.slint";
+
+// Un programma: inizio e durata in minuti dall'inizio del giorno mostrato
+export struct GuideBlock {
+    title: string,
+    time: string,
+    start: int,
+    len: int,
+    now: bool,
+    past: bool,
+}
+
+export struct GuideRow {
+    id: int,
+    num: string,
+    name: string,
+    playing: bool,
+    blocks: [GuideBlock],
+}
+
+// offset: giorni da oggi; weekday: 0 lunedì … 6 domenica; day: giorno del mese
+export struct DayItem { offset: int, weekday: int, day: int }
+
+// Pulsanti scorrevoli in orizzontale (categorie)
+component Chips inherits Rectangle {
+    in property <[CategoryItem]> model;
+    in property <int> current;
+    in property <bool> searching;
+    callback picked(int);
+    height: 36px;
+    clip: true;
+    Flickable {
+        content-width: row.preferred-width;
+        row := HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            for c[i] in root.model: Rectangle {
+                property <bool> on: i == root.current && !root.searching;
+                width: t.preferred-width + 30px;
+                Sq { r: 18px; fill: parent.on ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
+                t := Text {
+                    text: Texts.category(c);
+                    color: parent.on ? Theme.bg : Theme.ink;
+                    font-size: 13px;
+                    font-weight: parent.on ? 700 : 400;
+                }
+                ta := TouchArea { clicked => { root.picked(i); } }
+            }
+        }
+    }
+}
+
+export component GuideScreen inherits Rectangle {
+    in property <[GuideRow]> rows;
+    in property <[CategoryItem]> categories;
+    in property <int> category;
+    in property <string> search;
+    in property <[DayItem]> days;
+    in property <int> day;
+    // minuti dall'inizio del giorno mostrato; -1 se non è oggi
+    in property <int> now-min: -1;
+    // 0 nessuna guida per la sorgente, 1 aggiornamento in corso, 2 pronta, 3 errore
+    in property <int> state;
+    in property <string> error;
+    in property <bool> no-source;
+    in-out property <int> cursor;
+    in property <int> focus-tick;
+    // cresce quando la vista deve tornare su «adesso» (apertura, cambio di giorno)
+    in property <int> scroll-tick;
+    callback pick-day(int);
+    callback pick-category(int);
+    callback watch(int);
+    callback refresh();
+    callback add-source();
+
+    property <length> ppm: 3px;
+    property <length> row-h: 62px;
+    property <length> name-w: 210px;
+    property <length> head-h: 30px;
+    property <int> count: root.rows.length;
+
+    function ensure-visible() {
+        if (root.cursor * root.row-h + grid.content-y < 0px) {
+            grid.content-y = -root.cursor * root.row-h;
+        } else if ((root.cursor + 1) * root.row-h + grid.content-y > grid.height) {
+            grid.content-y = grid.height - (root.cursor + 1) * root.row-h;
+        }
+    }
+    function move(delta: int) {
+        if (root.count == 0) { return; }
+        root.cursor = max(0, min(root.count - 1, root.cursor + delta));
+        root.ensure-visible();
+    }
+    function scroll-by(minutes: int) {
+        grid.content-x = max(min(0px, grid.width - grid.content-width), min(0px, grid.content-x - minutes * root.ppm));
+    }
+    // adesso meno mezz'ora; per gli altri giorni la prima serata
+    function scroll-to-now() {
+        let target = root.now-min >= 0 ? root.now-min - 30 : 19 * 60;
+        grid.content-x = max(min(0px, grid.width - grid.content-width), -max(0, target) * root.ppm);
+        // il canale del cursore (all'apertura quello in riproduzione) al centro
+        let top = root.cursor * root.row-h - (grid.height - root.row-h) / 2;
+        grid.content-y = -max(0px, min(top, root.count * root.row-h - grid.height));
+    }
+
+    init => { fs.focus(); root.scroll-to-now(); }
+    changed focus-tick => { fs.focus(); }
+    changed scroll-tick => { root.scroll-to-now(); }
+    changed category => { grid.content-y = 0px; }
+
+    if root.no-source: EmptyState {
+        icon: Icons.plus;
+        title: @tr("No source yet");
+        body: @tr("Add your M3U playlist or Xtream Codes account in Settings to see your channels here.");
+        action: @tr("Add a source");
+        act => { root.add-source(); }
+    }
+    if !root.no-source && root.state == 0: EmptyState {
+        icon: Icons.guide;
+        title: @tr("Program guide");
+        body: @tr("This source has no program guide. You can add an XMLTV address to the source in Settings.");
+        action: @tr("Open Settings");
+        act => { root.add-source(); }
+    }
+
+    fs := FocusScope {
+        enabled: !root.no-source && root.state != 0;
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow) { root.move(-1); return accept; }
+            if (event.text == Key.DownArrow) { root.move(1); return accept; }
+            if (event.text == Key.PageUp) { root.move(-8); return accept; }
+            if (event.text == Key.PageDown) { root.move(8); return accept; }
+            if (event.text == Key.LeftArrow) { root.scroll-by(-60); return accept; }
+            if (event.text == Key.RightArrow) { root.scroll-by(60); return accept; }
+            if (event.text == Key.Return && root.count > 0) { root.watch(root.cursor); return accept; }
+            reject
+        }
+        VerticalLayout {
+            visible: !root.no-source && root.state != 0;
+            padding-left: 44px;
+            padding-right: 44px;
+            padding-top: 8px;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 8px;
+                height: 36px;
+                for d[i] in root.days: Rectangle {
+                    property <bool> on: i == root.day;
+                    width: dt.preferred-width + 32px;
+                    Sq { r: 18px; fill: parent.on ? Theme.ink : (dta.has-hover ? #ffffff30 : Theme.glass); }
+                    dt := Text {
+                        text: d.offset == -1 ? @tr("Yesterday")
+                            : (d.offset == 0 ? @tr("Today")
+                            : (d.offset == 1 ? @tr("Tomorrow") : Texts.weekday(d.weekday) + " " + d.day));
+                        color: parent.on ? Theme.bg : Theme.ink;
+                        font-size: 14px;
+                        font-weight: parent.on ? 700 : 400;
+                    }
+                    dta := TouchArea {
+                        clicked => {
+                            root.pick-day(i);
+                            fs.focus();
+                        }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: root.state == 1 ? @tr("Updating the guide…")
+                        : (root.state == 3 ? @tr("Guide not updated: {}", root.error) : "");
+                    color: root.state == 3 ? Theme.live : Theme.dim;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    max-width: 420px;
+                }
+                IconBtn {
+                    icon: Icons.refresh;
+                    size: 36px;
+                    clicked => { root.refresh(); }
+                }
+            }
+            Chips {
+                model: root.categories;
+                current: root.category;
+                searching: root.search != "";
+                picked(i) => {
+                    root.pick-category(i);
+                    fs.focus();
+                }
+            }
+            area := Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+
+                // orari in alto (scorrono con la griglia in orizzontale)
+                Rectangle {
+                    x: root.name-w;
+                    y: 0px;
+                    width: parent.width - root.name-w;
+                    height: root.head-h;
+                    clip: true;
+                    for h in 48: Text {
+                        x: h * 30 * root.ppm + grid.content-x + 4px;
+                        y: 0px;
+                        height: root.head-h;
+                        text: (h < 20 ? "0" : "") + floor(h / 2) + (Math.mod(h, 2) == 0 ? ":00" : ":30");
+                        color: Theme.dim;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // numeri e nomi dei canali (scorrono con la griglia in verticale)
+                Rectangle {
+                    x: 0px;
+                    y: root.head-h;
+                    width: root.name-w;
+                    height: parent.height - root.head-h;
+                    clip: true;
+                    for i in grid.shown: nr := Rectangle {
+                        property <int> index: grid.first + i;
+                        x: 0px;
+                        y: self.index * root.row-h + grid.content-y;
+                        width: parent.width - 10px;
+                        height: root.row-h - 6px;
+                        visible: self.index < root.count;
+                        Sq {
+                            r: 16px;
+                            fill: nr.index == root.cursor ? #ffffff26 : (nta.has-hover ? #ffffff10 : transparent);
+                        }
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 8px;
+                            spacing: 10px;
+                            Text {
+                                text: root.rows[nr.index].num;
+                                width: 42px;
+                                color: root.rows[nr.index].playing ? Theme.needle : Theme.faint;
+                                font-size: 18px;
+                                font-weight: 300;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: root.rows[nr.index].name;
+                                color: Theme.ink;
+                                font-size: 14px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        nta := TouchArea {
+                            clicked => {
+                                root.cursor = nr.index;
+                                fs.focus();
+                            }
+                            double-clicked => { root.watch(nr.index); }
+                        }
+                    }
+                }
+
+                grid := Flickable {
+                    x: root.name-w;
+                    y: root.head-h;
+                    width: parent.width - root.name-w;
+                    height: parent.height - root.head-h;
+                    content-width: 24 * 60 * root.ppm;
+                    content-height: root.count * root.row-h;
+                    property <int> first: max(0, floor(-self.content-y / root.row-h));
+                    property <int> shown: min(root.count, ceil(self.height / root.row-h) + 1);
+                    for i in grid.shown: gr := Rectangle {
+                        property <int> index: grid.first + i;
+                        x: 0px;
+                        y: self.index * root.row-h;
+                        width: grid.content-width;
+                        height: root.row-h - 6px;
+                        visible: self.index < root.count;
+                        if root.rows[gr.index].blocks.length == 0: Text {
+                            x: -grid.content-x + 12px;
+                            text: @tr("No programme information");
+                            color: Theme.faint;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                        for b in root.rows[gr.index].blocks: blk := Rectangle {
+                            x: max(0, b.start) * root.ppm;
+                            width: max(6px, (b.start + b.len - max(0, b.start)) * root.ppm - 5px);
+                            height: parent.height;
+                            Sq {
+                                r: 14px;
+                                fill: b.now ? Theme.base.with-alpha(0.55) : (bta.has-hover ? #ffffff24 : (b.past ? #ffffff0a : Theme.glass));
+                                stroke: b.now || (gr.index == root.cursor && bta.has-hover) ? Theme.needle : transparent;
+                                stroke-width: 1.5px;
+                            }
+                            VerticalLayout {
+                                // il titolo resta visibile anche se il programma è iniziato
+                                // prima del bordo sinistro della vista
+                                padding-left: 10px + max(0px, min(blk.width - 60px, -grid.content-x - blk.x));
+                                padding-right: 8px;
+                                alignment: center;
+                                spacing: 1px;
+                                Text {
+                                    text: b.title;
+                                    color: b.past ? Theme.dim : Theme.ink;
+                                    font-size: 13px;
+                                    font-weight: b.now ? 700 : 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: b.time;
+                                    color: Theme.faint;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+                            }
+                            bta := TouchArea {
+                                clicked => {
+                                    root.cursor = gr.index;
+                                    fs.focus();
+                                    root.watch(gr.index);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // la linea «adesso»
+                if root.now-min >= 0: Rectangle {
+                    x: root.name-w + root.now-min * root.ppm + grid.content-x - 1px;
+                    y: root.head-h - 6px;
+                    width: 2px;
+                    height: parent.height - root.head-h + 6px;
+                    visible: self.x >= root.name-w && self.x < parent.width;
+                    background: Theme.needle;
+                }
+            }
+        }
+    }
+}

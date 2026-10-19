@@ -533,6 +533,18 @@ impl Client {
         )
     }
 
+    /// Indirizzo della guida dei programmi dell'account (`xmltv.php`): contiene la password,
+    /// non va mai salvato né scritto nei log.
+    pub fn xmltv_url(&self) -> String {
+        let c = &self.credentials;
+        format!(
+            "{}/xmltv.php?username={}&password={}",
+            c.server,
+            encode(&c.username),
+            encode(&c.password)
+        )
+    }
+
     /// Indirizzo di un canale live.
     pub fn live_url(&self, stream_id: i64, extension: &str) -> String {
         self.stream_url("live", stream_id, extension)
@@ -710,6 +722,10 @@ mod tests {
         assert_eq!(
             client.movie_url(9, ".mkv"),
             "http://h:8080/movie/mario%20rossi/p%26ss%2F1/9.mkv"
+        );
+        assert_eq!(
+            client.xmltv_url(),
+            "http://h:8080/xmltv.php?username=mario%20rossi&password=p%26ss%2F1"
         );
         assert!(!format!("{:?}", client).contains("p&ss"));
     }
