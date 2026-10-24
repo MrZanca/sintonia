@@ -556,6 +556,14 @@ component HomeScreen inherits Rectangle {
                         font-size: 12px;
                     }
                 }
+                if c.locked: Icon {
+                    x: parent.width - self.width - 16px;
+                    y: 14px;
+                    commands: Icons.lock;
+                    width: 16px;
+                    height: 16px;
+                    tint: Theme.dim;
+                }
                 Ring { on: fta.has-hover; }
                 // le categorie della Home sono quelle della lista completa dopo «Tutti» e «Preferiti»
                 fta := TouchArea { clicked => { root.open-category(i + 2); } }
@@ -962,11 +970,28 @@ component SettingsScreen inherits Rectangle {
     in-out property <bool> reconnect;
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview;
-    in-out property <bool> epg-on-start;
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     // cresce dopo un salvataggio riuscito: il modulo si svuota (password compresa)
     in property <int> form-reset;
+    // aggiornamento automatico: posizione nell'elenco di `interval-options`
+    in property <int> playlist-interval;
+    in property <int> epg-interval;
+    // controllo genitori
+    in property <bool> pin-set;
+    in property <bool> pin-unlocked;
+    // 0 niente, 1 i due PIN non coincidono, 2 PIN non valido, 3 PIN impostato, 4 PIN tolto
+    in property <int> pin-message;
+    in property <[CategoryItem]> lock-live;
+    in property <[CategoryItem]> lock-movies;
+    in property <[CategoryItem]> lock-series;
+    callback set-interval(int, int);
+    callback pin-create(string, string);
+    callback pin-remove();
+    callback pin-lock-now();
+    callback pin-unlock();
+    // tipo (0 canali, 1 film, 2 serie), posizione nell'elenco, bloccata sì o no
+    callback toggle-lock(int, int, bool);
     // tipo, nome, indirizzo o file o server, utente, password, user-agent, guida
     callback verify(int, string, string, string, string, string, string);
     callback save(int, string, string, string, string, string, string);
@@ -987,6 +1012,16 @@ component SettingsScreen inherits Rectangle {
     property <string> password;
     property <string> source-ua;
     property <string> epg;
+    property <string> new-pin;
+    property <string> new-pin-again;
+    property <bool> confirm-remove;
+    property <int> lock-kind: 0;
+    property <[CategoryItem]> lock-shown: root.lock-kind == 1 ? root.lock-movies : (root.lock-kind == 2 ? root.lock-series : root.lock-live);
+    changed pin-set => {
+        root.new-pin = "";
+        root.new-pin-again = "";
+        root.confirm-remove = false;
+    }
     changed form-reset => {
         root.epg = "";
         root.name = "";
@@ -1010,7 +1045,7 @@ component SettingsScreen inherits Rectangle {
             width: 260px;
             alignment: start;
             spacing: 6px;
-            for s[i] in [@tr("Sources"), @tr("Language"), @tr("Playback")]: SetRow {
+            for s[i] in [@tr("Sources"), @tr("Language"), @tr("Playback"), @tr("Updates"), @tr("Parental control")]: SetRow {
                 label: s;
                 active: root.section == i;
                 clicked => { root.section = i; }
@@ -1180,18 +1215,247 @@ component SettingsScreen inherits Rectangle {
                 on <=> root.live-preview;
                 toggled(v) => { root.setting-changed("live_preview", v ? "1" : "0"); }
             }
-            SwitchRow {
-                label: @tr("Refresh the guide at startup");
-                detail: @tr("Downloads the program guide when you open Sintonia, if it is more than 12 hours old.");
-                on <=> root.epg-on-start;
-                toggled(v) => { root.setting-changed("epg_on_start", v ? "1" : "0"); }
-            }
             Rectangle { height: 6px; }
             Field {
                 label: @tr("Custom user-agent");
                 placeholder: @tr("leave empty for the default");
                 value <=> root.user-agent;
                 edited(v) => { root.setting-changed("user_agent", v); }
+            }
+        }
+        // aggiornamenti
+        if root.section == 3: VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            spacing: 12px;
+            Title { text: @tr("Automatic updates"); }
+            Text {
+                text: @tr("Sintonia downloads the playlist and the program guide of the source in use again when they are older than this. It checks at startup and every 10 minutes.");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Rectangle { height: 4px; }
+            Text { text: @tr("Playlist (channels, movies and series)"); color: Theme.ink; font-size: 16px; font-weight: 600; }
+            Tabs {
+                options: [@tr("Never"), @tr("6 hours"), @tr("12 hours"), @tr("1 day"), @tr("3 days"), @tr("1 week")];
+                current: root.playlist-interval;
+                clicked(i) => { root.set-interval(0, i); }
+            }
+            Rectangle { height: 8px; }
+            Text { text: @tr("Program guide"); color: Theme.ink; font-size: 16px; font-weight: 600; }
+            Tabs {
+                options: [@tr("Never"), @tr("6 hours"), @tr("12 hours"), @tr("1 day"), @tr("3 days"), @tr("1 week")];
+                current: root.epg-interval;
+                clicked(i) => { root.set-interval(1, i); }
+            }
+            Rectangle { height: 8px; }
+            Text {
+                text: @tr("You can always update by hand: Refresh on each source, or the button in the Guide.");
+                color: Theme.faint;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
+        // controllo genitori
+        if root.section == 4: VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            spacing: 12px;
+            Title { text: @tr("Parental control"); }
+            Text {
+                text: @tr("Locked categories disappear from every list, from search and from the Home until the PIN is entered. The PIN is asked again every time Sintonia starts.");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            if !root.pin-set: HorizontalLayout {
+                spacing: 14px;
+                alignment: start;
+                Rectangle {
+                    width: 200px;
+                    height: f1.preferred-height;
+                    f1 := Field { width: parent.width; label: @tr("New PIN (4 to 8 digits)"); placeholder: "••••"; password: true; value <=> root.new-pin; }
+                }
+                Rectangle {
+                    width: 200px;
+                    height: f2.preferred-height;
+                    f2 := Field { width: parent.width; label: @tr("Repeat the PIN"); placeholder: "••••"; password: true; value <=> root.new-pin-again; }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    Btn {
+                        label: @tr("Set PIN");
+                        primary: true;
+                        height: 44px;
+                        clicked => { root.pin-create(root.new-pin, root.new-pin-again); }
+                    }
+                }
+            }
+            if root.pin-message != 0: Text {
+                text: root.pin-message == 1 ? @tr("The two PINs are different.")
+                    : (root.pin-message == 2 ? @tr("The PIN must have 4 to 8 digits, numbers only.")
+                    : (root.pin-message == 3 ? @tr("PIN set. Now choose the categories to lock.") : @tr("PIN removed: nothing is locked any more.")));
+                color: root.pin-message <= 2 ? Theme.live : Theme.ok;
+                font-size: 14px;
+                wrap: word-wrap;
+            }
+            if root.pin-set && !root.pin-unlocked: HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                Text {
+                    text: @tr("Enter the PIN to choose the locked categories.");
+                    color: Theme.ink;
+                    font-size: 15px;
+                    vertical-alignment: center;
+                }
+                Btn { label: @tr("Enter PIN"); primary: true; clicked => { root.pin-unlock(); } }
+            }
+            if root.pin-set && root.pin-unlocked: HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Btn { label: @tr("Lock now"); primary: true; clicked => { root.pin-lock-now(); } }
+                if !root.confirm-remove: Btn { label: @tr("Remove PIN"); clicked => { root.confirm-remove = true; } }
+                if root.confirm-remove: Btn {
+                    label: @tr("Confirm: remove PIN");
+                    danger: true;
+                    clicked => {
+                        root.confirm-remove = false;
+                        root.pin-remove();
+                    }
+                }
+                if root.confirm-remove: Btn { label: @tr("Cancel"); clicked => { root.confirm-remove = false; } }
+            }
+            if root.pin-set && root.pin-unlocked: Tabs {
+                options: [@tr("Channels"), @tr("Movies"), @tr("Series")];
+                current <=> root.lock-kind;
+            }
+            if root.pin-set && root.pin-unlocked && root.lock-shown.length == 0: Text {
+                text: @tr("No categories here in the source in use.");
+                color: Theme.faint;
+                font-size: 13px;
+            }
+            if root.pin-set && root.pin-unlocked: lock-fl := Flickable {
+                // poche centinaia di categorie: un `for` basta
+                height: min(lock-list.preferred-height, 360px);
+                max-width: 620px;
+                content-height: lock-list.preferred-height;
+                lock-list := VerticalLayout {
+                    width: lock-fl.width;
+                    spacing: 6px;
+                    for c[i] in root.lock-shown: Rectangle {
+                        height: 48px;
+                        Sq { r: 18px; fill: c.locked ? #ffffff1c : Theme.glass; }
+                        HorizontalLayout {
+                            padding-left: 18px;
+                            padding-right: 16px;
+                            spacing: 10px;
+                            if c.locked: VerticalLayout {
+                                alignment: center;
+                                Icon { commands: Icons.lock; width: 16px; height: 16px; }
+                            }
+                            Text {
+                                text: Texts.category(c);
+                                color: Theme.ink;
+                                font-size: 15px;
+                                font-weight: c.locked ? 700 : 400;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: c.count;
+                                color: Theme.faint;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Toggle {
+                                    on: c.locked;
+                                    toggled(v) => { root.toggle-lock(root.lock-kind, i, v); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Richiesta del PIN: copre tutta la finestra (anche il player)
+component PinDialog inherits Rectangle {
+    in property <bool> error;
+    callback submit(string);
+    callback cancel();
+    property <string> pin;
+    changed error => {
+        if (root.error) { root.pin = ""; }
+    }
+    background: #000000c0;
+    // i clic fuori dal riquadro non arrivano alle pagine sotto
+    TouchArea { clicked => { root.cancel(); } }
+    Rectangle {
+        width: 400px;
+        height: box.preferred-height;
+        Sq { r: 30px; fill: Theme.panel; }
+        TouchArea {}
+        box := VerticalLayout {
+            padding: 30px;
+            spacing: 14px;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Icon { commands: Icons.lock; width: 22px; height: 22px; }
+                Text { text: @tr("Locked category"); color: Theme.ink; font-size: 20px; font-weight: 700; }
+            }
+            Text {
+                text: @tr("Enter the PIN to see the locked categories until Sintonia is closed.");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Rectangle {
+                height: 52px;
+                Sq {
+                    r: 26px;
+                    fill: Theme.glass;
+                    stroke: root.error ? Theme.live : Theme.ink;
+                    stroke-width: 2px;
+                }
+                ti := TextInput {
+                    x: 22px;
+                    width: parent.width - 44px;
+                    height: parent.height;
+                    text <=> root.pin;
+                    color: Theme.ink;
+                    font-size: 22px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    single-line: true;
+                    input-type: InputType.password;
+                    init => { self.focus(); }
+                    accepted => { root.submit(root.pin); }
+                    key-pressed(event) => {
+                        if (event.text == Key.Escape) {
+                            root.cancel();
+                            return accept;
+                        }
+                        reject
+                    }
+                }
+            }
+            if root.error: Text {
+                text: @tr("Wrong PIN.");
+                color: Theme.live;
+                font-size: 14px;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                Btn { label: @tr("Cancel"); clicked => { root.cancel(); } }
+                Btn { label: @tr("Unlock"); primary: true; clicked => { root.submit(root.pin); } }
             }
         }
     }
@@ -1917,11 +2181,29 @@ export component MainWindow inherits Window {
     in-out property <bool> reconnect: true;
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview: true;
-    in-out property <bool> epg-on-start: true;
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     in-out property <int> settings-section: 0;
     in property <int> form-reset;
+    in property <int> playlist-interval;
+    in property <int> epg-interval;
+    in property <bool> pin-set;
+    in property <bool> pin-unlocked;
+    in property <int> pin-message;
+    in property <[CategoryItem]> lock-live;
+    in property <[CategoryItem]> lock-movies;
+    in property <[CategoryItem]> lock-series;
+    // richiesta del PIN aperta, e PIN sbagliato
+    in property <bool> pin-prompt;
+    in property <bool> pin-error;
+    callback set-interval(int, int);
+    callback pin-create(string, string);
+    callback pin-remove();
+    callback pin-lock-now();
+    callback pin-unlock();
+    callback toggle-lock(int, int, bool);
+    callback pin-submit(string);
+    callback pin-cancel();
 
     // player
     in property <[TrackItem]> audio-tracks;
@@ -2150,8 +2432,21 @@ export component MainWindow inherits Window {
                 reconnect <=> root.reconnect;
                 fullscreen-start <=> root.fullscreen-start;
                 live-preview <=> root.live-preview;
-                epg-on-start <=> root.epg-on-start;
                 user-agent <=> root.user-agent;
+                playlist-interval: root.playlist-interval;
+                epg-interval: root.epg-interval;
+                pin-set: root.pin-set;
+                pin-unlocked: root.pin-unlocked;
+                pin-message: root.pin-message;
+                lock-live: root.lock-live;
+                lock-movies: root.lock-movies;
+                lock-series: root.lock-series;
+                set-interval(k, i) => { root.set-interval(k, i); }
+                pin-create(a, b) => { root.pin-create(a, b); }
+                pin-remove => { root.pin-remove(); }
+                pin-lock-now => { root.pin-lock-now(); }
+                pin-unlock => { root.pin-unlock(); }
+                toggle-lock(k, i, v) => { root.toggle-lock(k, i, v); }
                 picked-file <=> root.picked-file;
                 form-reset: root.form-reset;
                 verify(k, n, l, u, p, a, g) => { root.verify-source(k, n, l, u, p, a, g); }
@@ -2215,5 +2510,11 @@ export component MainWindow inherits Window {
         select-sub(id) => { root.select-sub(id); }
         cycle-aspect => { root.cycle-aspect(); }
         cursor-hidden(h) => { root.cursor-hidden(h); }
+    }
+
+    if root.pin-prompt: PinDialog {
+        error: root.pin-error;
+        submit(p) => { root.pin-submit(p); }
+        cancel => { root.pin-cancel(); }
     }
 }

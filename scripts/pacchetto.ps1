@@ -1,9 +1,11 @@
-﻿# Crea lo zip portatile di Sintonia per Windows (x64) in dist\.
-# Uso: powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1 [-Prova]
-# Contenuto: sintonia.exe, libmpv-2.dll (LGPL), licenze. L'installer vero arriva in M4.
-# -Prova aggiunge finto_xtream.exe (finto server Xtream con dati inventati): solo per le versioni di prova.
+﻿# Crea lo zip portatile di Sintonia per Windows (x64) in dist\ e, con -Installer, anche l'installer.
+# Uso: powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1 [-Prova] [-Installer]
+# Contenuto: sintonia.exe, libmpv-2.dll (LGPL), licenze.
+# -Prova aggiunge finto_xtream.exe (finto server Xtream con dati inventati): solo per le versioni di prova,
+#   e mai nell'installer.
+# -Installer compila installer\sintonia.iss con Inno Setup 6 (ISCC.exe nel PATH o nella cartella solita).
 
-param([switch]$Prova)
+param([switch]$Prova, [switch]$Installer)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -60,3 +62,20 @@ $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
 "$hash  $name.zip" | Set-Content -Path "$zip.sha256" -Encoding ascii
 Write-Output "$zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"
 Write-Output "SHA-256: $hash"
+
+if ($Installer) {
+    $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+    if (-not $iscc) {
+        $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+                  "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if (-not $iscc) { throw "Inno Setup 6 non trovato (ISCC.exe)" }
+    # l'installer prende i file dalla cartella dello zip, ma mai il finto server
+    & $iscc /Q "/DVersion=$version" "/DSourceDir=$stage" installer\sintonia.iss
+    if ($LASTEXITCODE -ne 0) { throw "installer non riuscito" }
+    $setup = Join-Path $root "dist\$name-setup.exe"
+    $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+    "$hash  $name-setup.exe" | Set-Content -Path "$setup.sha256" -Encoding ascii
+    Write-Output "$setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)"
+    Write-Output "SHA-256: $hash"
+}

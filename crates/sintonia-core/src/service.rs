@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -43,8 +44,13 @@ const POSTER_MAX_SIDE: u32 = 360;
 const HISTORY_LIMIT: u32 = 30;
 /// Dimensione massima di una guida scaricata (anche compressa).
 const MAX_EPG_BYTES: u64 = 1024 * 1024 * 1024;
-/// Età oltre la quale la guida si aggiorna da sola (secondi).
-const EPG_MAX_AGE: i64 = 12 * 3600;
+/// Ogni quanto si guarda se playlist e guida della sorgente in uso vanno aggiornate.
+const AUTO_CHECK: Duration = Duration::from_secs(10 * 60);
+/// Dopo un aggiornamento automatico fallito si riprova dopo un'ora (secondi).
+const AUTO_RETRY: i64 = 3600;
+/// Intervalli predefiniti di aggiornamento automatico (ore; 0 = mai).
+pub const PLAYLIST_HOURS_DEFAULT: u32 = 24;
+pub const EPG_HOURS_DEFAULT: u32 = 12;
 /// Programmi tenuti: da un giorno fa a otto giorni da adesso (secondi).
 const EPG_PAST: i64 = 86_400;
 const EPG_FUTURE: i64 = 8 * 86_400;
@@ -433,6 +439,42 @@ struct Shared {
     images_in_flight: Mutex<HashSet<(String, bool)>>,
     /// Sorgenti di cui si sta importando la guida.
     epg_in_flight: Mutex<HashSet<i64>>,
+    /// Un controllo automatico (playlist e guida) è in corso.
+    auto_in_flight: AtomicBool,
+    /// Ultimo aggiornamento automatico fallito, per sorgente (playlist o guida): si riprova dopo
+    /// [`AUTO_RETRY`], non a ogni controllo.
+    auto_failed: Mutex<HashMap<(i64, Refresh), i64>>,
+}
+
+/// Cosa si aggiorna da sé.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Refresh {
+    Playlist,
+    Epg,
+}
+
+impl Shared {
+    /// Un aggiornamento automatico è fallito da poco.
+    fn failed_recently(&self, id: i64, what: Refresh) -> bool {
+        self.auto_failed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&(id, what))
+            .is_some_and(|t| now() - t < AUTO_RETRY)
+    }
+
+    /// Ricorda l'esito di un aggiornamento (riuscito: si dimentica il fallimento).
+    fn note_refresh(&self, id: i64, what: Refresh, ok: bool) {
+        let mut failed = self
+            .auto_failed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if ok {
+            failed.remove(&(id, what));
+        } else {
+            failed.insert((id, what), now());
+        }
+    }
 }
 
 impl Shared {
@@ -523,12 +565,25 @@ impl Service {
             images: Semaphore::new(IMAGE_PARALLELISM),
             images_in_flight: Mutex::new(HashSet::new()),
             epg_in_flight: Mutex::new(HashSet::new()),
+            auto_in_flight: AtomicBool::new(false),
+            auto_failed: Mutex::new(HashMap::new()),
         });
         let (commands, mut inbox) = mpsc::unbounded_channel::<Command>();
         let thread = std::thread::Builder::new()
             .name("sintonia-servizio".into())
             .spawn(move || {
                 runtime.block_on(async move {
+                    // controllo periodico; il primo lo fa `Command::Init`
+                    let ticker = Arc::clone(&shared);
+                    tokio::spawn(async move {
+                        let start = tokio::time::Instant::now() + AUTO_CHECK;
+                        let mut interval = tokio::time::interval_at(start, AUTO_CHECK);
+                        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                        loop {
+                            interval.tick().await;
+                            auto_refresh(&ticker).await;
+                        }
+                    });
                     while let Some(command) = inbox.recv().await {
                         let shared = Arc::clone(&shared);
                         tokio::spawn(async move { handle(shared, command).await });
@@ -579,7 +634,7 @@ async fn handle(shared: Arc<Shared>, command: Command) {
                 Err(err) => shared.emit(Event::Error(err.to_string())),
             }
             emit_everything(&shared).await;
-            refresh_epg(&shared, None, false).await;
+            auto_refresh(&shared).await;
         }
         Command::VerifySource(source) => {
             shared.emit(Event::Working(true));
@@ -613,7 +668,7 @@ async fn handle(shared: Arc<Shared>, command: Command) {
                 shared.emit(Event::Error(err.to_string()));
             }
             emit_everything(&shared).await;
-            refresh_epg(&shared, Some(id), false).await;
+            auto_refresh(&shared).await;
         }
         Command::DeleteSource(id) => {
             if let Err(err) = shared.with_store(move |s| s.delete_source(id)).await {
@@ -788,6 +843,78 @@ async fn finish_save(shared: &Arc<Shared>, result: Result<(i64, SourceReport), S
     }
 }
 
+// ───────────── aggiornamento automatico ─────────────
+
+/// Ore lette da un'impostazione (`None` se manca o non è un numero).
+fn hours_setting(store: &Store, key: &str) -> Result<Option<u32>, StoreError> {
+    Ok(store.setting(key)?.and_then(|v| v.trim().parse().ok()))
+}
+
+/// Intervallo di aggiornamento automatico della playlist in secondi (`None`: mai).
+pub fn playlist_interval(store: &Store) -> Result<Option<i64>, StoreError> {
+    let hours = hours_setting(store, "playlist_hours")?.unwrap_or(PLAYLIST_HOURS_DEFAULT);
+    Ok((hours > 0).then(|| i64::from(hours) * 3600))
+}
+
+/// Intervallo di aggiornamento automatico della guida in secondi (`None`: mai).
+pub fn epg_interval(store: &Store) -> Result<Option<i64>, StoreError> {
+    let hours = match hours_setting(store, "epg_hours")? {
+        Some(hours) => hours,
+        // prima c'era solo l'interruttore «Aggiorna la guida all'avvio»
+        None if store.setting("epg_on_start")?.as_deref() == Some("0") => 0,
+        None => EPG_HOURS_DEFAULT,
+    };
+    Ok((hours > 0).then(|| i64::from(hours) * 3600))
+}
+
+/// Mai aggiornato, o aggiornato da almeno `interval` secondi.
+fn is_stale(last: Option<i64>, interval: i64) -> bool {
+    last.is_none_or(|t| now() - t >= interval)
+}
+
+/// Aggiorna da sé playlist e guida della sorgente in uso, se sono più vecchie dell'intervallo
+/// scelto nelle Impostazioni. Nessuno l'ha chiesto: gli errori finiscono solo nel log, e
+/// l'interfaccia vede solo il catalogo nuovo.
+async fn auto_refresh(shared: &Arc<Shared>) {
+    if shared.auto_in_flight.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    if let Ok(Some(id)) = shared.with_store(|s| s.active_source()).await {
+        auto_refresh_playlist(shared, id).await;
+        refresh_epg(shared, Some(id), false).await;
+    }
+    shared.auto_in_flight.store(false, Ordering::Release);
+}
+
+async fn auto_refresh_playlist(shared: &Arc<Shared>, id: i64) {
+    let due = shared
+        .with_store(move |s| {
+            let Some(interval) = playlist_interval(s)? else {
+                return Ok(false);
+            };
+            let last = s
+                .sources()?
+                .into_iter()
+                .find(|source| source.id == id)
+                .and_then(|source| source.refreshed_at);
+            Ok(is_stale(last, interval))
+        })
+        .await;
+    if !matches!(due, Ok(true)) || shared.failed_recently(id, Refresh::Playlist) {
+        return;
+    }
+    let result = refresh_source(shared, id).await;
+    shared.note_refresh(id, Refresh::Playlist, result.is_ok());
+    match result {
+        Ok(report) => {
+            log::info!("playlist aggiornata da sé: {} canali", report.channels);
+            emit_everything(shared).await;
+        }
+        // si riprova al prossimo controllo
+        Err(err) => log::warn!("aggiornamento automatico della playlist: {err}"),
+    }
+}
+
 // ───────────── guida dei programmi ─────────────
 
 /// Aggiorna la guida di una sorgente, se ne ha una. Una sola importazione per sorgente alla
@@ -802,15 +929,11 @@ async fn refresh_epg(shared: &Arc<Shared>, source_id: Option<i64>, force: bool) 
     };
     if !force {
         let check = shared
-            .with_store(move |s| {
-                Ok((
-                    s.setting("epg_on_start")?.as_deref() != Some("0"),
-                    s.epg_refreshed_at(id)?,
-                ))
-            })
+            .with_store(move |s| Ok((epg_interval(s)?, s.epg_refreshed_at(id)?)))
             .await;
         match check {
-            Ok((true, last)) if last.is_none_or(|t| now() - t >= EPG_MAX_AGE) => {}
+            Ok((Some(interval), last))
+                if is_stale(last, interval) && !shared.failed_recently(id, Refresh::Epg) => {}
             Ok(_) => return,
             Err(err) => {
                 log::warn!("guida: {err}");
@@ -847,6 +970,7 @@ async fn refresh_epg(shared: &Arc<Shared>, source_id: Option<i64>, force: bool) 
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .remove(&id);
+    shared.note_refresh(id, Refresh::Epg, result.is_ok());
     match &result {
         Ok(summary) => log::info!(
             "guida: {} programmi, {} canali abbinati",

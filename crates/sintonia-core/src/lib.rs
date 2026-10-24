@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod db;
 pub mod epg;
 pub mod m3u;
+pub mod pin;
 pub mod redact;
 pub mod secrets;
 pub mod service;

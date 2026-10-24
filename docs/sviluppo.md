@@ -32,7 +32,7 @@ Versione in uso: release `2026-10-17-6f605372b9`, mpv commit `6f605372b9`, API c
 SHA-256 dell'archivio `b7a12a73a03313446657d3bf1bda525fa8b62c2628669ee0a16c0430f0a312c9`.
 
 `libmpv-2.dll` dipende da `vulkan-1.dll`, che installano i driver video (NVIDIA, AMD, Intel).
-Su PC senza driver video (alcune macchine virtuali) la DLL non si carica: da gestire nell'installer (M4).
+Su PC senza driver video (alcune macchine virtuali) la DLL non si carica: l'installer lo controlla e avvisa.
 
 ## Comandi
 
@@ -50,6 +50,8 @@ cargo run --release -p sintonia-core --example leggi_guida -- guida.xml.gz lista
 
 # zip portatile per Windows in dist\
 powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1          # -Prova: aggiunge finto_xtream.exe
+# anche l'installer (serve Inno Setup 6: https://jrsoftware.org/isinfo.php)
+powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1 -Installer
 ```
 
 Log: `RUST_LOG=debug` (o `info,sintonia=debug,mpv=info`). I messaggi di mpv passano per
@@ -134,6 +136,26 @@ delle finestre e il logo della barra in alto da `ui/app.slint`.
   più di 12 ore (impostazione «Aggiorna la guida all'avvio»).
 - L'interfaccia chiede finestre di programmi (`LoadGuide`): una attorno ad adesso per «in onda /
   dopo» e una per il giorno della Guida; la griglia disegna solo le righe e i programmi visibili.
+
+### Impostazioni, PIN e build automatiche (M4)
+
+- **Aggiornamento automatico** (Impostazioni › Aggiornamenti): playlist e guida della sorgente in uso si
+  riscaricano quando sono più vecchie dell'intervallo scelto (`playlist_hours`, predefinito 24 ore;
+  `epg_hours`, predefinito 12; 0 = mai). Il servizio controlla all'avvio, quando cambia la sorgente e
+  ogni 10 minuti; dopo un errore riprova dopo un'ora. Gli errori automatici vanno solo nel log.
+- **PIN** (Impostazioni › Controllo genitori): da 4 a 8 cifre, salvato come impronta SHA-256 con sale
+  (`sintonia_core::pin`), mai in chiaro. Le categorie bloccate (per sorgente, chiave `locks.<id>`)
+  finché il PIN non è inserito restano negli elenchi con il lucchetto ma le loro voci spariscono da
+  «Tutti», preferiti, ricerca, Home, ripresa e ultimo canale (`CatalogModel::set_locks`). Il PIN vale
+  fino alla chiusura dell'app; «Blocca ora» lo richiude. Protegge dai bambini, non da chi può leggere
+  i file del PC.
+- **Installer**: `installer/sintonia.iss` (Inno Setup 6), installazione per l'utente senza diritti di
+  amministratore (o per tutti, a scelta), collegamenti nel menu Start e sul desktop, disinstallazione
+  che lascia i dati in `%APPDATA%\Sintonia`. Avvisa se manca `vulkan-1.dll`.
+- **GitHub Actions** (`.github/workflows/windows.yml`): a ogni push su `main` e a ogni pull request
+  scarica libmpv LGPL (controllando lo SHA-256), ricava `mpv.lib`, esegue fmt, clippy e test, crea zip e
+  installer e li allega all'esecuzione. Con un tag `vX.Y.Z` uguale alla versione di `Cargo.toml`
+  pubblica anche la Release. Per fare una versione: `git tag v0.4.0` e `git push origin v0.4.0`.
 
 ### Traduzioni
 

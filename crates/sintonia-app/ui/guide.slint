@@ -2,7 +2,7 @@
 // La griglia disegna solo le righe visibili (i canali possono essere decine di migliaia) e ogni
 // riga solo i programmi del giorno scelto.
 
-import { Theme, Texts, Sq, Icons, IconBtn, Btn, EmptyState, CategoryItem } from "common.slint";
+import { Theme, Texts, Sq, Icon, Icons, IconBtn, Btn, EmptyState, CategoryItem } from "common.slint";
 
 // Un programma: inizio e durata in minuti dall'inizio del giorno mostrato
 export struct GuideBlock {
@@ -40,13 +40,21 @@ component Chips inherits Rectangle {
             alignment: start;
             for c[i] in root.model: Rectangle {
                 property <bool> on: i == root.current && !root.searching;
-                width: t.preferred-width + 30px;
+                width: t.preferred-width + (c.locked ? 50px : 30px);
                 Sq { r: 18px; fill: parent.on ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
                 t := Text {
+                    x: 15px;
                     text: Texts.category(c);
                     color: parent.on ? Theme.bg : Theme.ink;
                     font-size: 13px;
                     font-weight: parent.on ? 700 : 400;
+                }
+                if c.locked: Icon {
+                    x: t.x + t.preferred-width + 6px;
+                    commands: Icons.lock;
+                    width: 13px;
+                    height: 13px;
+                    tint: parent.on ? Theme.bg : Theme.dim;
                 }
                 ta := TouchArea { clicked => { root.picked(i); } }
             }
