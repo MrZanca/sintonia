@@ -542,6 +542,11 @@ impl Player {
         self.set_property("impostazione", name, value)
     }
 
+    /// Audio spento o acceso (mpv lo mantiene da un flusso all'altro).
+    pub fn set_muted(&self, muted: bool) -> Result<(), PlayerError> {
+        self.set_property("muto", "mute", if muted { "yes" } else { "no" })
+    }
+
     /// Volume in percentuale (0-100, oltre amplifica).
     pub fn set_volume(&self, percent: u32) -> Result<(), PlayerError> {
         self.set_property("volume", "volume", &percent.to_string())

@@ -7,6 +7,10 @@
 //! locandine) si chiedono la prima volta che una riga compare.
 //!
 //! Le categorie hanno sempre in testa «Tutti» (indice 0) e «Preferiti» (indice 1).
+//!
+//! Le categorie bloccate dal PIN, finché il PIN non è stato inserito, restano nell'elenco (con il
+//! lucchetto) ma le loro voci spariscono da tutto il resto: «Tutti», preferiti, ricerca, chiavi
+//! (Home, ripresa, ultimo canale).
 
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
@@ -17,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sintonia_core::db::{ChannelRow, MovieRow, SeriesRow};
-use slint::{Color, Image, Model, ModelNotify, ModelTracker, SharedString};
+use slint::{Color, Image, Model, ModelNotify, ModelTracker};
 
 use crate::{CategoryItem, ChannelItem, PosterItem};
 
@@ -215,6 +219,9 @@ pub struct CatalogModel<E: CatalogEntry> {
     all: RefCell<Arc<Vec<E>>>,
     /// Indici di `all` per categoria; 0 = tutti, 1 = preferiti, poi una per categoria.
     by_category: RefCell<Vec<Vec<usize>>>,
+    /// Categorie bloccate dal PIN, e se le loro voci vanno nascoste (PIN non inserito).
+    locked: RefCell<HashSet<String>>,
+    hide_locked: Cell<bool>,
     categories: RefCell<Vec<CategoryItem>>,
     by_id: RefCell<HashMap<i64, usize>>,
     by_key: RefCell<HashMap<String, usize>>,
@@ -254,6 +261,8 @@ impl<E: CatalogEntry> CatalogModel<E> {
         Rc::new(Self {
             all: RefCell::new(Arc::new(Vec::new())),
             by_category: RefCell::new(vec![Vec::new(), Vec::new()]),
+            locked: RefCell::new(HashSet::new()),
+            hide_locked: Cell::new(false),
             categories: RefCell::new(Vec::new()),
             by_id: RefCell::new(HashMap::new()),
             by_key: RefCell::new(HashMap::new()),
@@ -296,15 +305,14 @@ impl<E: CatalogEntry> CatalogModel<E> {
         let mut categories = Vec::with_capacity(groups.len() + 2);
         let mut by_category = Vec::with_capacity(groups.len() + 2);
         categories.push(CategoryItem {
-            name: SharedString::new(),
-            count: count_i32(entries.len()),
             kind: 0,
+            ..CategoryItem::default()
         });
-        by_category.push((0..entries.len()).collect());
+        // «Tutti» lo riempie `rebuild_locks`
+        by_category.push(Vec::new());
         categories.push(CategoryItem {
-            name: SharedString::new(),
-            count: 0,
             kind: 3,
+            ..CategoryItem::default()
         });
         by_category.push(Vec::new());
         for (name, indices) in groups {
@@ -312,6 +320,7 @@ impl<E: CatalogEntry> CatalogModel<E> {
                 kind: if name.is_empty() { 2 } else { 1 },
                 name: name.into(),
                 count: count_i32(indices.len()),
+                locked: false,
             });
             by_category.push(indices);
         }
@@ -320,8 +329,70 @@ impl<E: CatalogEntry> CatalogModel<E> {
         *self.by_key.borrow_mut() = by_key;
         *self.categories.borrow_mut() = categories;
         *self.by_category.borrow_mut() = by_category;
-        self.rebuild_favorites();
+        self.rebuild_locks();
         self.apply(Filter::Category(0));
+    }
+
+    /// Categorie bloccate dal PIN; con `hide` le loro voci spariscono (vedi il modulo). Se la
+    /// categoria mostrata sparisce si torna su «Tutti».
+    pub fn set_locks(&self, locked: HashSet<String>, hide: bool) {
+        *self.locked.borrow_mut() = locked;
+        self.hide_locked.set(hide);
+        self.rebuild_locks();
+        let filter = self.filter.borrow().clone();
+        let filter = match filter {
+            Filter::Category(i) if self.is_category_hidden(i) => Filter::Category(0),
+            Filter::Search(indices) => Filter::Search(
+                indices
+                    .into_iter()
+                    .filter(|i| !self.is_hidden(*i))
+                    .collect(),
+            ),
+            filter => filter,
+        };
+        self.apply(filter);
+    }
+
+    /// La voce `index` di `all` è in una categoria nascosta.
+    fn is_hidden(&self, index: usize) -> bool {
+        self.hide_locked.get()
+            && self
+                .all
+                .borrow()
+                .get(index)
+                .is_some_and(|e| self.locked.borrow().contains(e.group()))
+    }
+
+    /// La categoria `index` è bloccata e il PIN non è stato inserito.
+    pub fn is_category_hidden(&self, index: usize) -> bool {
+        self.hide_locked.get()
+            && index > FAVORITES
+            && self
+                .categories
+                .borrow()
+                .get(index)
+                .is_some_and(|c| c.locked)
+    }
+
+    /// «Tutti», preferiti e lucchetti delle categorie dopo un cambio di voci o di blocchi.
+    fn rebuild_locks(&self) {
+        let all: Vec<usize> = (0..self.all.borrow().len())
+            .filter(|i| !self.is_hidden(*i))
+            .collect();
+        {
+            let locked = self.locked.borrow();
+            let mut categories = self.categories.borrow_mut();
+            for category in categories.iter_mut().skip(FAVORITES + 1) {
+                category.locked = locked.contains(category.name.as_str());
+            }
+            if let Some(first) = categories.first_mut() {
+                first.count = count_i32(all.len());
+            }
+        }
+        if let Some(slot) = self.by_category.borrow_mut().first_mut() {
+            *slot = all;
+        }
+        self.rebuild_favorites();
     }
 
     /// Imposta come completare le righe (vedi `decorate`).
@@ -353,7 +424,7 @@ impl<E: CatalogEntry> CatalogModel<E> {
         let indices: Vec<usize> = all
             .iter()
             .enumerate()
-            .filter(|(_, e)| favorites.contains(&e.key()))
+            .filter(|(i, e)| favorites.contains(&e.key()) && !self.is_hidden(*i))
             .map(|(i, _)| i)
             .collect();
         if let Some(category) = self.categories.borrow_mut().get_mut(FAVORITES) {
@@ -389,7 +460,11 @@ impl<E: CatalogEntry> CatalogModel<E> {
     /// Mostra i risultati di una ricerca (identificativi, nell'ordine dell'elenco).
     pub fn show_search(&self, ids: &[i64]) {
         let by_id = self.by_id.borrow();
-        let indices = ids.iter().filter_map(|id| by_id.get(id).copied()).collect();
+        let indices = ids
+            .iter()
+            .filter_map(|id| by_id.get(id).copied())
+            .filter(|i| !self.is_hidden(*i))
+            .collect();
         drop(by_id);
         self.apply(Filter::Search(indices));
     }
@@ -404,6 +479,7 @@ impl<E: CatalogEntry> CatalogModel<E> {
 
     fn apply(&self, filter: Filter) {
         let visible = match &filter {
+            Filter::Category(i) if self.is_category_hidden(*i) => Vec::new(),
             Filter::Category(i) => self
                 .by_category
                 .borrow()
@@ -438,10 +514,19 @@ impl<E: CatalogEntry> CatalogModel<E> {
         self.all.borrow().get(index).map(f)
     }
 
-    /// Identificativo della voce con chiave `key`.
+    /// Identificativo della voce con chiave `key` (`None` anche se è nascosta dal PIN).
     pub fn id_of_key(&self, key: &str) -> Option<i64> {
         let index = *self.by_key.borrow().get(key)?;
+        if self.is_hidden(index) {
+            return None;
+        }
         self.all.borrow().get(index).map(CatalogEntry::id)
+    }
+
+    /// La voce `id` è nascosta dal PIN.
+    pub fn is_id_hidden(&self, id: i64) -> bool {
+        let index = self.by_id.borrow().get(&id).copied();
+        index.is_some_and(|index| self.is_hidden(index))
     }
 
     /// La riga per Slint della voce `id`.
@@ -450,9 +535,10 @@ impl<E: CatalogEntry> CatalogModel<E> {
         self.item_at_index(index)
     }
 
-    /// Prima voce.
+    /// Prima voce (non nascosta).
     pub fn first_id(&self) -> Option<i64> {
-        self.all.borrow().first().map(CatalogEntry::id)
+        let first = *self.by_category.borrow().first()?.first()?;
+        self.all.borrow().get(first).map(CatalogEntry::id)
     }
 
     /// Nessuna voce.
@@ -611,6 +697,39 @@ mod tests {
             "indice fuori misura: ultima categoria"
         );
         assert_eq!(model.id_of_key("k2"), Some(2));
+    }
+
+    #[test]
+    fn locked_categories_hide_their_entries() {
+        let (model, _) = model();
+        model.set_favorites(HashSet::from(["k1".to_owned(), "k3".to_owned()]));
+        model.show_category(2);
+        // News bloccata, PIN non inserito
+        model.set_locks(HashSet::from(["News".to_owned()]), true);
+        assert_eq!(model.category(), 0, "la categoria mostrata sparisce");
+        assert_eq!(model.row_count(), 2);
+        let cats = model.categories();
+        assert_eq!(cats[0].count, 2);
+        assert_eq!(cats[FAVORITES].count, 1);
+        assert!(cats[2].locked && !cats[3].locked);
+        assert!(model.is_category_hidden(2) && !model.is_category_hidden(3));
+        model.show_category(2);
+        assert_eq!(model.row_count(), 0);
+        assert_eq!(model.id_of_key("k1"), None);
+        assert!(model.is_id_hidden(4));
+        model.show_search(&[1, 3]);
+        assert_eq!(model.row_count(), 1);
+        // PIN inserito: tutto torna, il lucchetto resta
+        model.set_locks(HashSet::from(["News".to_owned()]), false);
+        assert_eq!(model.categories()[0].count, 4);
+        assert!(model.categories()[2].locked);
+        assert_eq!(model.id_of_key("k1"), Some(1));
+        // si può bloccare anche «senza categoria»
+        model.set_locks(HashSet::from([String::new()]), true);
+        assert!(model.is_category_hidden(4));
+        assert_eq!(model.first_id(), Some(1));
+        model.set_locks(HashSet::from(["News".to_owned()]), true);
+        assert_eq!(model.first_id(), Some(2));
     }
 
     #[test]

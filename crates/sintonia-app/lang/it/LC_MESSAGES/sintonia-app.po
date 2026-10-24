@@ -354,9 +354,6 @@ msgid_plural "Guide: {n} channels"
 msgstr[0] "Guida: {n} canale"
 msgstr[1] "Guida: {n} canali"
 
-msgid "Downloads the program guide when you open Sintonia, if it is more than 12 hours old."
-msgstr "Scarica la guida dei programmi quando apri Sintonia, se ha più di 12 ore."
-
 msgid "Guide not updated: {}"
 msgstr "Guida non aggiornata: {}"
 
@@ -374,9 +371,6 @@ msgstr "Apri le Impostazioni"
 
 msgid "Program guide (optional)"
 msgstr "Guida dei programmi (facoltativa)"
-
-msgid "Refresh the guide at startup"
-msgstr "Aggiorna la guida all'avvio"
 
 msgid "This source has no program guide. You can add an XMLTV address to the source in Settings."
 msgstr "Questa sorgente non ha una guida dei programmi. Puoi aggiungere un indirizzo XMLTV alla sorgente nelle Impostazioni."
@@ -428,3 +422,93 @@ msgstr "Indirizzo o file XMLTV (vuoto: quella della sorgente)"
 
 msgid "Use this guide"
 msgstr "Usa questa guida"
+
+msgid "Updates"
+msgstr "Aggiornamenti"
+
+msgid "Parental control"
+msgstr "Controllo genitori"
+
+msgid "Automatic updates"
+msgstr "Aggiornamento automatico"
+
+msgid "Sintonia downloads the playlist and the program guide of the source in use again when they are older than this. It checks at startup and every 10 minutes."
+msgstr "Sintonia riscarica la playlist e la guida dei programmi della sorgente in uso quando sono più vecchie di così. Controlla all'avvio e ogni 10 minuti."
+
+msgid "Playlist (channels, movies and series)"
+msgstr "Playlist (canali, film e serie)"
+
+msgid "Never"
+msgstr "Mai"
+
+msgid "6 hours"
+msgstr "6 ore"
+
+msgid "12 hours"
+msgstr "12 ore"
+
+msgid "1 day"
+msgstr "1 giorno"
+
+msgid "3 days"
+msgstr "3 giorni"
+
+msgid "1 week"
+msgstr "1 settimana"
+
+msgid "You can always update by hand: Refresh on each source, or the button in the Guide."
+msgstr "Puoi sempre aggiornare a mano: «Aggiorna» su ogni sorgente, o il pulsante nella Guida."
+
+msgid "Locked categories disappear from every list, from search and from the Home until the PIN is entered. The PIN is asked again every time Sintonia starts."
+msgstr "Le categorie bloccate spariscono da tutti gli elenchi, dalla ricerca e dalla Home finché non si inserisce il PIN. Il PIN si richiede a ogni avvio di Sintonia."
+
+msgid "New PIN (4 to 8 digits)"
+msgstr "Nuovo PIN (da 4 a 8 cifre)"
+
+msgid "Repeat the PIN"
+msgstr "Ripeti il PIN"
+
+msgid "Set PIN"
+msgstr "Imposta il PIN"
+
+msgid "The two PINs are different."
+msgstr "I due PIN sono diversi."
+
+msgid "The PIN must have 4 to 8 digits, numbers only."
+msgstr "Il PIN deve avere da 4 a 8 cifre, solo numeri."
+
+msgid "PIN set. Now choose the categories to lock."
+msgstr "PIN impostato. Ora scegli le categorie da bloccare."
+
+msgid "PIN removed: nothing is locked any more."
+msgstr "PIN tolto: non è più bloccato niente."
+
+msgid "Enter the PIN to choose the locked categories."
+msgstr "Inserisci il PIN per scegliere le categorie bloccate."
+
+msgid "Enter PIN"
+msgstr "Inserisci il PIN"
+
+msgid "Lock now"
+msgstr "Blocca ora"
+
+msgid "Remove PIN"
+msgstr "Togli il PIN"
+
+msgid "Confirm: remove PIN"
+msgstr "Conferma: togli il PIN"
+
+msgid "No categories here in the source in use."
+msgstr "Nessuna categoria qui nella sorgente in uso."
+
+msgid "Locked category"
+msgstr "Categoria bloccata"
+
+msgid "Enter the PIN to see the locked categories until Sintonia is closed."
+msgstr "Inserisci il PIN per vedere le categorie bloccate finché non chiudi Sintonia."
+
+msgid "Wrong PIN."
+msgstr "PIN sbagliato."
+
+msgid "Unlock"
+msgstr "Sblocca"

@@ -14,6 +14,7 @@ use sintonia_core::db::{
     ChannelRow, EpisodeRef, HistoryEntry, ItemKind, MovieRow, NewSource, SeriesRow, SourceInfo,
     SourceKind,
 };
+use sintonia_core::pin;
 use sintonia_core::service::{
     Command, EpgState, Event, LogoImage, Playable, ResolvedStream, Service, SourceError,
     SourceReport,
@@ -28,7 +29,7 @@ use crate::catalog::{
 };
 use crate::guide::{self, GuideModel, Schedule};
 use crate::images;
-use crate::settings::{Language, Settings};
+use crate::settings::{Language, Locks, Settings};
 use crate::video::VideoRouter;
 use crate::{
     CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, MainWindow, PipWindow,
@@ -71,6 +72,19 @@ const PIP_RATIO: f32 = 9.0 / 16.0;
 const PIP_MARGIN: f32 = 40.0;
 /// Spostamento di uno scatto della rotellina, come lo riporta Slint (pixel logici).
 const WHEEL_NOTCH: f32 = 60.0;
+/// Intervalli di aggiornamento automatico che si possono scegliere (ore; 0 = mai).
+const INTERVAL_HOURS: [u32; 6] = [0, 6, 12, 24, 72, 168];
+
+/// Cosa fare dopo che il PIN giusto è stato inserito.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterPin {
+    /// Solo sbloccare (Impostazioni › Controllo genitori).
+    Unlock,
+    /// Aprire una categoria dei canali.
+    LiveCategory(usize),
+    /// Aprire una categoria di Film e serie.
+    MediaCategory(usize),
+}
 
 /// Trascinamento di un angolo del mini player: tutto si calcola dalla situazione alla
 /// pressione, così la finestra che cambia sotto il mouse non fa tornare indietro la misura.
@@ -253,6 +267,12 @@ pub struct App {
     /// Alla prossima lista di episodi, cursore sull'episodio corrente.
     reveal_episode: Cell<bool>,
     reveal_timer: slint::Timer,
+
+    // controllo genitori
+    /// Il PIN è stato inserito in questa sessione: le categorie bloccate si vedono.
+    pin_unlocked: Cell<bool>,
+    /// Richiesta del PIN aperta, e cosa fare quando è giusto.
+    after_pin: Cell<Option<AfterPin>>,
 }
 
 /// Stato dell'aggiornamento della guida di una sorgente, finché non riesce.
@@ -368,6 +388,8 @@ impl App {
             last_media: RefCell::new(None),
             reveal_episode: Cell::new(false),
             reveal_timer: slint::Timer::default(),
+            pin_unlocked: Cell::new(false),
+            after_pin: Cell::new(None),
         });
         APP.with(|a| *a.borrow_mut() = Rc::downgrade(&app));
         {
@@ -480,10 +502,12 @@ impl App {
             main.set_reconnect(settings.reconnect);
             main.set_fullscreen_start(settings.fullscreen_start);
             main.set_live_preview(settings.live_preview);
-            main.set_epg_on_start(settings.epg_on_start);
+            main.set_playlist_interval(interval_index(settings.playlist_hours));
+            main.set_epg_interval(interval_index(settings.epg_hours));
             main.set_user_agent(settings.user_agent.clone().unwrap_or_default().into());
         }
         *self.settings.borrow_mut() = settings;
+        self.apply_locks();
     }
 
     fn apply_language(&self, language: Language) {
@@ -616,6 +640,8 @@ impl App {
             }
         }
 
+        // i blocchi sono della sorgente: prima delle voci, così «Tutti» nasce già filtrato
+        self.set_model_locks();
         self.channels.set_entries(channels);
         let movie_entries: Vec<PosterEntry> = movies.iter().map(PosterEntry::movie).collect();
         let series_entries: Vec<PosterEntry> = series.iter().map(PosterEntry::series).collect();
@@ -645,6 +671,7 @@ impl App {
         self.after_channels_changed(current);
         self.after_media_changed();
         self.refresh_home();
+        self.refresh_lock_lists();
         self.update_guide_state();
         self.request_now();
         self.request_day();
@@ -1862,8 +1889,13 @@ impl App {
         main.on_cursor_moved(with_app!(|app, row: i32| app.preview_later(row)));
         main.on_zap(with_app!(|app, delta: i32| app.zap(delta)));
         main.on_pick_category(with_app!(|app, index: i32| {
+            let index = row_index(index).unwrap_or(0);
+            if app.channels.is_category_hidden(index) {
+                app.ask_pin(AfterPin::LiveCategory(index));
+                return;
+            }
             app.clear_search();
-            app.channels.show_category(row_index(index).unwrap_or(0));
+            app.channels.show_category(index);
             app.after_filter_changed();
         }));
         main.on_toggle_fav_channel(with_app!(|app, row: i32| {
@@ -1890,9 +1922,13 @@ impl App {
         // Film e serie
         main.on_media_pick_mode(with_app!(|app, mode: i32| app.show_media_mode(mode)));
         main.on_media_pick_category(with_app!(|app, index: i32| {
+            let index = row_index(index).unwrap_or(0);
+            if app.media_model().is_category_hidden(index) {
+                app.ask_pin(AfterPin::MediaCategory(index));
+                return;
+            }
             app.clear_search();
-            app.media_model()
-                .show_category(row_index(index).unwrap_or(0));
+            app.media_model().show_category(index);
             app.after_media_filter_changed();
         }));
         main.on_media_open(with_app!(|app, row: i32| {
@@ -2009,8 +2045,7 @@ impl App {
         main.on_cursor_hidden(with_app!(|app, hidden: bool| app.set_cursor_hidden(hidden)));
         main.on_toggle_fullscreen(on(|app| {
             if let Some(main) = app.main() {
-                let window = main.window();
-                window.set_fullscreen(!window.is_fullscreen());
+                app.set_fullscreen(!main.window().is_fullscreen());
                 app.auto_fullscreen.set(false);
             }
         }));
@@ -2124,6 +2159,48 @@ impl App {
             app.refresh_detail_info();
             app.refresh_episodes();
         }));
+        main.on_set_interval(with_app!(|app, what: i32, index: i32| {
+            let hours = row_index(index)
+                .and_then(|i| INTERVAL_HOURS.get(i))
+                .copied()
+                .unwrap_or(0);
+            let key = if what == 0 {
+                "playlist_hours"
+            } else {
+                "epg_hours"
+            };
+            app.save_setting(key, &hours.to_string());
+            if let Some(main) = app.main() {
+                if what == 0 {
+                    main.set_playlist_interval(interval_index(hours));
+                } else {
+                    main.set_epg_interval(interval_index(hours));
+                }
+            }
+        }));
+
+        // controllo genitori
+        main.on_pin_create(with_app!(
+            |app, first: SharedString, again: SharedString| app.create_pin(&first, &again)
+        ));
+        main.on_pin_remove(on(|app| {
+            if app.pin_unlocked.get() {
+                app.save_setting("pin", "");
+                app.set_pin_message(4);
+                app.apply_locks();
+            }
+        }));
+        main.on_pin_lock_now(on(|app| {
+            app.pin_unlocked.set(false);
+            app.apply_locks();
+        }));
+        main.on_pin_unlock(on(|app| app.ask_pin(AfterPin::Unlock)));
+        main.on_toggle_lock(with_app!(|app, kind: i32, index: i32, locked: bool| {
+            app.toggle_lock(kind, index, locked);
+        }));
+        main.on_pin_submit(with_app!(|app, typed: SharedString| app.submit_pin(&typed)));
+        main.on_pin_cancel(on(|app| app.close_pin()));
+
         main.on_setting_changed(with_app!(|app, key: SharedString, value: SharedString| {
             app.save_setting(&key, &value);
             let settings = app.settings.borrow().clone();
@@ -2178,6 +2255,201 @@ impl App {
                 log::error!("{err}");
             }
         }));
+    }
+
+    // ───────────── controllo genitori ─────────────
+
+    /// Le categorie bloccate vanno nascoste: c'è un PIN e non è stato inserito.
+    fn hide_locked(&self) -> bool {
+        self.settings.borrow().has_pin() && !self.pin_unlocked.get()
+    }
+
+    /// Le categorie bloccate della sorgente in uso.
+    fn source_locks(&self) -> Locks {
+        self.source_id
+            .get()
+            .and_then(|id| self.settings.borrow().locks.get(&id).cloned())
+            .unwrap_or_default()
+    }
+
+    /// Passa i blocchi ai modelli (senza aggiornare il resto dell'interfaccia).
+    fn set_model_locks(&self) {
+        let locks = self.source_locks();
+        let hide = self.hide_locked();
+        self.channels.set_locks(locks.live, hide);
+        self.movies.set_locks(locks.movies, hide);
+        self.series.set_locks(locks.series, hide);
+    }
+
+    /// Applica PIN e blocchi a tutta l'interfaccia. Se si stava guardando qualcosa di una
+    /// categoria appena nascosta, si ferma.
+    fn apply_locks(&self) {
+        self.set_model_locks();
+        let Some(main) = self.main() else { return };
+        main.set_pin_set(self.settings.borrow().has_pin());
+        main.set_pin_unlocked(self.pin_unlocked.get());
+        let playing_hidden = self
+            .now
+            .borrow()
+            .as_ref()
+            .is_some_and(|now| match now.kind {
+                ItemKind::Live => self.channels.is_id_hidden(self.current.get().unwrap_or(-1)),
+                ItemKind::Movie => self.movies.id_of_key(&now.key).is_none(),
+                ItemKind::Series => self.series.id_of_key(&now.key).is_none(),
+            });
+        if playing_hidden {
+            self.stop_playback();
+            main.set_playing(false);
+            if let Some(pip) = self.pip.upgrade() {
+                if let Err(err) = pip.hide() {
+                    log::warn!("{err}");
+                }
+            }
+            self.router.move_to_main();
+        }
+        let detail_hidden = self.detail.borrow().as_ref().is_some_and(|d| {
+            let model = if d.kind == ItemKind::Movie {
+                &self.movies
+            } else {
+                &self.series
+            };
+            model.is_id_hidden(d.id)
+        });
+        if detail_hidden {
+            self.close_detail();
+        }
+        let current = self
+            .current
+            .get()
+            .filter(|id| !self.channels.is_id_hidden(*id))
+            .or_else(|| self.channels.first_id());
+        self.after_channels_changed(current);
+        self.show_media_mode(self.media_mode.get());
+        self.refresh_home();
+        self.refresh_lock_lists();
+    }
+
+    /// Le categorie di canali, film e serie nelle Impostazioni (senza «Tutti» e «Preferiti»).
+    fn refresh_lock_lists(&self) {
+        let Some(main) = self.main() else { return };
+        let list = |categories: Vec<CategoryItem>| {
+            ModelRc::new(VecModel::from(
+                categories
+                    .into_iter()
+                    .skip(FAVORITES + 1)
+                    .collect::<Vec<_>>(),
+            ))
+        };
+        main.set_lock_live(list(self.channels.categories()));
+        main.set_lock_movies(list(self.movies.categories()));
+        main.set_lock_series(list(self.series.categories()));
+    }
+
+    fn set_pin_message(&self, message: i32) {
+        if let Some(main) = self.main() {
+            main.set_pin_message(message);
+        }
+    }
+
+    fn create_pin(&self, first: &str, again: &str) {
+        let (first, again) = (first.trim(), again.trim());
+        if !pin::is_valid(first) {
+            self.set_pin_message(2);
+            return;
+        }
+        if first != again {
+            self.set_pin_message(1);
+            return;
+        }
+        match pin::hash(first) {
+            Ok(stored) => {
+                self.save_setting("pin", &stored);
+                // chi ha appena scelto il PIN lo conosce: si parte sbloccati
+                self.pin_unlocked.set(true);
+                self.set_pin_message(3);
+                self.apply_locks();
+            }
+            Err(err) => log::error!("PIN: {err}"),
+        }
+    }
+
+    fn toggle_lock(&self, kind: i32, index: i32, locked: bool) {
+        let Some(source_id) = self.source_id.get() else {
+            return;
+        };
+        if !self.pin_unlocked.get() {
+            self.apply_locks();
+            return;
+        }
+        let (kind, categories) = match kind {
+            1 => (ItemKind::Movie, self.movies.categories()),
+            2 => (ItemKind::Series, self.series.categories()),
+            _ => (ItemKind::Live, self.channels.categories()),
+        };
+        let Some(category) = row_index(index).and_then(|i| categories.get(i + FAVORITES + 1))
+        else {
+            return;
+        };
+        let value = {
+            let mut settings = self.settings.borrow_mut();
+            let locks = settings.locks.entry(source_id).or_default();
+            locks.set(kind, category.name.as_str(), locked);
+            locks.to_value()
+        };
+        self.save_setting(&Locks::key(source_id), &value);
+        self.apply_locks();
+    }
+
+    fn ask_pin(&self, after: AfterPin) {
+        let Some(main) = self.main() else { return };
+        self.after_pin.set(Some(after));
+        main.set_pin_error(false);
+        main.set_pin_prompt(true);
+    }
+
+    fn close_pin(&self) {
+        self.after_pin.set(None);
+        if let Some(main) = self.main() {
+            main.set_pin_prompt(false);
+            main.set_pin_error(false);
+        }
+    }
+
+    fn submit_pin(&self, typed: &str) {
+        let Some(main) = self.main() else { return };
+        let Some(after) = self.after_pin.get() else {
+            self.close_pin();
+            return;
+        };
+        let ok = self
+            .settings
+            .borrow()
+            .pin
+            .as_deref()
+            .is_some_and(|stored| pin::verify(typed.trim(), stored));
+        if !ok {
+            // `changed error` svuota la casella: si passa da falso a vero anche dopo un errore
+            main.set_pin_error(false);
+            main.set_pin_error(true);
+            return;
+        }
+        self.close_pin();
+        self.pin_unlocked.set(true);
+        self.set_pin_message(0);
+        self.apply_locks();
+        match after {
+            AfterPin::Unlock => {}
+            AfterPin::LiveCategory(index) => {
+                self.clear_search();
+                self.channels.show_category(index);
+                self.after_filter_changed();
+            }
+            AfterPin::MediaCategory(index) => {
+                self.clear_search();
+                self.media_model().show_category(index);
+                self.after_media_filter_changed();
+            }
+        }
     }
 
     fn preview_later(self: &Rc<Self>, row: i32) {
@@ -2408,6 +2680,14 @@ impl App {
         }
     }
 
+    /// Schermo intero sì o no; l'interfaccia lo sa per mostrare il pulsante giusto.
+    fn set_fullscreen(&self, on: bool) {
+        if let Some(main) = self.main() {
+            main.window().set_fullscreen(on);
+            main.set_fullscreen(on);
+        }
+    }
+
     fn on_playing_changed(&self, playing: bool) {
         let Some(main) = self.main() else { return };
         if !playing {
@@ -2416,10 +2696,10 @@ impl App {
         }
         let window = main.window();
         if playing && self.settings.borrow().fullscreen_start && !window.is_fullscreen() {
-            window.set_fullscreen(true);
+            self.set_fullscreen(true);
             self.auto_fullscreen.set(true);
         } else if !playing && self.auto_fullscreen.replace(false) {
-            window.set_fullscreen(false);
+            self.set_fullscreen(false);
         }
         let pip_open = self.pip.upgrade().is_some_and(|p| p.window().is_visible());
         if playing {
@@ -2589,6 +2869,16 @@ fn row_index(row: i32) -> Option<usize> {
     usize::try_from(row).ok()
 }
 
+/// Posizione di un intervallo nell'elenco delle Impostazioni (il più vicino, se non c'è).
+fn interval_index(hours: u32) -> i32 {
+    let nearest = INTERVAL_HOURS
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, h)| h.abs_diff(hours))
+        .map_or(0, |(i, _)| i);
+    count_i32(nearest)
+}
+
 fn secs_i32(secs: f64) -> i32 {
     secs.clamp(0.0, f64::from(i32::MAX)) as i32
 }
@@ -2678,6 +2968,15 @@ mod tests {
         assert_eq!(resume_start(5990.0, d), None, "finito: dall'inizio");
         // episodio breve: niente margine fisso
         assert!(!is_finished(250.0, 300.0));
+    }
+
+    #[test]
+    fn interval_positions() {
+        assert_eq!(interval_index(0), 0);
+        assert_eq!(interval_index(24), 3);
+        assert_eq!(interval_index(168), 5);
+        assert_eq!(interval_index(20), 3, "il più vicino");
+        assert_eq!(interval_index(1000), 5);
     }
 
     #[test]

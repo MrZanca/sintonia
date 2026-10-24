@@ -1,0 +1,121 @@
+# Compila e prova Sintonia su Windows a ogni push e pull request; con un tag vX.Y.Z pubblica
+# installer e zip portatile in una Release di GitHub.
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # libmpv LGPL (vedi docs/sviluppo.md): stessa release usata in sviluppo, controllata con lo SHA-256
+  MPV_RELEASE: 2026-10-17-6f605372b9
+  MPV_ASSET: mpv-dev-lgpl-x86_64-20261017-git-6f605372b9.7z
+  MPV_SHA256: b7a12a73a03313446657d3bf1bda525fa8b62c2628669ee0a16c0430f0a312c9
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust stabile
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Strumenti di Visual Studio (dumpbin, lib)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: libmpv LGPL
+        shell: pwsh
+        run: |
+          $archive = "$env:RUNNER_TEMP\$env:MPV_ASSET"
+          Invoke-WebRequest "https://github.com/zhongfly/mpv-winbuild/releases/download/$env:MPV_RELEASE/$env:MPV_ASSET" -OutFile $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:MPV_SHA256) { throw "SHA-256 di libmpv diverso: $hash" }
+          7z x $archive -ovendor\mpv -y | Out-Null
+          Push-Location vendor\mpv
+          $names = dumpbin /nologo /exports libmpv-2.dll |
+            ForEach-Object { if ($_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)') { $Matches[1] } }
+          Set-Content mpv.def (@('LIBRARY libmpv-2.dll', 'EXPORTS') + ($names | ForEach-Object { "    $_" })) -Encoding ascii
+          lib /nologo /def:mpv.def /machine:x64 /out:mpv.lib
+          Pop-Location
+
+      # libmpv-2.dll dipende da vulkan-1.dll, che di solito arriva con i driver video: le macchine
+      # di GitHub non hanno una scheda video, quindi senza il caricatore di Vulkan i test non partono
+      - name: Caricatore Vulkan
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:SystemRoot\System32\vulkan-1.dll") { Write-Output "già presente"; exit 0 }
+          $zip = "$env:RUNNER_TEMP\vulkan-runtime.zip"
+          Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-runtime-components.zip" -OutFile $zip
+          Expand-Archive $zip "$env:RUNNER_TEMP\vulkan-runtime"
+          $dll = Get-ChildItem "$env:RUNNER_TEMP\vulkan-runtime" -Recurse -Filter vulkan-1.dll |
+            Where-Object { $_.DirectoryName -match 'x64' } | Select-Object -First 1
+          if (-not $dll) { throw "vulkan-1.dll non trovata nel pacchetto" }
+          Copy-Item $dll.FullName "$env:SystemRoot\System32\"
+
+      - name: Formattazione
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Versione del tag uguale a quella di Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "tag $env:GITHUB_REF_NAME, Cargo.toml $version" }
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Zip e installer
+        shell: pwsh
+        run: ./scripts/pacchetto.ps1 -Installer
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sintonia-windows-x64
+          path: |
+            dist/*.zip
+            dist/*.exe
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sintonia-windows-x64
+          path: dist
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Sintonia ${GITHUB_REF_NAME#v}" \
+            --notes "Installer per Windows (x64) e versione portatile. L'app non è firmata: Windows può mostrare «PC protetto», scegli «Ulteriori informazioni» e «Esegui comunque». Sintonia non contiene canali."
