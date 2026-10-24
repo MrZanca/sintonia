@@ -150,8 +150,14 @@ mod lenient {
 
     pub fn float(value: &Value) -> Option<f32> {
         match value {
-            Value::Number(n) => n.as_f64().map(|f| f as f32),
-            Value::String(s) => s.trim().replace(',', ".").parse().ok(),
+            Value::Number(n) => n.as_f64().map(|f| f as f32).filter(|f| f.is_finite()),
+            // «NaN» e «inf» si leggono come numeri: non sono voti
+            Value::String(s) => s
+                .trim()
+                .replace(',', ".")
+                .parse()
+                .ok()
+                .filter(|f: &f32| f.is_finite()),
             _ => None,
         }
         .filter(|f: &f32| f.is_finite())

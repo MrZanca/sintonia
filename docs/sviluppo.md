@@ -50,6 +50,13 @@ cargo run --release -p sintonia-core --example leggi_guida -- guida.xml.gz lista
 
 # zip portatile per Windows in dist\
 powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1          # -Prova: aggiunge finto_xtream.exe
+# prova di carico del servizio con dati inventati (playlist 50 000 canali, guida 500 000 programmi,
+# Xtream grande, file rotti, chiusure forzate, due processi sullo stesso archivio)
+cargo run --release -p sintonia-core --features mock --example stress -- 50000 500000
+
+# app con un profilo di prova: archivio, cache e portachiavi a parte (non tocca i dati veri)
+$env:SINTONIA_PROFILO = "prova"; cargo run -p sintonia-app
+
 # anche l'installer (serve Inno Setup 6: https://jrsoftware.org/isinfo.php)
 powershell -ExecutionPolicy Bypass -File scripts\pacchetto.ps1 -Installer
 ```

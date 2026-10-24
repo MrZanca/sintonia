@@ -212,7 +212,8 @@ component ChannelLine inherits Rectangle {
             text: root.c.num;
             width: 46px;
             color: root.playing ? Theme.needle : (root.active ? Theme.ink : Theme.faint);
-            font-size: 20px;
+            // dalle 5 cifre in su più piccolo, se no esce dalla colonna
+            font-size: root.c.num.character-count > 4 ? 15px : 20px;
             font-weight: 300;
             vertical-alignment: center;
         }
