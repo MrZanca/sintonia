@@ -74,6 +74,22 @@ pub struct Settings {
     pub pin: Option<String>,
     /// Categorie bloccate dal PIN, per sorgente.
     pub locks: HashMap<i64, Locks>,
+    /// Canali della categoria personalizzata (chiavi stabili), per sorgente.
+    pub custom: HashMap<i64, HashSet<String>>,
+    /// Nome della categoria personalizzata (vuoto: quello predefinito della lingua).
+    pub custom_name: String,
+}
+
+/// Chiave dell'impostazione con i canali della categoria personalizzata di una sorgente.
+pub fn custom_key(source_id: i64) -> String {
+    format!("custom.{source_id}")
+}
+
+/// Le chiavi una per riga (le chiavi dei canali non hanno a capo), in ordine.
+pub fn custom_value(keys: &HashSet<String>) -> String {
+    let mut keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    keys.sort_unstable();
+    keys.join("\n")
 }
 
 /// Le categorie bloccate di una sorgente (nomi come arrivano dal fornitore).
@@ -146,6 +162,8 @@ impl Settings {
             pip_width: None,
             pin: None,
             locks: HashMap::new(),
+            custom: HashMap::new(),
+            custom_name: String::new(),
         }
     }
 
@@ -190,6 +208,7 @@ impl Settings {
                 }
             }
             "pin" => self.pin = Some(value.to_owned()).filter(|v| !v.is_empty()),
+            "custom_name" => self.custom_name = value.trim().to_owned(),
             "user_agent" => {
                 self.user_agent = Some(value.trim())
                     .filter(|v| !v.is_empty())
@@ -200,6 +219,10 @@ impl Settings {
             _ => {
                 if let Some(id) = key.strip_prefix("locks.").and_then(|id| id.parse().ok()) {
                     self.locks.insert(id, Locks::from_value(value));
+                } else if let Some(id) = key.strip_prefix("custom.").and_then(|id| id.parse().ok())
+                {
+                    let keys = value.lines().filter(|k| !k.is_empty()).map(str::to_owned);
+                    self.custom.insert(id, keys.collect());
                 }
             }
         }
@@ -263,6 +286,21 @@ mod tests {
         assert!(s.locks[&7].live.contains("Adulti"));
         assert!(s.has_pin());
         assert_eq!(Locks::from_value("x\tA\nrotta"), Locks::default());
+    }
+
+    #[test]
+    fn custom_category_round_trip() {
+        let keys = HashSet::from(["l7".to_owned(), "u12ab".to_owned()]);
+        let pairs = [
+            (custom_key(3), custom_value(&keys)),
+            ("custom_name".to_owned(), "  Bimbi  ".to_owned()),
+        ];
+        let s = Settings::from_pairs(&pairs, Language::Italian);
+        assert_eq!(s.custom[&3], keys);
+        assert_eq!(s.custom_name, "Bimbi");
+        assert_eq!(custom_value(&HashSet::new()), "");
+        let empty = Settings::from_pairs(&[(custom_key(3), String::new())], Language::Italian);
+        assert!(empty.custom[&3].is_empty());
     }
 
     #[test]

@@ -441,6 +441,8 @@ component HomeScreen inherits Rectangle {
     in property <bool> has-hero;
     in property <bool> no-source;
     in property <[CategoryItem]> categories;
+    // indice nella lista completa della prima categoria mostrata qui
+    in property <int> top-offset: 2;
     in property <[HomeItem]> resume;
     in property <[HomeItem]> favorites;
     callback play();
@@ -473,7 +475,6 @@ component HomeScreen inherits Rectangle {
                 // sotto l'anteprima, così il suo pulsante muto riceve i clic
                 hta := TouchArea { clicked => { root.play(); } }
                 Preview { c: root.hero; }
-                Ring { on: hta.has-hover; }
             }
             VerticalLayout {
                 width: 440px;
@@ -565,14 +566,35 @@ component HomeScreen inherits Rectangle {
                     tint: Theme.dim;
                 }
                 Ring { on: fta.has-hover; }
-                // le categorie della Home sono quelle della lista completa dopo «Tutti» e «Preferiti»
-                fta := TouchArea { clicked => { root.open-category(i + 2); } }
+                // le categorie della Home sono quelle della lista completa dopo «Tutti», «Preferiti»
+                // e la categoria personalizzata
+                fta := TouchArea { clicked => { root.open-category(i + root.top-offset); } }
             }
         }
     }
 }
 
 // ───────────── Live ─────────────
+
+// Pulsante rotondo con un simbolo, acceso o spento (preferito, «I miei canali»)
+component MarkBtn inherits Rectangle {
+    in property <string> icon;
+    in property <bool> on;
+    // da acceso il simbolo è pieno (la stella)
+    in property <bool> solid;
+    callback clicked;
+    width: 38px;
+    height: 38px;
+    Sq { r: 19px; fill: root.on ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
+    Icon {
+        commands: root.icon;
+        width: 18px;
+        height: 18px;
+        tint: root.on ? Theme.bg : Theme.ink;
+        fill: root.on && root.solid ? Theme.bg : transparent;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
 
 component LiveScreen inherits Rectangle {
     in property <[ChannelItem]> channels;
@@ -588,6 +610,7 @@ component LiveScreen inherits Rectangle {
     callback cursor-moved(int);
     callback add-source();
     callback toggle-fav(int);
+    callback toggle-custom(int);
     // cambia quando la ricerca in alto passa il controllo all'elenco
     in property <int> focus-tick;
     // cambia quando l'elenco deve mostrare al centro il canale in riproduzione
@@ -708,9 +731,16 @@ component LiveScreen inherits Rectangle {
                     alignment: start;
                     Btn { label: @tr("Watch"); primary: true; clicked => { root.play(root.cursor); } }
                     IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(root.cursor); } }
-                    Btn {
-                        label: root.cur.fav ? "★ " + @tr("In favorites") : "☆ " + @tr("Add to favorites");
+                    MarkBtn {
+                        icon: Icons.star;
+                        solid: true;
+                        on: root.cur.fav;
                         clicked => { root.toggle-fav(root.cursor); }
+                    }
+                    MarkBtn {
+                        icon: Icons.lock;
+                        on: root.cur.custom;
+                        clicked => { root.toggle-custom(root.cursor); }
                     }
                 }
                 if root.channels.length == 0 && root.search != "": Text {
@@ -718,8 +748,15 @@ component LiveScreen inherits Rectangle {
                     color: Theme.dim;
                     font-size: 15px;
                 }
+                // 2: la categoria personalizzata
+                if root.channels.length == 0 && root.search == "" && root.category == 2: Text {
+                    text: @tr("No channels here yet: choose a channel in another category and press the lock button.");
+                    color: Theme.dim;
+                    font-size: 15px;
+                    wrap: word-wrap;
+                }
                 if root.channels.length == 0 && root.search == "" && root.category == 1: Text {
-                    text: @tr("No favorite channels yet: choose a channel and press “Add to favorites” (or the S key).");
+                    text: @tr("No favorite channels yet: choose a channel and press the star (or the S key).");
                     color: Theme.dim;
                     font-size: 15px;
                     wrap: word-wrap;
@@ -985,6 +1022,7 @@ component SettingsScreen inherits Rectangle {
     in property <[CategoryItem]> lock-live;
     in property <[CategoryItem]> lock-movies;
     in property <[CategoryItem]> lock-series;
+    in-out property <string> custom-name;
     callback set-interval(int, int);
     callback pin-create(string, string);
     callback pin-remove();
@@ -1014,13 +1052,11 @@ component SettingsScreen inherits Rectangle {
     property <string> epg;
     property <string> new-pin;
     property <string> new-pin-again;
-    property <bool> confirm-remove;
     property <int> lock-kind: 0;
     property <[CategoryItem]> lock-shown: root.lock-kind == 1 ? root.lock-movies : (root.lock-kind == 2 ? root.lock-series : root.lock-live);
     changed pin-set => {
         root.new-pin = "";
         root.new-pin-again = "";
-        root.confirm-remove = false;
     }
     changed form-reset => {
         root.epg = "";
@@ -1300,6 +1336,31 @@ component SettingsScreen inherits Rectangle {
                 font-size: 14px;
                 wrap: word-wrap;
             }
+            Rectangle { height: 6px; }
+            Text { text: @tr("Your category"); color: Theme.ink; font-size: 16px; font-weight: 600; }
+            Text {
+                text: root.pin-set
+                    ? @tr("Put the channels you want in it with the lock button under the channel, in Live. It is always locked by the PIN, and so are its channels.")
+                    : @tr("Put the channels you want in it with the lock button under the channel, in Live. Set a PIN to lock it.");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            if !root.pin-set || root.pin-unlocked: HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    width: 320px;
+                    height: cf.preferred-height;
+                    cf := Field {
+                        width: parent.width;
+                        label: @tr("Name");
+                        placeholder: @tr("My channels");
+                        value <=> root.custom-name;
+                        edited(v) => { root.setting-changed("custom_name", v); }
+                    }
+                }
+            }
+            Rectangle { height: 6px; }
             if root.pin-set && !root.pin-unlocked: HorizontalLayout {
                 spacing: 12px;
                 alignment: start;
@@ -1315,22 +1376,14 @@ component SettingsScreen inherits Rectangle {
                 spacing: 8px;
                 alignment: start;
                 Btn { label: @tr("Lock now"); primary: true; clicked => { root.pin-lock-now(); } }
-                if !root.confirm-remove: Btn { label: @tr("Remove PIN"); clicked => { root.confirm-remove = true; } }
-                if root.confirm-remove: Btn {
-                    label: @tr("Confirm: remove PIN");
-                    danger: true;
-                    clicked => {
-                        root.confirm-remove = false;
-                        root.pin-remove();
-                    }
-                }
-                if root.confirm-remove: Btn { label: @tr("Cancel"); clicked => { root.confirm-remove = false; } }
+                // il PIN si toglie solo confermandolo
+                Btn { label: @tr("Remove PIN"); clicked => { root.pin-remove(); } }
             }
             if root.pin-set && root.pin-unlocked: Tabs {
                 options: [@tr("Channels"), @tr("Movies"), @tr("Series")];
                 current <=> root.lock-kind;
             }
-            if root.pin-set && root.pin-unlocked && root.lock-shown.length == 0: Text {
+            if root.pin-set && root.pin-unlocked && root.lock-shown.length == 0 && root.lock-kind != 0: Text {
                 text: @tr("No categories here in the source in use.");
                 color: Theme.faint;
                 font-size: 13px;
@@ -1391,6 +1444,8 @@ component SettingsScreen inherits Rectangle {
 // Richiesta del PIN: copre tutta la finestra (anche il player)
 component PinDialog inherits Rectangle {
     in property <bool> error;
+    // 0 aprire le categorie bloccate, 1 togliere il PIN
+    in property <int> reason;
     callback submit(string);
     callback cancel();
     property <string> pin;
@@ -1412,10 +1467,17 @@ component PinDialog inherits Rectangle {
                 spacing: 10px;
                 alignment: start;
                 Icon { commands: Icons.lock; width: 22px; height: 22px; }
-                Text { text: @tr("Locked category"); color: Theme.ink; font-size: 20px; font-weight: 700; }
+                Text {
+                    text: root.reason == 1 ? @tr("Remove PIN") : @tr("Locked category");
+                    color: Theme.ink;
+                    font-size: 20px;
+                    font-weight: 700;
+                }
             }
             Text {
-                text: @tr("Enter the PIN to see the locked categories until Sintonia is closed.");
+                text: root.reason == 1
+                    ? @tr("Enter the PIN to confirm: nothing will be locked any more.")
+                    : @tr("Enter the PIN to see the locked categories until Sintonia is closed.");
                 color: Theme.dim;
                 font-size: 13px;
                 wrap: word-wrap;
@@ -1459,7 +1521,12 @@ component PinDialog inherits Rectangle {
                 spacing: 10px;
                 alignment: end;
                 Btn { label: @tr("Cancel"); clicked => { root.cancel(); } }
-                Btn { label: @tr("Unlock"); primary: true; clicked => { root.submit(root.pin); } }
+                Btn {
+                    label: root.reason == 1 ? @tr("Remove PIN") : @tr("Unlock");
+                    primary: true;
+                    danger: root.reason == 1;
+                    clicked => { root.submit(root.pin); }
+                }
             }
         }
     }
@@ -2197,9 +2264,13 @@ export component MainWindow inherits Window {
     in property <[CategoryItem]> lock-live;
     in property <[CategoryItem]> lock-movies;
     in property <[CategoryItem]> lock-series;
+    in-out property <string> custom-name;
+    in property <int> top-offset: 2;
+    callback toggle-custom-channel(int);
     // richiesta del PIN aperta, e PIN sbagliato
     in property <bool> pin-prompt;
     in property <bool> pin-error;
+    in property <int> pin-reason;
     callback set-interval(int, int);
     callback pin-create(string, string);
     callback pin-remove();
@@ -2331,6 +2402,7 @@ export component MainWindow inherits Window {
                 has-hero: root.has-current;
                 no-source: root.no-source;
                 categories: root.top-categories;
+                top-offset: root.top-offset;
                 resume: root.resume;
                 favorites: root.home-favorites;
                 play => { root.watch-current(); }
@@ -2362,6 +2434,7 @@ export component MainWindow inherits Window {
                 pick-category(i) => { root.pick-category(i); }
                 cursor-moved(i) => { root.cursor-moved(i); }
                 toggle-fav(i) => { root.toggle-fav-channel(i); }
+                toggle-custom(i) => { root.toggle-custom-channel(i); }
                 add-source => { root.open-settings-sources(); }
             }
             if root.page == 2: GuideScreen {
@@ -2445,6 +2518,7 @@ export component MainWindow inherits Window {
                 lock-live: root.lock-live;
                 lock-movies: root.lock-movies;
                 lock-series: root.lock-series;
+                custom-name <=> root.custom-name;
                 set-interval(k, i) => { root.set-interval(k, i); }
                 pin-create(a, b) => { root.pin-create(a, b); }
                 pin-remove => { root.pin-remove(); }
@@ -2518,6 +2592,7 @@ export component MainWindow inherits Window {
 
     if root.pin-prompt: PinDialog {
         error: root.pin-error;
+        reason: root.pin-reason;
         submit(p) => { root.pin-submit(p); }
         cancel => { root.pin-cancel(); }
     }
