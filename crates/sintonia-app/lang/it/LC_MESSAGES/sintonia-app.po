@@ -495,8 +495,8 @@ msgstr "Blocca ora"
 msgid "Remove PIN"
 msgstr "Togli il PIN"
 
-msgid "Confirm: remove PIN"
-msgstr "Conferma: togli il PIN"
+msgid "Enter the PIN to confirm: nothing will be locked any more."
+msgstr "Inserisci il PIN per confermare: non sarà più bloccato niente."
 
 msgid "No categories here in the source in use."
 msgstr "Nessuna categoria qui nella sorgente in uso."

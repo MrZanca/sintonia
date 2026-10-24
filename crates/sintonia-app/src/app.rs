@@ -84,6 +84,8 @@ enum AfterPin {
     LiveCategory(usize),
     /// Aprire una categoria di Film e serie.
     MediaCategory(usize),
+    /// Togliere il PIN (va confermato con il PIN, anche se è già stato inserito).
+    RemovePin,
 }
 
 /// Trascinamento di un angolo del mini player: tutto si calcola dalla situazione alla
@@ -2192,13 +2194,7 @@ impl App {
         main.on_pin_create(with_app!(
             |app, first: SharedString, again: SharedString| app.create_pin(&first, &again)
         ));
-        main.on_pin_remove(on(|app| {
-            if app.pin_unlocked.get() {
-                app.save_setting("pin", "");
-                app.set_pin_message(4);
-                app.apply_locks();
-            }
-        }));
+        main.on_pin_remove(on(|app| app.ask_pin(AfterPin::RemovePin)));
         main.on_pin_lock_now(on(|app| {
             app.pin_unlocked.set(false);
             app.set_pin_message(0);
@@ -2469,6 +2465,7 @@ impl App {
     fn ask_pin(&self, after: AfterPin) {
         let Some(main) = self.main() else { return };
         self.after_pin.set(Some(after));
+        main.set_pin_reason(i32::from(after == AfterPin::RemovePin));
         main.set_pin_error(false);
         main.set_pin_prompt(true);
     }
@@ -2500,11 +2497,17 @@ impl App {
             return;
         }
         self.close_pin();
+        if after == AfterPin::RemovePin {
+            self.save_setting("pin", "");
+            self.set_pin_message(4);
+            self.apply_locks();
+            return;
+        }
         self.pin_unlocked.set(true);
         self.set_pin_message(0);
         self.apply_locks();
         match after {
-            AfterPin::Unlock => {}
+            AfterPin::Unlock | AfterPin::RemovePin => {}
             AfterPin::LiveCategory(index) => {
                 self.clear_search();
                 self.channels.show_category(index);

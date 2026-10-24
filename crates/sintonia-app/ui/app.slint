@@ -1033,13 +1033,11 @@ component SettingsScreen inherits Rectangle {
     property <string> epg;
     property <string> new-pin;
     property <string> new-pin-again;
-    property <bool> confirm-remove;
     property <int> lock-kind: 0;
     property <[CategoryItem]> lock-shown: root.lock-kind == 1 ? root.lock-movies : (root.lock-kind == 2 ? root.lock-series : root.lock-live);
     changed pin-set => {
         root.new-pin = "";
         root.new-pin-again = "";
-        root.confirm-remove = false;
     }
     changed form-reset => {
         root.epg = "";
@@ -1359,16 +1357,8 @@ component SettingsScreen inherits Rectangle {
                 spacing: 8px;
                 alignment: start;
                 Btn { label: @tr("Lock now"); primary: true; clicked => { root.pin-lock-now(); } }
-                if !root.confirm-remove: Btn { label: @tr("Remove PIN"); clicked => { root.confirm-remove = true; } }
-                if root.confirm-remove: Btn {
-                    label: @tr("Confirm: remove PIN");
-                    danger: true;
-                    clicked => {
-                        root.confirm-remove = false;
-                        root.pin-remove();
-                    }
-                }
-                if root.confirm-remove: Btn { label: @tr("Cancel"); clicked => { root.confirm-remove = false; } }
+                // il PIN si toglie solo confermandolo
+                Btn { label: @tr("Remove PIN"); clicked => { root.pin-remove(); } }
             }
             if root.pin-set && root.pin-unlocked: Tabs {
                 options: [@tr("Channels"), @tr("Movies"), @tr("Series")];
@@ -1435,6 +1425,8 @@ component SettingsScreen inherits Rectangle {
 // Richiesta del PIN: copre tutta la finestra (anche il player)
 component PinDialog inherits Rectangle {
     in property <bool> error;
+    // 0 aprire le categorie bloccate, 1 togliere il PIN
+    in property <int> reason;
     callback submit(string);
     callback cancel();
     property <string> pin;
@@ -1456,10 +1448,17 @@ component PinDialog inherits Rectangle {
                 spacing: 10px;
                 alignment: start;
                 Icon { commands: Icons.lock; width: 22px; height: 22px; }
-                Text { text: @tr("Locked category"); color: Theme.ink; font-size: 20px; font-weight: 700; }
+                Text {
+                    text: root.reason == 1 ? @tr("Remove PIN") : @tr("Locked category");
+                    color: Theme.ink;
+                    font-size: 20px;
+                    font-weight: 700;
+                }
             }
             Text {
-                text: @tr("Enter the PIN to see the locked categories until Sintonia is closed.");
+                text: root.reason == 1
+                    ? @tr("Enter the PIN to confirm: nothing will be locked any more.")
+                    : @tr("Enter the PIN to see the locked categories until Sintonia is closed.");
                 color: Theme.dim;
                 font-size: 13px;
                 wrap: word-wrap;
@@ -1503,7 +1502,12 @@ component PinDialog inherits Rectangle {
                 spacing: 10px;
                 alignment: end;
                 Btn { label: @tr("Cancel"); clicked => { root.cancel(); } }
-                Btn { label: @tr("Unlock"); primary: true; clicked => { root.submit(root.pin); } }
+                Btn {
+                    label: root.reason == 1 ? @tr("Remove PIN") : @tr("Unlock");
+                    primary: true;
+                    danger: root.reason == 1;
+                    clicked => { root.submit(root.pin); }
+                }
             }
         }
     }
@@ -2247,6 +2251,7 @@ export component MainWindow inherits Window {
     // richiesta del PIN aperta, e PIN sbagliato
     in property <bool> pin-prompt;
     in property <bool> pin-error;
+    in property <int> pin-reason;
     callback set-interval(int, int);
     callback pin-create(string, string);
     callback pin-remove();
@@ -2568,6 +2573,7 @@ export component MainWindow inherits Window {
 
     if root.pin-prompt: PinDialog {
         error: root.pin-error;
+        reason: root.pin-reason;
         submit(p) => { root.pin-submit(p); }
         cancel => { root.pin-cancel(); }
     }
