@@ -13,8 +13,8 @@
 //! (Home, ripresa, ultimo canale).
 //!
 //! I canali possono avere anche una categoria personalizzata (indice 2, dopo «Preferiti»): le voci
-//! scelte dall'utente. Con il PIN è sempre bloccata, e le sue voci si nascondono come quelle delle
-//! categorie bloccate.
+//! scelte dall'utente, che si *spostano* lì e non compaiono più nella loro categoria d'origine. Con
+//! il PIN è sempre bloccata, e le sue voci si nascondono come quelle delle categorie bloccate.
 
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
@@ -230,6 +230,9 @@ pub struct CatalogModel<E: CatalogEntry> {
     all: RefCell<Arc<Vec<E>>>,
     /// Indici di `all` per categoria; 0 = tutti, 1 = preferiti, poi una per categoria.
     by_category: RefCell<Vec<Vec<usize>>>,
+    /// Le voci di ogni categoria della sorgente come arrivano (stessi indici di `by_category`),
+    /// prima di togliere quelle spostate nella categoria personalizzata.
+    group_entries: RefCell<Vec<Vec<usize>>>,
     /// Categorie bloccate dal PIN, e se le loro voci vanno nascoste (PIN non inserito).
     locked: RefCell<HashSet<String>>,
     hide_locked: Cell<bool>,
@@ -276,6 +279,7 @@ impl<E: CatalogEntry> CatalogModel<E> {
         Rc::new(Self {
             all: RefCell::new(Arc::new(Vec::new())),
             by_category: RefCell::new(vec![Vec::new(), Vec::new()]),
+            group_entries: RefCell::new(Vec::new()),
             locked: RefCell::new(HashSet::new()),
             hide_locked: Cell::new(false),
             has_custom: Cell::new(false),
@@ -368,6 +372,7 @@ impl<E: CatalogEntry> CatalogModel<E> {
         *self.by_id.borrow_mut() = by_id;
         *self.by_key.borrow_mut() = by_key;
         *self.categories.borrow_mut() = categories;
+        *self.group_entries.borrow_mut() = by_category.clone();
         *self.by_category.borrow_mut() = by_category;
         self.rebuild_locks();
         self.apply(Filter::Category(0));
@@ -454,8 +459,38 @@ impl<E: CatalogEntry> CatalogModel<E> {
                 }
             }
         }
+        // le voci spostate nella categoria personalizzata escono dalla loro categoria
+        let first_group = self.first_group();
+        let groups: Vec<Vec<usize>> = {
+            let keys = self.custom.borrow();
+            let entries = self.all.borrow();
+            self.group_entries
+                .borrow()
+                .iter()
+                .skip(first_group)
+                .map(|indices| {
+                    indices
+                        .iter()
+                        .copied()
+                        .filter(|i| entries.get(*i).is_some_and(|e| !keys.contains(&e.key())))
+                        .collect()
+                })
+                .collect()
+        };
+        for (category, indices) in self
+            .categories
+            .borrow_mut()
+            .iter_mut()
+            .skip(first_group)
+            .zip(&groups)
+        {
+            category.count = count_i32(indices.len());
+        }
         {
             let mut by_category = self.by_category.borrow_mut();
+            for (slot, indices) in by_category.iter_mut().skip(first_group).zip(groups) {
+                *slot = indices;
+            }
             if let Some(slot) = by_category.first_mut() {
                 *slot = all;
             }
@@ -857,6 +892,12 @@ mod tests {
         assert!(model.row_data(1).is_some_and(|c| c.custom));
         model.show_category(0);
         assert_eq!(model.row_count(), 3);
+        // spostati: non sono più nella loro categoria
+        let cats = model.categories();
+        assert_eq!((cats[3].count, cats[4].count), (0, 1));
+        model.show_category(4);
+        assert_eq!(model.entry_at(0).map(|e| e.0), Some(2));
+        model.show_category(0);
 
         // con il PIN non inserito: la categoria è chiusa e i suoi canali spariscono
         model.set_locks(
@@ -868,11 +909,7 @@ mod tests {
         assert!(model.is_category_hidden(CUSTOM));
         assert_eq!(model.row_count(), 1);
         assert_eq!(model.id_of_key("k3"), None);
-        assert_eq!(
-            model.categories()[4].count,
-            2,
-            "il conteggio della categoria resta"
-        );
+        assert_eq!(model.categories()[4].count, 1, "Sport senza Tre");
 
         // PIN inserito
         model.set_locks(
@@ -883,6 +920,14 @@ mod tests {
         );
         assert!(model.categories()[CUSTOM].locked && !model.is_category_hidden(CUSTOM));
         assert_eq!(model.row_count(), 3);
+
+        // tolti dalla categoria personalizzata, tornano nella loro
+        model.set_locks(HashSet::new(), HashSet::new(), true, false);
+        let cats = model.categories();
+        assert_eq!(
+            (cats[CUSTOM].count, cats[3].count, cats[4].count),
+            (0, 1, 2)
+        );
     }
 
     #[test]
