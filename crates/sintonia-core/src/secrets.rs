@@ -10,7 +10,8 @@ use std::sync::{Mutex, PoisonError};
 
 use crate::crypto::{key_from_hex, key_to_hex, Cipher, CryptoError, KEY_LEN};
 
-const SERVICE: &str = "Sintonia";
+/// Servizio delle voci nel portachiavi (con un profilo di prova: `Sintonia-<profilo>`).
+pub const SERVICE: &str = "Sintonia";
 const DATABASE_KEY: &str = "chiave-archivio";
 
 /// Errori del portachiavi.
@@ -31,8 +32,8 @@ pub enum SecretsError {
 ///
 /// `created` è `true` se la chiave è nuova: un archivio esistente cifrato con un'altra chiave
 /// non sarà più leggibile, e l'app lo deve ricreare.
-pub fn database_key() -> Result<([u8; KEY_LEN], bool), SecretsError> {
-    let entry = keyring::Entry::new(SERVICE, DATABASE_KEY)?;
+pub fn database_key(service: &str) -> Result<([u8; KEY_LEN], bool), SecretsError> {
+    let entry = keyring::Entry::new(service, DATABASE_KEY)?;
     match entry.get_password() {
         Ok(text) => key_from_hex(&text)
             .map(|key| (key, false))
@@ -61,13 +62,15 @@ pub trait SecretStore: Send + Sync + std::fmt::Debug {
     fn delete(&self, name: &str) -> Result<(), SecretsError>;
 }
 
-/// Il portachiavi del sistema.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemKeyring;
+/// Il portachiavi del sistema; `service` è il gruppo delle voci (di solito [`SERVICE`]).
+#[derive(Debug, Clone)]
+pub struct SystemKeyring {
+    pub service: String,
+}
 
 impl SecretStore for SystemKeyring {
     fn get(&self, name: &str) -> Result<Option<String>, SecretsError> {
-        match keyring::Entry::new(SERVICE, name)?.get_password() {
+        match keyring::Entry::new(&self.service, name)?.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(err) => Err(err.into()),
@@ -75,12 +78,12 @@ impl SecretStore for SystemKeyring {
     }
 
     fn set(&self, name: &str, value: &str) -> Result<(), SecretsError> {
-        keyring::Entry::new(SERVICE, name)?.set_password(value)?;
+        keyring::Entry::new(&self.service, name)?.set_password(value)?;
         Ok(())
     }
 
     fn delete(&self, name: &str) -> Result<(), SecretsError> {
-        match keyring::Entry::new(SERVICE, name)?.delete_credential() {
+        match keyring::Entry::new(&self.service, name)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(err) => Err(err.into()),
         }

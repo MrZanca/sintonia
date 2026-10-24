@@ -423,11 +423,17 @@ fn fold_char(c: char) -> char {
     }
 }
 
+/// Oltre questo numero di canali della guida diversi con lo stesso nome ridotto, il nome
+/// ridotto non vuol dire più niente («Canale 101», «Canale 102»… diventano tutti «canale») e non
+/// si usa. Fino a qui sono le varianti dello stesso canale (SD, HD, FHD, 4K).
+const MAX_SAME_NAME: usize = 4;
+
 /// Abbina i canali della playlist ai canali della guida.
 #[derive(Debug, Default)]
 pub struct Matcher {
     exact: HashMap<String, String>,
-    normalized: HashMap<String, String>,
+    /// Nome ridotto → primo canale della guida con quel nome, e quanti canali diversi lo hanno.
+    normalized: HashMap<String, (String, usize)>,
 }
 
 impl Matcher {
@@ -439,14 +445,19 @@ impl Matcher {
                 .exact
                 .entry(id.to_lowercase())
                 .or_insert_with(|| id.to_owned());
-            for name in std::iter::once(id).chain(names.iter().map(String::as_str)) {
-                let key = normalize_name(name);
-                if !key.is_empty() {
-                    matcher
-                        .normalized
-                        .entry(key)
-                        .or_insert_with(|| id.to_owned());
-                }
+            let mut keys: Vec<String> = std::iter::once(id)
+                .chain(names.iter().map(String::as_str))
+                .map(normalize_name)
+                .filter(|k| !k.is_empty())
+                .collect();
+            keys.sort_unstable();
+            keys.dedup();
+            for key in keys {
+                matcher
+                    .normalized
+                    .entry(key)
+                    .and_modify(|(_, count)| *count += 1)
+                    .or_insert_with(|| (id.to_owned(), 1));
             }
         }
         matcher
@@ -455,10 +466,16 @@ impl Matcher {
     /// Identificativo nella guida del canale con questo `tvg-id` e questo nome.
     pub fn find(&self, tvg_id: Option<&str>, name: &str) -> Option<&str> {
         let tvg_id = tvg_id.map(str::trim).filter(|t| !t.is_empty());
+        let by_name = |text: &str| {
+            self.normalized
+                .get(&normalize_name(text))
+                .filter(|(_, count)| *count <= MAX_SAME_NAME)
+                .map(|(id, _)| id)
+        };
         tvg_id
             .and_then(|t| self.exact.get(&t.to_lowercase()))
-            .or_else(|| tvg_id.and_then(|t| self.normalized.get(&normalize_name(t))))
-            .or_else(|| self.normalized.get(&normalize_name(name)))
+            .or_else(|| tvg_id.and_then(by_name))
+            .or_else(|| by_name(name))
             .map(String::as_str)
     }
 }
@@ -614,5 +631,23 @@ mod tests {
         assert_eq!(matcher.find(None, "Rete 5 HD"), Some("Rete.5.it"));
         assert_eq!(matcher.find(Some(""), "Tele 1"), Some("Tele.1.HD..101.it"));
         assert_eq!(matcher.find(Some("Nessuno.it"), "Nessuno"), None);
+    }
+
+    #[test]
+    fn generic_names_do_not_match() {
+        // «Canale 101»…«Canale 110» si riducono tutti a «canale»: non è un nome utile
+        let channels: Vec<(String, Vec<String>)> = (101..=110)
+            .map(|n| (format!("c{n}"), vec![format!("Canale {n}")]))
+            .chain(std::iter::once((
+                "Sport.it".to_owned(),
+                vec!["Sport HD".to_owned(), "Sport".to_owned()],
+            )))
+            .chain(std::iter::once(("SportFHD.it".to_owned(), vec![])))
+            .collect();
+        let matcher = Matcher::new(channels.iter().map(|(id, n)| (id.as_str(), n.as_slice())));
+        assert_eq!(matcher.find(None, "Canale 45000"), None);
+        assert_eq!(matcher.find(Some("c105"), "Canale 105"), Some("c105"));
+        // varianti dello stesso canale: il nome ridotto vale ancora
+        assert_eq!(matcher.find(None, "Sport 4K"), Some("Sport.it"));
     }
 }

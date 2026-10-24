@@ -999,7 +999,15 @@ async fn epg_locations(shared: &Arc<Shared>, id: i64) -> Result<Vec<String>, Sou
         let (client, _) = shared.xtream_client(id).await?;
         return Ok(vec![client.xmltv_url()]);
     }
-    Ok(shared.with_store(move |s| s.epg_urls(id)).await?)
+    // quelle scritte nella playlist solo se sono indirizzi web: una playlist non deve poter far
+    // leggere file del PC (e un percorso relativo dipenderebbe dalla cartella di avvio)
+    let urls = shared.with_store(move |s| s.epg_urls(id)).await?;
+    Ok(urls.into_iter().filter(|u| is_web_url(u)).collect())
+}
+
+fn is_web_url(location: &str) -> bool {
+    let lower = location.trim_start().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
 }
 
 async fn import_epg(

@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 use crate::crypto::{Cipher, CryptoError};
@@ -400,6 +400,8 @@ impl Store {
     /// Apre (o crea) l'archivio in un file.
     pub fn open(path: &Path, cipher: Cipher) -> Result<Self, StoreError> {
         let conn = Connection::open(path)?;
+        // se l'archivio è occupato (un'altra connessione sta scrivendo) si aspetta invece di fallire
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, cipher)
@@ -427,7 +429,9 @@ impl Store {
             store.migrate_v2()?;
         }
         if version < 3 {
-            let tx = store.conn.transaction()?;
+            let tx = store
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(SCHEMA_V3)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
@@ -463,7 +467,9 @@ impl Store {
     }
 
     fn migrate_v2(&mut self) -> Result<(), StoreError> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(SCHEMA_V2)?;
         // chiavi stabili dei canali M3U già salvati
         let rows: Vec<(i64, Vec<u8>)> = {
@@ -517,7 +523,9 @@ impl Store {
             .filter(|u| !u.is_empty())
             .map(|u| self.cipher.encrypt(u))
             .transpose()?;
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let has_active: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM sources WHERE active = 1)",
             [],
@@ -659,7 +667,9 @@ impl Store {
 
     /// Rende `id` la sorgente in uso.
     pub fn set_active_source(&mut self, id: i64) -> Result<(), StoreError> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM sources WHERE id = ?1)",
             [id],
@@ -675,7 +685,9 @@ impl Store {
 
     /// Elimina una sorgente e tutto ciò che le appartiene. Se era in uso passa alla prima rimasta.
     pub fn delete_source(&mut self, id: i64) -> Result<(), StoreError> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("DELETE FROM sources WHERE id = ?1", [id])?;
         tx.execute(
             "UPDATE sources SET active = 1
@@ -741,7 +753,9 @@ impl Store {
                 None => Ok(Vec::new()),
             })
             .collect::<Result<_, _>>()?;
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("DELETE FROM channels WHERE source_id = ?1", [source_id])?;
         {
             let mut insert = tx.prepare(
@@ -806,7 +820,9 @@ impl Store {
     /// I dati nuovi restano «in attesa» finché [`Self::epg_commit`] non li sostituisce ai vecchi:
     /// intanto la guida precedente resta visibile.
     pub fn epg_begin(&mut self, source_id: i64) -> Result<(), StoreError> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         for table in ["epg_programmes", "epg_channels"] {
             tx.execute(
                 &format!("DELETE FROM {table} WHERE source_id = ?1 AND pending = 1"),
@@ -824,7 +840,9 @@ impl Store {
         channels: &[XmltvChannel],
         programmes: &[Programme],
     ) -> Result<(), StoreError> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         {
             let mut insert = tx.prepare_cached(
                 "INSERT INTO epg_channels(source_id, pending, xmltv_id, names)
@@ -858,7 +876,9 @@ impl Store {
 
     /// Sostituisce la guida della sorgente con quella appena importata e rifà l'abbinamento.
     pub fn epg_commit(&mut self, source_id: i64, now: i64) -> Result<EpgSummary, StoreError> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         for table in ["epg_programmes", "epg_channels"] {
             tx.execute(
                 &format!("DELETE FROM {table} WHERE source_id = ?1 AND pending = 0"),
@@ -904,7 +924,9 @@ impl Store {
             .filter(|u| !u.is_empty())
             .map(|u| self.cipher.encrypt(u))
             .transpose()?;
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let changed = tx.execute(
             "UPDATE sources SET epg_custom = ?2, epg_refreshed_at = NULL, epg_matched = 0,
                 epg_programmes = 0

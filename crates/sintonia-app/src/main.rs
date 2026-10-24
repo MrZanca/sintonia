@@ -72,13 +72,56 @@ fn main() -> ExitCode {
     }
 }
 
-/// Cartelle di Sintonia: `%APPDATA%\Sintonia` (archivio) e `%LOCALAPPDATA%\Sintonia` (cache).
-fn data_dirs() -> Result<(PathBuf, PathBuf), AppError> {
+/// Profilo di prova (`SINTONIA_PROFILO`, solo lettere, cifre, `-` e `_`): archivio, cache e voci
+/// del portachiavi tutti a parte, così le prove non toccano i dati veri.
+fn test_profile() -> Option<String> {
+    std::env::var("SINTONIA_PROFILO").ok().filter(|p| {
+        !p.is_empty()
+            && p.len() <= 32
+            && p.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    })
+}
+
+/// Cartelle di Sintonia: `%APPDATA%\Sintonia` (archivio) e `%LOCALAPPDATA%\Sintonia` (cache);
+/// con un profilo di prova, le sottocartelle `profili\<profilo>`.
+fn data_dirs(profile: Option<&str>) -> Result<(PathBuf, PathBuf), AppError> {
     let dirs = directories::ProjectDirs::from("", "", "Sintonia").ok_or(AppError::NoDataDir)?;
-    Ok((
+    let (data, cache) = (
         dirs.data_dir().to_path_buf(),
         dirs.cache_dir().to_path_buf(),
-    ))
+    );
+    Ok(match profile {
+        Some(p) => (data.join("profili").join(p), cache.join("profili").join(p)),
+        None => (data, cache),
+    })
+}
+
+/// Apre in esclusiva `sintonia.lock` nella cartella dei dati: finché il file resta aperto (cioè
+/// finché il processo vive, anche se crolla) una seconda Sintonia non parte. `None` se è già
+/// aperto da un'altra Sintonia; se la cartella non si può usare si parte comunque.
+fn single_instance(data_dir: &Path) -> Option<Option<std::fs::File>> {
+    if let Err(err) = std::fs::create_dir_all(data_dir) {
+        log::warn!("cartella dei dati: {err}");
+        return Some(None);
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(false);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // nessuna condivisione: un'altra apertura fallisce con «violazione di condivisione»
+        options.share_mode(0);
+    }
+    match options.open(data_dir.join("sintonia.lock")) {
+        Ok(file) => Some(Some(file)),
+        // 32 = ERROR_SHARING_VIOLATION
+        Err(err) if err.raw_os_error() == Some(32) => None,
+        Err(err) => {
+            log::warn!("blocco dell'istanza: {err}");
+            Some(None)
+        }
+    }
 }
 
 /// Se la chiave è nuova, un archivio vecchio non sarebbe più leggibile: lo si mette da parte.
@@ -114,9 +157,30 @@ fn run() -> Result<(), AppError> {
         env!("CARGO_PKG_VERSION")
     );
 
-    let (data_dir, cache_dir) = data_dirs()?;
+    let profile = test_profile();
+    if let Some(p) = &profile {
+        log::warn!("profilo di prova «{p}»: dati e portachiavi a parte");
+    }
+    let service = profile.as_ref().map_or_else(
+        || secrets::SERVICE.to_owned(),
+        |p| format!("{}-{p}", secrets::SERVICE),
+    );
+    let (data_dir, cache_dir) = data_dirs(profile.as_deref())?;
+    // una sola Sintonia per archivio: due insieme si contendono l'archivio
+    let Some(_instance) = single_instance(&data_dir) else {
+        log::warn!("Sintonia è già aperta");
+        let _ = rfd::MessageDialog::new()
+            .set_title("Sintonia")
+            .set_description(match Language::system() {
+                Language::Italian => "Sintonia è già aperta.",
+                Language::English => "Sintonia is already open.",
+            })
+            .set_level(rfd::MessageLevel::Info)
+            .show();
+        return Ok(());
+    };
     let database = data_dir.join("archivio.db");
-    let (key, created) = secrets::database_key()?;
+    let (key, created) = secrets::database_key(&service)?;
     if created {
         set_aside_old_database(&database);
     }
@@ -129,7 +193,7 @@ fn run() -> Result<(), AppError> {
             database,
             cache_dir,
             cipher: Cipher::new(&key),
-            secrets: Arc::new(SystemKeyring),
+            secrets: Arc::new(SystemKeyring { service }),
             user_agent: format!("Sintonia/{}", env!("CARGO_PKG_VERSION")),
         },
         app::forward_service_event,

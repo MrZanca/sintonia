@@ -248,7 +248,7 @@ export component GuideScreen inherits Rectangle {
                                 text: root.rows[nr.index].num;
                                 width: 42px;
                                 color: root.rows[nr.index].playing ? Theme.needle : Theme.faint;
-                                font-size: 18px;
+                                font-size: root.rows[nr.index].num.character-count > 4 ? 13px : 18px;
                                 font-weight: 300;
                                 vertical-alignment: center;
                             }
