@@ -1335,10 +1335,13 @@ component SettingsScreen inherits Rectangle {
                 color: Theme.faint;
                 font-size: 13px;
             }
-            if root.pin-set && root.pin-unlocked: lock-fl := Flickable {
+            // a larghezza limitata in un suo HorizontalLayout, se no limita tutta la colonna
+            if root.pin-set && root.pin-unlocked: HorizontalLayout {
+              alignment: start;
+              lock-fl := Flickable {
                 // poche centinaia di categorie: un `for` basta
                 height: min(lock-list.preferred-height, 360px);
-                max-width: 620px;
+                width: 620px;
                 content-height: lock-list.preferred-height;
                 lock-list := VerticalLayout {
                     width: lock-fl.width;
@@ -1379,6 +1382,7 @@ component SettingsScreen inherits Rectangle {
                         }
                     }
                 }
+              }
             }
         }
     }

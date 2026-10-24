@@ -2192,6 +2192,7 @@ impl App {
         }));
         main.on_pin_lock_now(on(|app| {
             app.pin_unlocked.set(false);
+            app.set_pin_message(0);
             app.apply_locks();
         }));
         main.on_pin_unlock(on(|app| app.ask_pin(AfterPin::Unlock)));
