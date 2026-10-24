@@ -14,6 +14,8 @@ export struct ChannelItem {
     radio: bool,
     drm: bool,
     fav: bool,
+    // nella categoria personalizzata
+    custom: bool,
     // guida: programma in onda ("" se non c'è), orari "20:30 – 21:30", avanzamento 0..1
     // (-1 se non c'è) e il successivo
     now-title: string,
@@ -23,7 +25,7 @@ export struct ChannelItem {
     next-time: string,
 }
 
-// kind: 0 tutti, 1 categoria della sorgente, 2 senza categoria, 3 preferiti
+// kind: 0 tutti, 1 categoria della sorgente, 2 senza categoria, 3 preferiti, 4 personalizzata
 // locked: bloccata dal PIN (il lucchetto resta anche dopo averlo inserito)
 export struct CategoryItem { name: string, count: int, kind: int, locked: bool }
 
@@ -160,6 +162,11 @@ export global Video {
 }
 
 export global Texts {
+    // nome scelto per la categoria personalizzata ("" = quello predefinito)
+    in property <string> custom-name;
+    public pure function custom() -> string {
+        return root.custom-name != "" ? root.custom-name : @tr("My channels");
+    }
     public pure function status(state: int, attempt: int) -> string {
         return state == 1 ? @tr("Connecting to the channel…")
             : (state == 3 ? @tr("Waiting for the signal…")
@@ -169,7 +176,7 @@ export global Texts {
     public pure function category(c: CategoryItem) -> string {
         return c.kind == 0 ? @tr("All")
             : (c.kind == 2 ? @tr("No category")
-            : (c.kind == 3 ? @tr("Favorites") : c.name));
+            : (c.kind == 3 ? @tr("Favorites") : (c.kind == 4 ? root.custom() : c.name)));
     }
     // durata o posizione in secondi come 1:05:09 o 5:09
     public pure function clock(secs: int) -> string {

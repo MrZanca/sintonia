@@ -512,3 +512,24 @@ msgstr "PIN sbagliato."
 
 msgid "Unlock"
 msgstr "Sblocca"
+
+msgid "My channels"
+msgstr "I miei canali"
+
+msgid "Remove from “{}”"
+msgstr "Togli da «{}»"
+
+msgid "Add to “{}”"
+msgstr "Aggiungi a «{}»"
+
+msgid "No channels here yet: choose a channel in another category and press the button with this category's name."
+msgstr "Ancora nessun canale qui: scegli un canale in un'altra categoria e premi il pulsante con il nome di questa categoria."
+
+msgid "Your category"
+msgstr "La tua categoria"
+
+msgid "Put the channels you want in it with the button under the channel, in Live. It is always locked by the PIN, and so are its channels."
+msgstr "Mettici i canali che vuoi con il pulsante sotto il canale, in Live. È sempre bloccata dal PIN, e con lei i suoi canali."
+
+msgid "Put the channels you want in it with the button under the channel, in Live. Set a PIN to lock it."
+msgstr "Mettici i canali che vuoi con il pulsante sotto il canale, in Live. Imposta un PIN per bloccarla."

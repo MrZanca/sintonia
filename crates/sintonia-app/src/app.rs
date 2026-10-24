@@ -29,7 +29,7 @@ use crate::catalog::{
 };
 use crate::guide::{self, GuideModel, Schedule};
 use crate::images;
-use crate::settings::{Language, Locks, Settings};
+use crate::settings::{self, Language, Locks, Settings};
 use crate::video::VideoRouter;
 use crate::{
     CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, MainWindow, PipWindow,
@@ -306,6 +306,7 @@ impl App {
         language: Language,
     ) -> Rc<Self> {
         let channels = CatalogModel::new(request_image);
+        channels.enable_custom();
         let movies = CatalogModel::new(request_image);
         let series = CatalogModel::new(request_image);
         let channel_categories = Rc::new(VecModel::default());
@@ -507,6 +508,7 @@ impl App {
             main.set_user_agent(settings.user_agent.clone().unwrap_or_default().into());
         }
         *self.settings.borrow_mut() = settings;
+        self.show_custom_name();
         self.apply_locks();
     }
 
@@ -687,15 +689,17 @@ impl App {
     fn after_channels_changed(&self, current: Option<i64>) {
         let Some(main) = self.main() else { return };
         let categories = self.channels.categories();
-        // nella Home: le categorie della sorgente, senza «Tutti» e «Preferiti»
+        // nella Home: le categorie della sorgente, senza «Tutti», «Preferiti» e la personalizzata
+        let first_group = self.channels.first_group();
         let top: Vec<CategoryItem> = categories
             .iter()
-            .skip(2)
+            .skip(first_group)
             .take(HOME_CATEGORIES)
             .cloned()
             .collect();
         self.channel_categories.set_vec(categories);
         main.set_top_categories(ModelRc::new(VecModel::from(top)));
+        main.set_top_offset(count_i32(first_group));
         if !main.get_search().is_empty() {
             main.set_search(SharedString::new());
             self.search_generation.set(self.search_generation.get() + 1);
@@ -1903,6 +1907,11 @@ impl App {
                 app.toggle_favorite(ItemKind::Live, key);
             }
         }));
+        main.on_toggle_custom_channel(with_app!(|app, row: i32| {
+            if let Some((_, key)) = row_index(row).and_then(|r| app.channels.entry_at(r)) {
+                app.toggle_custom(key);
+            }
+        }));
         main.on_search_edited(with_app!(
             |app, text: SharedString| app.search_later(text.to_string())
         ));
@@ -2206,6 +2215,9 @@ impl App {
             app.save_setting(&key, &value);
             let settings = app.settings.borrow().clone();
             app.router.set_reconnect(settings.reconnect);
+            if key == "custom_name" {
+                app.show_custom_name();
+            }
             if key == "user_agent" {
                 if let Err(err) = app
                     .router
@@ -2276,10 +2288,18 @@ impl App {
     /// Passa i blocchi ai modelli (senza aggiornare il resto dell'interfaccia).
     fn set_model_locks(&self) {
         let locks = self.source_locks();
+        let custom = self
+            .source_id
+            .get()
+            .and_then(|id| self.settings.borrow().custom.get(&id).cloned())
+            .unwrap_or_default();
+        let pin = self.settings.borrow().has_pin();
         let hide = self.hide_locked();
-        self.channels.set_locks(locks.live, hide);
-        self.movies.set_locks(locks.movies, hide);
-        self.series.set_locks(locks.series, hide);
+        self.channels.set_locks(locks.live, custom, pin, hide);
+        self.movies
+            .set_locks(locks.movies, HashSet::new(), pin, hide);
+        self.series
+            .set_locks(locks.series, HashSet::new(), pin, hide);
     }
 
     /// Applica PIN e blocchi a tutta l'interfaccia. Se si stava guardando qualcosa di una
@@ -2333,17 +2353,51 @@ impl App {
     /// Le categorie di canali, film e serie nelle Impostazioni (senza «Tutti» e «Preferiti»).
     fn refresh_lock_lists(&self) {
         let Some(main) = self.main() else { return };
-        let list = |categories: Vec<CategoryItem>| {
+        // la categoria personalizzata non c'è: con il PIN è sempre bloccata
+        let list = |categories: Vec<CategoryItem>, first: usize| {
             ModelRc::new(VecModel::from(
-                categories
-                    .into_iter()
-                    .skip(FAVORITES + 1)
-                    .collect::<Vec<_>>(),
+                categories.into_iter().skip(first).collect::<Vec<_>>(),
             ))
         };
-        main.set_lock_live(list(self.channels.categories()));
-        main.set_lock_movies(list(self.movies.categories()));
-        main.set_lock_series(list(self.series.categories()));
+        main.set_lock_live(list(
+            self.channels.categories(),
+            self.channels.first_group(),
+        ));
+        main.set_lock_movies(list(self.movies.categories(), self.movies.first_group()));
+        main.set_lock_series(list(self.series.categories(), self.series.first_group()));
+    }
+
+    /// Mette o toglie un canale dalla categoria personalizzata della sorgente in uso. Con il
+    /// PIN non inserito il canale aggiunto sparisce subito, come quelli delle categorie bloccate.
+    fn toggle_custom(&self, key: String) {
+        let Some(source_id) = self.source_id.get() else {
+            return;
+        };
+        let value = {
+            let mut settings = self.settings.borrow_mut();
+            let keys = settings.custom.entry(source_id).or_default();
+            if !keys.remove(&key) {
+                keys.insert(key);
+            }
+            settings::custom_value(keys)
+        };
+        self.save_setting(&settings::custom_key(source_id), &value);
+        let row = self.main().map(|m| m.get_cursor());
+        self.apply_locks();
+        // l'elenco resta dov'era (se il canale è sparito, sulla riga dopo)
+        if let (Some(main), Some(row)) = (self.main(), row) {
+            let last = count_i32(self.channels.row_count().saturating_sub(1));
+            main.set_cursor(row.min(last).max(0));
+        }
+    }
+
+    /// Il nome della categoria personalizzata, ovunque appaia.
+    fn show_custom_name(&self) {
+        if let Some(main) = self.main() {
+            let name = self.settings.borrow().custom_name.clone();
+            main.global::<Texts>().set_custom_name(name.as_str().into());
+            main.set_custom_name(name.into());
+        }
     }
 
     fn set_pin_message(&self, message: i32) {
@@ -2382,13 +2436,24 @@ impl App {
             self.apply_locks();
             return;
         }
-        let (kind, categories) = match kind {
-            1 => (ItemKind::Movie, self.movies.categories()),
-            2 => (ItemKind::Series, self.series.categories()),
-            _ => (ItemKind::Live, self.channels.categories()),
+        let (kind, categories, first) = match kind {
+            1 => (
+                ItemKind::Movie,
+                self.movies.categories(),
+                self.movies.first_group(),
+            ),
+            2 => (
+                ItemKind::Series,
+                self.series.categories(),
+                self.series.first_group(),
+            ),
+            _ => (
+                ItemKind::Live,
+                self.channels.categories(),
+                self.channels.first_group(),
+            ),
         };
-        let Some(category) = row_index(index).and_then(|i| categories.get(i + FAVORITES + 1))
-        else {
+        let Some(category) = row_index(index).and_then(|i| categories.get(i + first)) else {
             return;
         };
         let value = {

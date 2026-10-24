@@ -441,6 +441,8 @@ component HomeScreen inherits Rectangle {
     in property <bool> has-hero;
     in property <bool> no-source;
     in property <[CategoryItem]> categories;
+    // indice nella lista completa della prima categoria mostrata qui
+    in property <int> top-offset: 2;
     in property <[HomeItem]> resume;
     in property <[HomeItem]> favorites;
     callback play();
@@ -565,8 +567,9 @@ component HomeScreen inherits Rectangle {
                     tint: Theme.dim;
                 }
                 Ring { on: fta.has-hover; }
-                // le categorie della Home sono quelle della lista completa dopo «Tutti» e «Preferiti»
-                fta := TouchArea { clicked => { root.open-category(i + 2); } }
+                // le categorie della Home sono quelle della lista completa dopo «Tutti», «Preferiti»
+                // e la categoria personalizzata
+                fta := TouchArea { clicked => { root.open-category(i + root.top-offset); } }
             }
         }
     }
@@ -588,6 +591,7 @@ component LiveScreen inherits Rectangle {
     callback cursor-moved(int);
     callback add-source();
     callback toggle-fav(int);
+    callback toggle-custom(int);
     // cambia quando la ricerca in alto passa il controllo all'elenco
     in property <int> focus-tick;
     // cambia quando l'elenco deve mostrare al centro il canale in riproduzione
@@ -713,10 +717,24 @@ component LiveScreen inherits Rectangle {
                         clicked => { root.toggle-fav(root.cursor); }
                     }
                 }
+                if root.channels.length > 0: HorizontalLayout {
+                    alignment: start;
+                    Btn {
+                        label: root.cur.custom ? @tr("Remove from “{}”", Texts.custom()) : @tr("Add to “{}”", Texts.custom());
+                        clicked => { root.toggle-custom(root.cursor); }
+                    }
+                }
                 if root.channels.length == 0 && root.search != "": Text {
                     text: @tr("No channels match your search.");
                     color: Theme.dim;
                     font-size: 15px;
+                }
+                // 2: la categoria personalizzata
+                if root.channels.length == 0 && root.search == "" && root.category == 2: Text {
+                    text: @tr("No channels here yet: choose a channel in another category and press the button with this category's name.");
+                    color: Theme.dim;
+                    font-size: 15px;
+                    wrap: word-wrap;
                 }
                 if root.channels.length == 0 && root.search == "" && root.category == 1: Text {
                     text: @tr("No favorite channels yet: choose a channel and press “Add to favorites” (or the S key).");
@@ -985,6 +1003,7 @@ component SettingsScreen inherits Rectangle {
     in property <[CategoryItem]> lock-live;
     in property <[CategoryItem]> lock-movies;
     in property <[CategoryItem]> lock-series;
+    in-out property <string> custom-name;
     callback set-interval(int, int);
     callback pin-create(string, string);
     callback pin-remove();
@@ -1300,6 +1319,31 @@ component SettingsScreen inherits Rectangle {
                 font-size: 14px;
                 wrap: word-wrap;
             }
+            Rectangle { height: 6px; }
+            Text { text: @tr("Your category"); color: Theme.ink; font-size: 16px; font-weight: 600; }
+            Text {
+                text: root.pin-set
+                    ? @tr("Put the channels you want in it with the button under the channel, in Live. It is always locked by the PIN, and so are its channels.")
+                    : @tr("Put the channels you want in it with the button under the channel, in Live. Set a PIN to lock it.");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            if !root.pin-set || root.pin-unlocked: HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    width: 320px;
+                    height: cf.preferred-height;
+                    cf := Field {
+                        width: parent.width;
+                        label: @tr("Name");
+                        placeholder: @tr("My channels");
+                        value <=> root.custom-name;
+                        edited(v) => { root.setting-changed("custom_name", v); }
+                    }
+                }
+            }
+            Rectangle { height: 6px; }
             if root.pin-set && !root.pin-unlocked: HorizontalLayout {
                 spacing: 12px;
                 alignment: start;
@@ -1330,7 +1374,7 @@ component SettingsScreen inherits Rectangle {
                 options: [@tr("Channels"), @tr("Movies"), @tr("Series")];
                 current <=> root.lock-kind;
             }
-            if root.pin-set && root.pin-unlocked && root.lock-shown.length == 0: Text {
+            if root.pin-set && root.pin-unlocked && root.lock-shown.length == 0 && root.lock-kind != 0: Text {
                 text: @tr("No categories here in the source in use.");
                 color: Theme.faint;
                 font-size: 13px;
@@ -2197,6 +2241,9 @@ export component MainWindow inherits Window {
     in property <[CategoryItem]> lock-live;
     in property <[CategoryItem]> lock-movies;
     in property <[CategoryItem]> lock-series;
+    in-out property <string> custom-name;
+    in property <int> top-offset: 2;
+    callback toggle-custom-channel(int);
     // richiesta del PIN aperta, e PIN sbagliato
     in property <bool> pin-prompt;
     in property <bool> pin-error;
@@ -2331,6 +2378,7 @@ export component MainWindow inherits Window {
                 has-hero: root.has-current;
                 no-source: root.no-source;
                 categories: root.top-categories;
+                top-offset: root.top-offset;
                 resume: root.resume;
                 favorites: root.home-favorites;
                 play => { root.watch-current(); }
@@ -2362,6 +2410,7 @@ export component MainWindow inherits Window {
                 pick-category(i) => { root.pick-category(i); }
                 cursor-moved(i) => { root.cursor-moved(i); }
                 toggle-fav(i) => { root.toggle-fav-channel(i); }
+                toggle-custom(i) => { root.toggle-custom-channel(i); }
                 add-source => { root.open-settings-sources(); }
             }
             if root.page == 2: GuideScreen {
@@ -2445,6 +2494,7 @@ export component MainWindow inherits Window {
                 lock-live: root.lock-live;
                 lock-movies: root.lock-movies;
                 lock-series: root.lock-series;
+                custom-name <=> root.custom-name;
                 set-interval(k, i) => { root.set-interval(k, i); }
                 pin-create(a, b) => { root.pin-create(a, b); }
                 pin-remove => { root.pin-remove(); }
