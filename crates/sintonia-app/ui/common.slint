@@ -154,6 +154,10 @@ export global Nav {
     out property <bool> tv: root.mode == 1;
     // un tasto è arrivato a un elemento della finestra (se no il fuoco si era perso: Rust lo rimette)
     in-out property <bool> key-seen;
+    // cresce a ogni tasto premuto (per i tempi «senza tasti»)
+    in-out property <int> key-count;
+    // cresce quando il mouse si muove davvero (lo dice Rust)
+    in-out property <int> mouse-count;
     // sposta il fuoco all'elemento seguente (true) o precedente (false)
     callback step(bool);
 }

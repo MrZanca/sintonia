@@ -2322,7 +2322,15 @@ component PlayerScreen inherits Rectangle {
     property <[string]> aspect-names: [@tr("Auto"), "16:9", "4:3", @tr("Fill the screen")];
     // il puntatore sparisce insieme alle informazioni (Rust lo nasconde anche col mouse fermo)
     callback cursor-hidden(bool);
-    property <bool> hide-cursor: !root.overlay && !root.drawer;
+    // con il telecomando il puntatore compare solo se il mouse si muove davvero, e sparisce al
+    // primo tasto; con il mouse va e viene con le informazioni
+    property <bool> pointer-active;
+    property <int> mouse-moves: Nav.mouse-count;
+    changed mouse-moves => { root.pointer-active = true; }
+    property <int> keys-for-pointer: Nav.key-count;
+    changed keys-for-pointer => { root.pointer-active = false; }
+    property <bool> hide-cursor: Nav.tv ? !root.pointer-active || (!root.overlay && !root.drawer)
+        : (!root.overlay && !root.drawer);
     changed hide-cursor => { root.cursor-hidden(self.hide-cursor); }
     background: #000000;
 
@@ -2333,8 +2341,16 @@ component PlayerScreen inherits Rectangle {
         // in onda: le informazioni restano altri 5 secondi da adesso
         if (Nav.tv && self.video-state == 2 && root.overlay) { root.show-overlay(); }
     }
+    // con il telecomando, sui pulsanti, ogni tasto fa ripartire il tempo (10 secondi invece di 5)
+    property <int> keys-pressed: Nav.key-count;
+    changed keys-pressed => {
+        if (Nav.tv && root.controls-focused) { root.show-overlay(); }
+    }
+    changed controls-focused => {
+        if (Nav.tv && self.controls-focused) { root.show-overlay(); }
+    }
     hide-timer := Timer {
-        interval: 5s;
+        interval: Nav.tv && root.controls-focused ? 10s : 5s;
         running: false;
         triggered => {
             self.stop();
@@ -2342,10 +2358,14 @@ component PlayerScreen inherits Rectangle {
             // partono quando è in onda
             let loading = Nav.tv && !root.on-demand
                 && (Video.state == 1 || Video.state == 3 || Video.state == 5);
-            if (root.drawer || root.controls-hovered || root.controls-focused || root.paused || loading) {
+            // con il telecomando un pulsante con il fuoco non tiene le informazioni: dopo 10 secondi
+            // senza tasti si torna al video
+            let held = root.controls-focused && !Nav.tv;
+            if (root.drawer || root.controls-hovered || held || root.paused || loading) {
                 self.start();
             } else {
                 root.overlay = false;
+                if (Nav.tv && root.controls-focused) { fs.focus(); }
             }
         }
     }
@@ -2377,6 +2397,7 @@ component PlayerScreen inherits Rectangle {
     init => {
         fs.focus();
         root.show-overlay();
+        root.cursor-hidden(root.hide-cursor);
     }
 
     fs := FocusScope {
@@ -2488,7 +2509,7 @@ component PlayerScreen inherits Rectangle {
     if Texts.status(Video.state, Video.attempt) != "": StatusPill { }
     TouchArea {
         // senza informazioni a video sparisce anche il puntatore
-        mouse-cursor: root.overlay || root.drawer ? MouseCursor.default : MouseCursor.none;
+        mouse-cursor: root.hide-cursor ? MouseCursor.none : MouseCursor.default;
         pointer-event(e) => {
             if (e.kind == PointerEventKind.move) {
                 root.show-overlay();
@@ -3370,6 +3391,7 @@ export component MainWindow inherits Window {
         focus-on-click: false;
         capture-key-pressed(event) => {
             Nav.key-seen = true;
+            Nav.key-count += 1;
             reject
         }
         key-pressed(event) => {

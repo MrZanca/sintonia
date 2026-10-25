@@ -192,6 +192,14 @@ pub fn install(main: &MainWindow) {
                 later(&main, crate::zoom::apply);
             }
         }
+        // il mouse si è mosso davvero: il player può rimostrare il puntatore
+        if matches!(event, WinitEvent::CursorMoved { .. }) {
+            if let Some(main) = weak.upgrade() {
+                let nav = main.global::<Nav>();
+                nav.set_mouse_count(nav.get_mouse_count().wrapping_add(1));
+            }
+            return EventResult::Propagate;
+        }
         let WinitEvent::KeyboardInput { event, .. } = event else {
             return EventResult::Propagate;
         };
