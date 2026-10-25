@@ -1272,18 +1272,21 @@ component SourceRow inherits Rectangle {
             if !root.s.active && !root.confirm: Btn {
                 label: @tr("Use");
                 height: 30px;
+                compact: true;
                 enabled: !root.working;
                 clicked => { root.activate(); }
             }
             if !root.confirm: Btn {
                 label: @tr("Refresh");
                 height: 30px;
+                compact: true;
                 enabled: !root.working;
                 clicked => { root.refresh(); }
             }
             if !root.confirm: Btn {
                 label: @tr("Guide");
                 height: 30px;
+                compact: true;
                 enabled: !root.working;
                 clicked => {
                     root.editing = !root.editing;
@@ -1293,6 +1296,7 @@ component SourceRow inherits Rectangle {
             Btn {
                 label: root.confirm ? @tr("Confirm delete") : @tr("Delete");
                 height: 30px;
+                compact: true;
                 danger: root.confirm;
                 enabled: !root.working;
                 clicked => {
@@ -1308,6 +1312,7 @@ component SourceRow inherits Rectangle {
             if root.confirm: Btn {
                 label: @tr("Cancel");
                 height: 30px;
+                compact: true;
                 clicked => { root.confirm = false; }
             }
         }
@@ -1323,6 +1328,7 @@ component SourceRow inherits Rectangle {
             Btn {
                 label: @tr("Use this guide");
                 height: 30px;
+                compact: true;
                 primary: true;
                 clicked => {
                     root.set-epg(root.epg);
@@ -1332,6 +1338,7 @@ component SourceRow inherits Rectangle {
             Btn {
                 label: @tr("Cancel");
                 height: 30px;
+                compact: true;
                 clicked => { root.editing = false; }
             }
         }
@@ -1513,7 +1520,7 @@ component SettingsScreen inherits Rectangle {
             spacing: 20px;
             alignment: start;
             Panel {
-                width: 400px;
+                width: 440px;
                 VerticalLayout {
                     padding: 20px;
                     spacing: 8px;
@@ -1548,7 +1555,7 @@ component SettingsScreen inherits Rectangle {
                 }
             }
             Panel {
-                width: 480px;
+                width: 460px;
                 VerticalLayout {
                     padding: 20px;
                     alignment: start;

@@ -429,13 +429,15 @@ export component Btn inherits Rectangle {
     // false: il pulsante sparisce e non occupa spazio (resta raggiungibile per nome, a differenza
     // di un `if`)
     in property <bool> shown: true;
+    // pulsante piccolo, con meno spazio ai lati (le righe con tanti pulsanti)
+    in property <bool> compact;
     out property <bool> hovered: ta.has-hover;
     out property <bool> focused: press.has-focus;
     callback clicked;
     forward-focus: press;
     height: Nav.tv ? 44px : 38px;
     horizontal-stretch: 0;
-    width: root.shown ? t.preferred-width + 40px : 0px;
+    width: root.shown ? t.preferred-width + (root.compact ? 26px : 40px) : 0px;
     visible: root.shown;
     opacity: root.enabled ? 1 : 0.4;
     Sq {
