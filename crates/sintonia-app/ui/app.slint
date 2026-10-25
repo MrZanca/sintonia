@@ -1994,7 +1994,7 @@ component SettingsScreen inherits Rectangle {
                             x: 0;
                             width: keys-fl.width;
                             spacing: 6px;
-                            for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home"), @tr("Back"), @tr("Search"), @tr("Next channel"), @tr("Previous channel")]: kr := Rectangle {
+                            for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home"), @tr("Back"), @tr("Search"), @tr("Next channel"), @tr("Previous channel"), @tr("Open the Settings")]: kr := Rectangle {
                                 height: 44px;
                                 // con le frecce la riga del pulsante attivo resta in vista
                                 property <bool> focused: cb.focused;
@@ -3296,6 +3296,11 @@ export component MainWindow inherits Window {
             if (Keys.is(9, event.text)) {
                 root.playing = false;
                 root.search-focus-tick += 1;
+                return accept;
+            }
+            if (Keys.is(12, event.text)) {
+                root.playing = false;
+                root.page = 4;
                 return accept;
             }
             if ((Keys.is(10, event.text) || Keys.is(11, event.text)) && root.playing) {

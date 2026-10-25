@@ -11,7 +11,7 @@ use crate::settings::Language;
 
 /// Le azioni, nell'ordine dell'interfaccia: nome nell'archivio e tasto di partenza (con mouse e
 /// tastiera; quelli del telecomando in [`defaults`]).
-pub const ACTIONS: [(&str, &str); 12] = [
+pub const ACTIONS: [(&str, &str); 13] = [
     ("fullscreen", "f"),
     ("pip", "p"),
     ("mute", "m"),
@@ -24,6 +24,7 @@ pub const ACTIONS: [(&str, &str); 12] = [
     ("search", ""),
     ("channel_next", ""),
     ("channel_prev", ""),
+    ("settings", ""),
 ];
 
 /// I tasti in più dei telecomandi, come arrivano (vedi `remote.rs`), con il loro nome.

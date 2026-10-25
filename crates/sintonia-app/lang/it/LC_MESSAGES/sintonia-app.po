@@ -636,3 +636,6 @@ msgstr "Canale successivo"
 
 msgid "Previous channel"
 msgstr "Canale precedente"
+
+msgid "Open the Settings"
+msgstr "Apri le Impostazioni"
