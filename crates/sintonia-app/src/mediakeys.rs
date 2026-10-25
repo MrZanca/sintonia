@@ -118,6 +118,19 @@ mod imp {
         fn CallNextHookEx(hook: isize, code: i32, wparam: usize, lparam: isize) -> isize;
         fn GetForegroundWindow() -> isize;
         fn GetWindowThreadProcessId(hwnd: isize, process: *mut u32) -> u32;
+        fn GetMessageW(msg: *mut Msg, hwnd: isize, min: u32, max: u32) -> i32;
+    }
+
+    /// `MSG`
+    #[repr(C)]
+    struct Msg {
+        hwnd: isize,
+        message: u32,
+        wparam: usize,
+        lparam: isize,
+        time: u32,
+        pt: [i32; 2],
+        private: u32,
     }
 
     #[link(name = "kernel32")]
@@ -165,8 +178,12 @@ mod imp {
                     let held = &HELD[(info.vk_code - 0xAD) as usize];
                     if wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN {
                         let repeat = held.swap(true, Ordering::Relaxed);
-                        log::debug!("tasto del volume {key:?} (ripetuto: {repeat})");
-                        if deliver(key, repeat) {
+                        // l'aggancio gira in un suo thread: il volume lo cambia il thread
+                        // dell'interfaccia
+                        let sent = slint::invoke_from_event_loop(move || {
+                            deliver(key, repeat);
+                        });
+                        if sent.is_ok() {
                             return 1;
                         }
                     } else {
@@ -201,22 +218,40 @@ mod imp {
             return true;
         }
         WINDOW.store(hwnd, Ordering::Relaxed);
-        // SAFETY: GetModuleHandleW(NULL) restituisce il modulo dell'eseguibile; `keyboard_hook` ha
-        // la firma di una HOOKPROC e l'aggancio vive quanto l'app (il thread dell'interfaccia ha
-        // il ciclo dei messaggi che Windows richiede).
-        let hook = unsafe {
-            SetWindowsHookExW(
-                WH_KEYBOARD_LL,
-                keyboard_hook as *const () as usize as isize,
-                GetModuleHandleW(std::ptr::null()),
-                0,
-            )
-        };
-        if hook == 0 {
-            log::warn!("aggancio alla tastiera non riuscito");
-        } else {
-            log::debug!("aggancio alla tastiera attivo");
-        }
+        // l'aggancio sta in un thread tutto suo, con il suo ciclo dei messaggi: se il thread
+        // dell'interfaccia è occupato (per esempio a disegnare il video) Windows non lo toglie
+        let started = std::thread::Builder::new()
+            .name("tasti del volume".into())
+            .spawn(|| {
+                // SAFETY: GetModuleHandleW(NULL) restituisce il modulo dell'eseguibile;
+                // `keyboard_hook` ha la firma di una HOOKPROC e l'aggancio vive quanto il thread.
+                let hook = unsafe {
+                    SetWindowsHookExW(
+                        WH_KEYBOARD_LL,
+                        keyboard_hook as *const () as usize as isize,
+                        GetModuleHandleW(std::ptr::null()),
+                        0,
+                    )
+                };
+                if hook == 0 {
+                    log::warn!("aggancio alla tastiera non riuscito");
+                    return;
+                }
+                log::debug!("aggancio alla tastiera attivo");
+                let mut msg = Msg {
+                    hwnd: 0,
+                    message: 0,
+                    wparam: 0,
+                    lparam: 0,
+                    time: 0,
+                    pt: [0, 0],
+                    private: 0,
+                };
+                // SAFETY: `msg` è una struttura MSG valida in cui Windows scrive; il ciclo serve
+                // solo a far arrivare gli eventi all'aggancio.
+                while unsafe { GetMessageW(&mut msg, 0, 0, 0) } > 0 {}
+            })
+            .is_ok();
         let ours = window_proc as *const () as usize as isize;
         // SAFETY: `hwnd` è la finestra principale, viva per tutta l'app e creata da questo thread;
         // `window_proc` ha la firma di una WNDPROC e richiama sempre la procedura precedente.
@@ -224,7 +259,7 @@ mod imp {
         if previous != 0 {
             PREVIOUS.store(previous, Ordering::Relaxed);
         }
-        hook != 0 || previous != 0
+        started || previous != 0
     }
 }
 
