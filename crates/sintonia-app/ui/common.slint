@@ -165,6 +165,8 @@ export global Keys {
     in property <[string]> labels;
     // l'ultimo tasto arrivato (per scoprire che cosa manda un tasto del telecomando)
     in property <string> last;
+    // le Impostazioni aspettano il tasto da assegnare a un'azione
+    in-out property <bool> capturing;
     callback set-key(int, string);
     callback reset();
     // «indietro»: Rust preme Esc

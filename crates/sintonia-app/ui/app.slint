@@ -1452,6 +1452,16 @@ component SettingsScreen inherits Rectangle {
     property <int> lock-kind: 0;
     // Tasti: l'azione che aspetta il suo tasto (-1 nessuna)
     property <int> capturing: -1;
+    // dopo la scelta di un tasto il fuoco torna al suo «Cambia» (non al menu)
+    property <int> refocus-row: -1;
+    property <int> refocus-tick;
+    // Rust intanto non deve dare ai tasti speciali del telecomando la loro funzione fissa
+    changed capturing => { Keys.capturing = self.capturing >= 0; }
+    function captured(row: int) {
+        root.capturing = -1;
+        root.refocus-row = row;
+        root.refocus-tick += 1;
+    }
     property <[CategoryItem]> lock-shown: root.lock-kind == 1 ? root.lock-movies : (root.lock-kind == 2 ? root.lock-series : root.lock-live);
     changed pin-set => {
         root.new-pin = "";
@@ -1946,7 +1956,7 @@ component SettingsScreen inherits Rectangle {
                         font-weight: 600;
                     }
                     Text {
-                        text: @tr("Press Change, then the key. Esc cancels. The arrows, OK and Back can't be changed.");
+                        text: @tr("Press Change, then the key. Back or Esc cancels. Arrows, OK, Back, Home, Play/Pause and the volume keys have a fixed job and can't be chosen.");
                         color: Theme.dim;
                         font-size: 13px;
                         wrap: word-wrap;
@@ -1960,8 +1970,7 @@ component SettingsScreen inherits Rectangle {
                         key-pressed(event) => {
                             if (root.capturing < 0) { return reject; }
                             if (event.text == Key.Escape) {
-                                root.capturing = -1;
-                                menu.focus();
+                                root.captured(root.capturing);
                                 return accept;
                             }
                             // i tasti per muoversi e quelli che da soli non fanno niente non si assegnano
@@ -1974,8 +1983,7 @@ component SettingsScreen inherits Rectangle {
                                 return accept;
                             }
                             Keys.set-key(root.capturing, event.text);
-                            root.capturing = -1;
-                            menu.focus();
+                            root.captured(root.capturing);
                             accept
                         }
                     }
@@ -1986,8 +1994,26 @@ component SettingsScreen inherits Rectangle {
                             x: 0;
                             width: keys-fl.width;
                             spacing: 6px;
-                            for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home"), @tr("Back"), @tr("Search"), @tr("Next channel"), @tr("Previous channel")]: Rectangle {
+                            for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home"), @tr("Back"), @tr("Search"), @tr("Next channel"), @tr("Previous channel")]: kr := Rectangle {
                                 height: 44px;
+                                // con le frecce la riga del pulsante attivo resta in vista
+                                property <bool> focused: cb.focused;
+                                changed focused => {
+                                    if (!self.focused) {
+                                        return;
+                                    }
+                                    if (self.y + keys-fl.content-y < 0px) {
+                                        keys-fl.content-y = -self.y;
+                                    } else if (self.y + self.height + keys-fl.content-y > keys-fl.height) {
+                                        keys-fl.content-y = keys-fl.height - self.y - self.height;
+                                    }
+                                }
+                                property <int> tick: root.refocus-tick;
+                                changed tick => {
+                                    if (root.refocus-row == i) {
+                                        cb.focus();
+                                    }
+                                }
                                 Sq {
                                     r: 18px;
                                     fill: root.capturing == i ? #ffffff26 : Theme.glass;
@@ -2016,7 +2042,7 @@ component SettingsScreen inherits Rectangle {
                                     }
                                     VerticalLayout {
                                         alignment: center;
-                                        Btn {
+                                        cb := Btn {
                                             label: @tr("Change");
                                             height: 34px;
                                             clicked => {

@@ -161,6 +161,15 @@ pub fn install(main: &MainWindow) {
             }
         }
         if let Some(action) = remote_action(&event.logical_key) {
+            // mentre le Impostazioni aspettano un tasto, Home, Play/Pausa e OK del telecomando
+            // non fanno niente (Indietro sì: annulla); gli altri diventano tasti assegnabili
+            let fixed = matches!(
+                action,
+                Action::Home | Action::Press(Key::Space) | Action::Press(Key::Return)
+            );
+            if fixed && main.global::<Keys>().get_capturing() {
+                return EventResult::PreventDefault;
+            }
             if event.state.is_pressed() {
                 log::debug!("telecomando: {:?} → {action:?}", event.logical_key);
                 later(&main, move |main| match action {
