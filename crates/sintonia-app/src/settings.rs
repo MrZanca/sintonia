@@ -69,6 +69,8 @@ pub struct Settings {
     pub volume: u32,
     /// Lo sfondo si sposta verso il mouse.
     pub bg_motion: bool,
+    /// Grandezza dei testi: 0 normale, 1 grande (1,25×).
+    pub text_size: u32,
     /// I tasti del volume (telecomando, tastiere multimediali) regolano Sintonia e non Windows.
     pub media_volume: bool,
     /// Il tasto di ogni azione, nell'ordine di [`crate::keys::ACTIONS`] ("" = nessuno): con il
@@ -173,6 +175,7 @@ impl Settings {
             remote: false,
             volume: 100,
             bg_motion: true,
+            text_size: 0,
             media_volume: true,
             keys: crate::keys::defaults(false),
             remote_keys: crate::keys::defaults(true),
@@ -221,6 +224,7 @@ impl Settings {
             "live_preview" => self.live_preview = flag,
             "update_check" => self.update_check = flag,
             "bg_motion" => self.bg_motion = flag,
+            "text_size" => self.text_size = value.trim().parse::<u32>().unwrap_or(0).min(1),
             "media_volume" => self.media_volume = flag,
             "navigation" => self.remote = value == "remote",
             "volume" => {
@@ -312,6 +316,16 @@ mod tests {
         assert_eq!(s.remote_keys[1], "p");
         assert_eq!(s.keys[0], "f");
         assert_eq!(s.keys.len(), crate::keys::ACTIONS.len());
+    }
+
+    #[test]
+    fn text_size() {
+        let big = [("text_size".to_owned(), "1".to_owned())];
+        assert_eq!(Settings::from_pairs(&big, Language::Italian).text_size, 1);
+        // «molto grande» non c'è più: diventa «grande»
+        let old = [("text_size".to_owned(), "2".to_owned())];
+        assert_eq!(Settings::from_pairs(&old, Language::Italian).text_size, 1);
+        assert_eq!(Settings::defaults(Language::Italian).text_size, 0);
     }
 
     #[test]

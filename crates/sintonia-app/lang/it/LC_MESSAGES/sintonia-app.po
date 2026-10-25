@@ -642,3 +642,13 @@ msgstr "Apri le Impostazioni"
 
 msgid "Last channel watched"
 msgstr "Ultimo canale guardato"
+
+msgid "Text size"
+msgstr "Dimensione dei testi"
+
+msgid "Normal"
+msgstr "Normale"
+
+msgid "Large"
+msgstr "Grande"
+

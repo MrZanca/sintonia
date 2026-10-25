@@ -5,7 +5,7 @@
 import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Nav, Keys, Press, ChoiceList, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo, NowNext } from "common.slint";
 import { MediaScreen } from "media.slint";
 import { GuideScreen, GuideRow, DayItem } from "guide.slint";
-export { Video, Texts, Nav, Keys, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
+export { Video, Texts, Nav, Keys, Theme, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
 export { GuideRow, GuideBlock, DayItem } from "guide.slint";
 
 // ───────────── Sfondo ─────────────
@@ -90,7 +90,7 @@ component TopBar inherits HorizontalLayout {
         Text {
             text: "Sintonia";
             color: Theme.ink;
-            font-size: 24px;
+            font-size: 24px * Theme.text-scale;
             font-weight: 700;
             vertical-alignment: center;
         }
@@ -109,7 +109,7 @@ component TopBar inherits HorizontalLayout {
                 Text {
                     text: @tr("Sintonia {} is out · Download", root.update-version);
                     color: Theme.ink;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     font-weight: 600;
                     vertical-alignment: center;
                 }
@@ -170,7 +170,7 @@ component TopBar inherits HorizontalLayout {
                 height: parent.height;
                 text <=> root.search;
                 color: Theme.ink;
-                font-size: 14px;
+                font-size: 14px * Theme.text-scale;
                 vertical-alignment: center;
                 single-line: true;
                 edited => { root.search-edited(self.text); }
@@ -194,13 +194,13 @@ component TopBar inherits HorizontalLayout {
             x: 40px;
             text: @tr("Search channels");
             color: Theme.faint;
-            font-size: 14px;
+            font-size: 14px * Theme.text-scale;
         }
     }
     Text {
         text: root.clock;
         color: Theme.ink;
-        font-size: 26px;
+        font-size: 26px * Theme.text-scale;
         font-weight: 300;
         vertical-alignment: center;
     }
@@ -256,7 +256,7 @@ component Dock inherits Rectangle {
             reject
         }
     }
-    property <length> dw: 640px;
+    property <length> dw: 640px * Theme.grow;
     property <length> sw: root.dw / 4;
     Rectangle {
         width: root.dw + 40px;
@@ -313,7 +313,7 @@ component Dock inherits Rectangle {
                 Text {
                     text: it;
                     color: root.current == i ? Theme.ink : Theme.dim;
-                    font-size: 15px;
+                    font-size: 15px * Theme.text-scale;
                     font-weight: root.current == i ? 700 : 400;
                     vertical-alignment: center;
                 }
@@ -333,7 +333,7 @@ component ChannelLine inherits Rectangle {
     in property <bool> playing;
     callback clicked;
     callback activated;
-    height: 52px;
+    height: 52px * Theme.grow;
     Sq {
         r: 16px;
         fill: root.active ? #ffffff26 : (ta.has-hover ? #ffffff10 : transparent);
@@ -349,7 +349,7 @@ component ChannelLine inherits Rectangle {
             width: 46px;
             color: root.playing ? Theme.needle : (root.active ? Theme.ink : Theme.faint);
             // dalle 5 cifre in su più piccolo, se no esce dalla colonna
-            font-size: root.c.num.character-count > 4 ? 15px : 20px;
+            font-size: (root.c.num.character-count > 4 ? 15px : 20px) * Theme.text-scale;
             font-weight: 300;
             vertical-alignment: center;
         }
@@ -364,7 +364,7 @@ component ChannelLine inherits Rectangle {
             Text {
                 text: root.c.name;
                 color: Theme.ink;
-                font-size: 15px;
+                font-size: 15px * Theme.text-scale;
                 font-weight: 600;
                 overflow: elide;
             }
@@ -372,7 +372,7 @@ component ChannelLine inherits Rectangle {
             Text {
                 text: root.c.now-title != "" ? root.c.now-title : root.c.group;
                 color: Theme.dim;
-                font-size: 12px;
+                font-size: 12px * Theme.text-scale;
                 overflow: elide;
             }
         }
@@ -380,7 +380,7 @@ component ChannelLine inherits Rectangle {
             text: root.playing ? "●" : (root.c.fav ? "★" : "");
             width: 14px;
             color: root.playing ? Theme.live : Theme.needle;
-            font-size: root.playing ? 12px : 14px;
+            font-size: (root.playing ? 12px : 14px) * Theme.text-scale;
             vertical-alignment: center;
         }
     }
@@ -398,7 +398,7 @@ component ChannelList inherits Rectangle {
     in property <bool> focused: true;
     callback clicked(int);
     callback activated(int);
-    property <length> row-h: Nav.tv ? 60px : 52px;
+    property <length> row-h: (Nav.tv ? 60px : 52px) * Theme.grow;
     property <int> count: root.model.length;
     clip: true;
 
@@ -508,7 +508,7 @@ component Preview inherits Rectangle {
             x: 24px;
             text: @tr("On air") + " · " + root.c.num;
             color: Theme.ink;
-            font-size: 12px;
+            font-size: 12px * Theme.text-scale;
             font-weight: 600;
         }
     }
@@ -518,7 +518,7 @@ component Preview inherits Rectangle {
         width: parent.width - 36px;
         text: root.c.name;
         color: Theme.ink;
-        font-size: 16px;
+        font-size: 16px * Theme.text-scale;
         font-weight: 600;
         overflow: elide;
     }
@@ -541,7 +541,7 @@ component HomeThumb inherits Rectangle {
     if !root.item.has-image && root.item.kind == 0: Text {
         text: root.item.num;
         color: #ffffffb0;
-        font-size: 18px;
+        font-size: 18px * Theme.text-scale;
         font-weight: 300;
     }
 }
@@ -598,14 +598,14 @@ component HomeRow inherits Rectangle {
                     Text {
                         text: item.title;
                         color: Theme.ink;
-                        font-size: 16px;
+                        font-size: 16px * Theme.text-scale;
                         font-weight: 600;
                         overflow: elide;
                     }
                     Text {
                         text: item.subtitle;
                         color: Theme.dim;
-                        font-size: 12px;
+                        font-size: 12px * Theme.text-scale;
                         overflow: elide;
                     }
                     if root.resume && item.progress > 0: Rectangle {
@@ -657,14 +657,14 @@ component HomeCats inherits Rectangle {
                 Text {
                     text: Texts.category(c);
                     color: Theme.ink;
-                    font-size: 15px;
+                    font-size: 15px * Theme.text-scale;
                     font-weight: 600;
                     overflow: elide;
                 }
                 Text {
                     text: Texts.channels(c.count);
                     color: Theme.dim;
-                    font-size: 12px;
+                    font-size: 12px * Theme.text-scale;
                 }
             }
             if c.locked: Icon {
@@ -758,7 +758,7 @@ component HomeScreen inherits Rectangle {
             HorizontalLayout {
                 spacing: 34px;
                 alignment: start;
-                height: 262px;
+                height: 262px * Theme.grow;
                 Rectangle {
                     width: 466px;
                     // sotto l'anteprima, così il suo pulsante muto riceve i clic
@@ -772,26 +772,26 @@ component HomeScreen inherits Rectangle {
                     Text {
                         text: @tr("On now");
                         color: Theme.dim;
-                        font-size: 14px;
+                        font-size: 14px * Theme.text-scale;
                     }
                     Text {
                         text: root.hero.name;
                         color: Theme.ink;
-                        font-size: 36px;
+                        font-size: 36px * Theme.text-scale;
                         font-weight: 700;
                         overflow: elide;
                     }
                     Text {
                         text: root.hero.group;
                         color: Theme.ink;
-                        font-size: 18px;
+                        font-size: 18px * Theme.text-scale;
                     }
                     if root.hero.now-title != "": Rectangle { height: 4px; }
                     if root.hero.now-title != "": NowNext { c: root.hero; bar-width: 300px; label: false; }
                     Text {
                         text: @tr("Channel {}", root.hero.num);
                         color: Theme.dim;
-                        font-size: 13px;
+                        font-size: 13px * Theme.text-scale;
                     }
                     Rectangle { height: 8px; }
                     HorizontalLayout {
@@ -807,7 +807,7 @@ component HomeScreen inherits Rectangle {
             if root.resume.length > 0: Title { text: @tr("Continue watching"); }
             rr := HomeRow {
                 visible: root.resume.length > 0;
-                height: self.visible ? 120px : 0px;
+                height: self.visible ? 120px * Theme.grow : 0px;
                 model: root.resume;
                 resume: true;
                 open(i) => { root.open-resume(i); }
@@ -816,7 +816,7 @@ component HomeScreen inherits Rectangle {
             if root.favorites.length > 0: Title { text: @tr("Favorites"); }
             fr := HomeRow {
                 visible: root.favorites.length > 0;
-                height: self.visible ? 96px : 0px;
+                height: self.visible ? 96px * Theme.grow : 0px;
                 card-w: 240px;
                 model: root.favorites;
                 open(i) => { root.open-favorite(i); }
@@ -828,7 +828,7 @@ component HomeScreen inherits Rectangle {
             // e la categoria personalizzata
             cr := HomeCats {
                 visible: root.first-use;
-                height: self.visible ? 84px : 0px;
+                height: self.visible ? 84px * Theme.grow : 0px;
                 model: root.categories;
                 open(i) => { root.open-category(i + root.top-offset); }
             }
@@ -887,7 +887,7 @@ component VolumeBtn inherits Rectangle {
             y: 10px;
             text: Video.muted ? "0" : Video.volume;
             color: Theme.ink;
-            font-size: 12px;
+            font-size: 12px * Theme.text-scale;
             font-weight: 600;
             horizontal-alignment: center;
             width: parent.width;
@@ -1065,14 +1065,14 @@ component LiveScreen inherits Rectangle {
             if root.channels.length > 0: Text {
                 text: root.cur.name;
                 color: Theme.ink;
-                font-size: 30px;
+                font-size: 30px * Theme.text-scale;
                 font-weight: 700;
                 wrap: word-wrap;
             }
             if root.channels.length > 0: Text {
                 text: root.cur.group;
                 color: Theme.dim;
-                font-size: 15px;
+                font-size: 15px * Theme.text-scale;
             }
             if root.channels.length > 0 && root.cur.now-title != "": Rectangle { height: 6px; }
             if root.channels.length > 0 && root.cur.now-title != "": NowNext {
@@ -1083,7 +1083,7 @@ component LiveScreen inherits Rectangle {
             if root.cur.drm && root.channels.length > 0: Text {
                 text: @tr("This channel declares a DRM protection: it may not play.");
                 color: Theme.faint;
-                font-size: 13px;
+                font-size: 13px * Theme.text-scale;
                 wrap: word-wrap;
             }
             if root.channels.length > 0: Rectangle { height: 12px; }
@@ -1107,19 +1107,19 @@ component LiveScreen inherits Rectangle {
             if root.channels.length == 0 && root.search != "": Text {
                 text: @tr("No channels match your search.");
                 color: Theme.dim;
-                font-size: 15px;
+                font-size: 15px * Theme.text-scale;
             }
             // 2: la categoria personalizzata
             if root.channels.length == 0 && root.search == "" && root.category == 2: Text {
                 text: @tr("No channels here yet: choose a channel in another category and press the lock button.");
                 color: Theme.dim;
-                font-size: 15px;
+                font-size: 15px * Theme.text-scale;
                 wrap: word-wrap;
             }
             if root.channels.length == 0 && root.search == "" && root.category == 1: Text {
                 text: @tr("No favorite channels yet: choose a channel and press the star.");
                 color: Theme.dim;
-                font-size: 15px;
+                font-size: 15px * Theme.text-scale;
                 wrap: word-wrap;
             }
         }
@@ -1143,11 +1143,11 @@ component Field inherits VerticalLayout {
     spacing: 6px;
     Text {
         text: root.label;
-        font-size: 13px;
+        font-size: 13px * Theme.text-scale;
         color: Theme.dim;
     }
     Rectangle {
-        height: 44px;
+        height: 44px * Theme.grow;
         Sq {
             r: 22px;
             fill: Theme.glass;
@@ -1160,7 +1160,7 @@ component Field inherits VerticalLayout {
             height: parent.height;
             text <=> root.value;
             color: Theme.ink;
-            font-size: 15px;
+            font-size: 15px * Theme.text-scale;
             vertical-alignment: center;
             single-line: true;
             input-type: root.password ? InputType.password : InputType.text;
@@ -1180,7 +1180,7 @@ component Field inherits VerticalLayout {
             overflow: elide;
             text: root.placeholder;
             color: Theme.faint;
-            font-size: 15px;
+            font-size: 15px * Theme.text-scale;
         }
     }
 }
@@ -1191,7 +1191,7 @@ component SetRow inherits Rectangle {
     // con il telecomando: il menu ha il fuoco e questa è la voce aperta
     in property <bool> focused;
     callback clicked;
-    height: 52px;
+    height: 52px * Theme.grow;
     Sq {
         r: 18px;
         fill: root.active ? #ffffff26 : (ta.has-hover ? #ffffff10 : transparent);
@@ -1202,7 +1202,7 @@ component SetRow inherits Rectangle {
         x: 22px;
         text: root.label;
         color: root.active ? Theme.ink : Theme.dim;
-        font-size: 16px;
+        font-size: 16px * Theme.text-scale;
         font-weight: root.active ? 700 : 400;
         horizontal-alignment: left;
     }
@@ -1239,7 +1239,7 @@ component SourceRow inherits Rectangle {
             Text {
                 text: root.s.name;
                 color: Theme.ink;
-                font-size: 16px;
+                font-size: 16px * Theme.text-scale;
                 font-weight: 600;
                 overflow: elide;
                 horizontal-stretch: 1;
@@ -1247,7 +1247,7 @@ component SourceRow inherits Rectangle {
             Text {
                 text: root.s.active ? @tr("In use") : "";
                 color: Theme.needle;
-                font-size: 13px;
+                font-size: 13px * Theme.text-scale;
                 font-weight: 700;
             }
         }
@@ -1257,13 +1257,13 @@ component SourceRow inherits Rectangle {
                 + (root.s.kind == 2 ? " · " + @tr("{n} movie" | "{n} movies" % root.s.movies) + " · " + @tr("{n} series" | "{n} series" % root.s.series) : "")
                 + (root.s.expires != "" ? " · " + @tr("expires {}", root.s.expires) : "");
             color: Theme.dim;
-            font-size: 12px;
+            font-size: 12px * Theme.text-scale;
             overflow: elide;
         }
         if Texts.source-epg(root.s) != "": Text {
             text: Texts.source-epg(root.s);
             color: root.s.epg-state == 3 ? Theme.live : Theme.faint;
-            font-size: 12px;
+            font-size: 12px * Theme.text-scale;
             overflow: elide;
         }
         Rectangle { height: 4px; }
@@ -1274,21 +1274,21 @@ component SourceRow inherits Rectangle {
             // (con tutti i pulsanti la riga non starebbe nella colonna)
             if !root.s.active && !root.confirm: Btn {
                 label: @tr("Use");
-                height: 30px;
+                height: 30px * Theme.grow;
                 compact: true;
                 enabled: !root.working;
                 clicked => { root.activate(); }
             }
             if !root.confirm: Btn {
                 label: @tr("Refresh");
-                height: 30px;
+                height: 30px * Theme.grow;
                 compact: true;
                 enabled: !root.working;
                 clicked => { root.refresh(); }
             }
             if !root.confirm: Btn {
                 label: @tr("Guide");
-                height: 30px;
+                height: 30px * Theme.grow;
                 compact: true;
                 enabled: !root.working;
                 clicked => {
@@ -1298,7 +1298,7 @@ component SourceRow inherits Rectangle {
             }
             Btn {
                 label: root.confirm ? @tr("Confirm delete") : @tr("Delete");
-                height: 30px;
+                height: 30px * Theme.grow;
                 compact: true;
                 danger: root.confirm;
                 enabled: !root.working;
@@ -1314,7 +1314,7 @@ component SourceRow inherits Rectangle {
             }
             if root.confirm: Btn {
                 label: @tr("Cancel");
-                height: 30px;
+                height: 30px * Theme.grow;
                 compact: true;
                 clicked => { root.confirm = false; }
             }
@@ -1330,7 +1330,7 @@ component SourceRow inherits Rectangle {
             alignment: start;
             Btn {
                 label: @tr("Use this guide");
-                height: 30px;
+                height: 30px * Theme.grow;
                 compact: true;
                 primary: true;
                 clicked => {
@@ -1340,7 +1340,7 @@ component SourceRow inherits Rectangle {
             }
             Btn {
                 label: @tr("Cancel");
-                height: 30px;
+                height: 30px * Theme.grow;
                 compact: true;
                 clicked => { root.editing = false; }
             }
@@ -1369,14 +1369,14 @@ component SwitchRow inherits Rectangle {
             Text {
                 text: root.label;
                 color: Theme.ink;
-                font-size: 16px;
+                font-size: 16px * Theme.text-scale;
                 font-weight: 600;
                 wrap: word-wrap;
             }
             if root.detail != "": Text {
                 text: root.detail;
                 color: Theme.dim;
-                font-size: 12px;
+                font-size: 12px * Theme.text-scale;
                 wrap: word-wrap;
             }
         }
@@ -1495,7 +1495,7 @@ component SettingsScreen inherits Rectangle {
         // a schermo intero le colonne non si allungano: lo spazio in più resta a destra
         alignment: start;
         Panel {
-            width: 260px;
+            width: 260px + (Theme.grow - 1) * 90px;
             VerticalLayout {
                 padding: 10px;
                 alignment: start;
@@ -1561,7 +1561,7 @@ component SettingsScreen inherits Rectangle {
                     Text {
                         text: @tr("Sintonia doesn't provide channels: add your own playlist or account.");
                         color: Theme.faint;
-                        font-size: 13px;
+                        font-size: 13px * Theme.text-scale;
                         wrap: word-wrap;
                     }
                     Rectangle { height: 12px; }
@@ -1603,7 +1603,7 @@ component SettingsScreen inherits Rectangle {
                         }
                         VerticalLayout {
                             alignment: end;
-                            Btn { label: @tr("Choose…"); height: 44px; clicked => { root.pick-file(); } }
+                            Btn { label: @tr("Choose…"); height: 44px * Theme.grow; clicked => { root.pick-file(); } }
                         }
                     }
                     Field {
@@ -1634,7 +1634,7 @@ component SettingsScreen inherits Rectangle {
                     if root.status.state != 0: Text {
                         text: Texts.source-result(root.status);
                         color: root.status.state == 4 ? Theme.live : (root.status.state == 1 ? Theme.dim : Theme.ok);
-                        font-size: 14px;
+                        font-size: 14px * Theme.text-scale;
                         wrap: word-wrap;
                     }
                 }
@@ -1653,10 +1653,20 @@ component SettingsScreen inherits Rectangle {
                     current: root.language;
                     picked(i) => { root.set-language(i); }
                 }
+                Rectangle { height: 8px; }
+                Title { text: @tr("Text size"); }
+                Tabs {
+                    options: [@tr("Normal"), @tr("Large")];
+                    current: Theme.text-scale >= 1.1 ? 1 : 0;
+                    clicked(i) => {
+                        Theme.text-scale = i == 1 ? 1.25 : 1;
+                        root.setting-changed("text_size", i == 1 ? "1" : "0");
+                    }
+                }
                 Text {
                     text: @tr("Changes immediately, no restart needed.");
                     color: Theme.faint;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                 }
             }
         }
@@ -1706,18 +1716,18 @@ component SettingsScreen inherits Rectangle {
                 Text {
                     text: @tr("Sintonia downloads the playlist and the program guide of the source in use again when they are older than this. It checks at startup and every 10 minutes.");
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     wrap: word-wrap;
                 }
                 Rectangle { height: 4px; }
-                Text { text: @tr("Playlist (channels, movies and series)"); color: Theme.ink; font-size: 16px; font-weight: 600; }
+                Text { text: @tr("Playlist (channels, movies and series)"); color: Theme.ink; font-size: 16px * Theme.text-scale; font-weight: 600; }
                 Tabs {
                     options: [@tr("Never"), @tr("6 hours"), @tr("12 hours"), @tr("1 day"), @tr("3 days"), @tr("1 week")];
                     current: root.playlist-interval;
                     clicked(i) => { root.set-interval(0, i); }
                 }
                 Rectangle { height: 8px; }
-                Text { text: @tr("Program guide"); color: Theme.ink; font-size: 16px; font-weight: 600; }
+                Text { text: @tr("Program guide"); color: Theme.ink; font-size: 16px * Theme.text-scale; font-weight: 600; }
                 Tabs {
                     options: [@tr("Never"), @tr("6 hours"), @tr("12 hours"), @tr("1 day"), @tr("3 days"), @tr("1 week")];
                     current: root.epg-interval;
@@ -1742,7 +1752,7 @@ component SettingsScreen inherits Rectangle {
                 Text {
                     text: @tr("Locked categories disappear from every list, from search and from the Home until the PIN is entered. The PIN is asked again every time Sintonia starts.");
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     wrap: word-wrap;
                 }
                 if !root.pin-set: HorizontalLayout {
@@ -1773,7 +1783,7 @@ component SettingsScreen inherits Rectangle {
                         : (root.pin-message == 2 ? @tr("The PIN must have 4 to 8 digits, numbers only.")
                         : (root.pin-message == 3 ? @tr("PIN set. Now choose the categories to lock.") : @tr("PIN removed: nothing is locked any more.")));
                     color: root.pin-message <= 2 ? Theme.live : Theme.ok;
-                    font-size: 14px;
+                    font-size: 14px * Theme.text-scale;
                     wrap: word-wrap;
                 }
                 if root.pin-set && !root.pin-unlocked: HorizontalLayout {
@@ -1782,7 +1792,7 @@ component SettingsScreen inherits Rectangle {
                     Text {
                         text: @tr("Enter the PIN to choose the locked categories.");
                         color: Theme.ink;
-                        font-size: 15px;
+                        font-size: 15px * Theme.text-scale;
                         vertical-alignment: center;
                     }
                     Btn { label: @tr("Enter PIN"); primary: true; clicked => { root.pin-unlock(); } }
@@ -1801,7 +1811,7 @@ component SettingsScreen inherits Rectangle {
                 if root.pin-set && root.pin-unlocked && root.lock-shown.length == 0 && root.lock-kind != 0: Text {
                     text: @tr("No categories here in the source in use.");
                     color: Theme.faint;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                 }
                 // a larghezza limitata in un suo HorizontalLayout, se no limita tutta la colonna
                 if root.pin-set && root.pin-unlocked: HorizontalLayout {
@@ -1840,7 +1850,7 @@ component SettingsScreen inherits Rectangle {
                                 Text {
                                     text: Texts.category(c);
                                     color: Theme.ink;
-                                    font-size: 15px;
+                                    font-size: 15px * Theme.text-scale;
                                     font-weight: c.locked ? 700 : 400;
                                     vertical-alignment: center;
                                     overflow: elide;
@@ -1848,7 +1858,7 @@ component SettingsScreen inherits Rectangle {
                                 Text {
                                     text: c.count;
                                     color: Theme.faint;
-                                    font-size: 12px;
+                                    font-size: 12px * Theme.text-scale;
                                     vertical-alignment: center;
                                 }
                                 VerticalLayout {
@@ -1864,13 +1874,13 @@ component SettingsScreen inherits Rectangle {
                   }
                 }
                 Rectangle { height: 10px; }
-                Text { text: @tr("Your category"); color: Theme.ink; font-size: 16px; font-weight: 600; }
+                Text { text: @tr("Your category"); color: Theme.ink; font-size: 16px * Theme.text-scale; font-weight: 600; }
                 Text {
                     text: root.pin-set
                         ? @tr("Put the channels you want in it with the lock button under the channel, in Live. It is always locked by the PIN, and so are its channels.")
                         : @tr("Put the channels you want in it with the lock button under the channel, in Live. Set a PIN to lock it.");
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     wrap: word-wrap;
                 }
                 if !root.pin-set || root.pin-unlocked: HorizontalLayout {
@@ -1925,19 +1935,19 @@ component SettingsScreen inherits Rectangle {
                 Text {
                     text: @tr("With the remote control: the arrows move the white ring from one button or list to the next, OK opens what has the ring, Back goes back (from a page it goes to the menu at the bottom, from the menu to the Home).");
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     wrap: word-wrap;
                 }
                 Text {
                     text: @tr("In the player: ↑ ↓ change channel, OK opens the channel list, ← → reach the buttons. Movies and episodes: ← → skip 10 seconds, OK pauses, ↓ shows the buttons.");
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     wrap: word-wrap;
                 }
                 Text {
                     text: @tr("To type (an address, a search) you need the keyboard: the one on the back of the remote, if it has one, or the Windows on-screen keyboard.");
                     color: Theme.faint;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     wrap: word-wrap;
                 }
                 }
@@ -1952,13 +1962,13 @@ component SettingsScreen inherits Rectangle {
                     Text {
                         text: @tr("Last key pressed: {}", Keys.last != "" ? Keys.last : "—");
                         color: Theme.needle;
-                        font-size: 13px;
+                        font-size: 13px * Theme.text-scale;
                         font-weight: 600;
                     }
                     Text {
                         text: @tr("Press Change, then the key. Back or Esc cancels. Arrows, OK, Back, Play/Pause and the volume keys have a fixed job and can't be chosen.");
                         color: Theme.dim;
-                        font-size: 13px;
+                        font-size: 13px * Theme.text-scale;
                         wrap: word-wrap;
                     }
                     // aspetta il tasto: li prende tutti finché non arriva quello buono
@@ -1995,7 +2005,7 @@ component SettingsScreen inherits Rectangle {
                             width: keys-fl.width;
                             spacing: 6px;
                             for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home"), @tr("Back"), @tr("Search"), @tr("Next channel"), @tr("Previous channel"), @tr("Open the Settings"), @tr("Last channel watched")]: kr := Rectangle {
-                                height: 44px;
+                                height: 44px * Theme.grow;
                                 // con le frecce la riga del pulsante attivo resta in vista
                                 property <bool> focused: cb.focused;
                                 changed focused => {
@@ -2027,7 +2037,7 @@ component SettingsScreen inherits Rectangle {
                                     Text {
                                         text: name;
                                         color: Theme.ink;
-                                        font-size: 15px;
+                                        font-size: 15px * Theme.text-scale;
                                         vertical-alignment: center;
                                         horizontal-stretch: 1;
                                     }
@@ -2036,7 +2046,7 @@ component SettingsScreen inherits Rectangle {
                                         max-width: 150px;
                                         overflow: elide;
                                         color: root.capturing == i ? Theme.needle : Theme.ink;
-                                        font-size: 15px;
+                                        font-size: 15px * Theme.text-scale;
                                         font-weight: 700;
                                         vertical-alignment: center;
                                     }
@@ -2044,7 +2054,7 @@ component SettingsScreen inherits Rectangle {
                                         alignment: center;
                                         cb := Btn {
                                             label: @tr("Change");
-                                            height: 34px;
+                                            height: 34px * Theme.grow;
                                             clicked => {
                                                 root.capturing = i;
                                                 cap.focus();
@@ -2105,7 +2115,7 @@ component PinDialog inherits Rectangle {
                 Text {
                     text: root.reason == 1 ? @tr("Remove PIN") : @tr("Locked category");
                     color: Theme.ink;
-                    font-size: 20px;
+                    font-size: 20px * Theme.text-scale;
                     font-weight: 700;
                 }
             }
@@ -2114,7 +2124,7 @@ component PinDialog inherits Rectangle {
                     ? @tr("Enter the PIN to confirm: nothing will be locked any more.")
                     : @tr("Enter the PIN to see the locked categories until Sintonia is closed.");
                 color: Theme.dim;
-                font-size: 13px;
+                font-size: 13px * Theme.text-scale;
                 wrap: word-wrap;
             }
             Rectangle {
@@ -2131,7 +2141,7 @@ component PinDialog inherits Rectangle {
                     height: parent.height;
                     text <=> root.pin;
                     color: Theme.ink;
-                    font-size: 22px;
+                    font-size: 22px * Theme.text-scale;
                     vertical-alignment: center;
                     horizontal-alignment: center;
                     single-line: true;
@@ -2190,7 +2200,7 @@ component PinDialog inherits Rectangle {
                     Text {
                         text: k;
                         color: i == 11 ? Theme.bg : Theme.ink;
-                        font-size: 18px;
+                        font-size: 18px * Theme.text-scale;
                         font-weight: 600;
                     }
                     kta := TouchArea {
@@ -2210,7 +2220,7 @@ component PinDialog inherits Rectangle {
             if root.error: Text {
                 text: @tr("Wrong PIN.");
                 color: Theme.live;
-                font-size: 14px;
+                font-size: 14px * Theme.text-scale;
             }
             HorizontalLayout {
                 spacing: 10px;
@@ -2234,7 +2244,7 @@ component TrackRow inherits Rectangle {
     // evidenziata con le frecce
     in property <bool> active;
     callback clicked;
-    height: 40px;
+    height: 40px * Theme.grow;
     Sq {
         r: 14px;
         fill: root.t.selected ? #ffffff26 : (ta.has-hover ? #ffffff14 : transparent);
@@ -2245,7 +2255,7 @@ component TrackRow inherits Rectangle {
         x: 16px;
         text: root.t.label;
         color: Theme.ink;
-        font-size: 14px;
+        font-size: 14px * Theme.text-scale;
         font-weight: root.t.selected ? 700 : 400;
     }
     ta := TouchArea { clicked => { root.clicked(); } }
@@ -2318,12 +2328,21 @@ component PlayerScreen inherits Rectangle {
 
     // Le informazioni sul video spariscono dopo qualche secondo senza movimenti del mouse o tasti;
     // restano finché il puntatore è sopra i pulsanti o l'elenco canali è aperto.
+    property <int> video-state: Video.state;
+    changed video-state => {
+        // in onda: le informazioni restano altri 5 secondi da adesso
+        if (Nav.tv && self.video-state == 2 && root.overlay) { root.show-overlay(); }
+    }
     hide-timer := Timer {
         interval: 5s;
         running: false;
         triggered => {
             self.stop();
-            if (root.drawer || root.controls-hovered || root.controls-focused || root.paused) {
+            // con il telecomando le informazioni restano finché il canale carica: i 5 secondi
+            // partono quando è in onda
+            let loading = Nav.tv && !root.on-demand
+                && (Video.state == 1 || Video.state == 3 || Video.state == 5);
+            if (root.drawer || root.controls-hovered || root.controls-focused || root.paused || loading) {
                 self.start();
             } else {
                 root.overlay = false;
@@ -2402,7 +2421,16 @@ component PlayerScreen inherits Rectangle {
                 return accept;
             }
             if (event.text == Key.Return) {
-                if (root.drawer) { root.play(root.cursor); } else { root.toggle-drawer(); }
+                if (root.drawer) {
+                    root.play(root.cursor);
+                    // con il telecomando la scelta chiude l'elenco, come sulla TV
+                    if (Nav.tv) {
+                        root.drawer = false;
+                        root.show-overlay();
+                    }
+                } else {
+                    root.toggle-drawer();
+                }
                 return accept;
             }
             if (event.text == Key.Escape) {
@@ -2503,10 +2531,16 @@ component PlayerScreen inherits Rectangle {
             x: 36px;
             y: 28px;
             spacing: 10px;
+            // con il telecomando resta solo Home (Indietro sul video non chiude il player)
             opacity: root.overlay && !root.drawer ? 1 : 0;
             visible: self.opacity > 0.01 || (root.overlay && !root.drawer);
             animate opacity { duration: 250ms; }
-            back-btn := IconBtn { icon: Icons.back; clicked => { root.back(); } }
+            back-btn := IconBtn {
+                visible: !Nav.tv;
+                width: Nav.tv ? 0px : self.size;
+                icon: Icons.back;
+                clicked => { root.back(); }
+            }
             home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
         }
 
@@ -2524,7 +2558,7 @@ component PlayerScreen inherits Rectangle {
         // barra in basso (più alta quando c'è la guida)
         Rectangle {
             y: parent.height - self.height;
-            height: !root.on-demand && root.c.now-title != "" ? 260px : 190px;
+            height: !root.on-demand && root.c.now-title != "" ? 260px * Theme.grow : 190px * Theme.grow;
             opacity: root.overlay ? 1 : 0;
             visible: self.opacity > 0.01 || root.overlay;
             animate opacity { duration: 250ms; }
@@ -2565,7 +2599,7 @@ component PlayerScreen inherits Rectangle {
                 if !root.on-demand: Text {
                     text: root.c.num;
                     color: Theme.ink;
-                    font-size: 56px;
+                    font-size: 56px * Theme.text-scale;
                     font-weight: 200;
                     vertical-alignment: bottom;
                 }
@@ -2578,20 +2612,20 @@ component PlayerScreen inherits Rectangle {
                             ? Texts.clock(root.position) + (root.duration > 0 ? " / " + Texts.clock(root.duration) : "")
                             : "● " + @tr("On air");
                         color: root.on-demand ? Theme.dim : Theme.live;
-                        font-size: 13px;
+                        font-size: 13px * Theme.text-scale;
                         font-weight: 600;
                     }
                     Text {
                         text: root.c.name;
                         color: Theme.ink;
-                        font-size: 22px;
+                        font-size: 22px * Theme.text-scale;
                         font-weight: 600;
                         overflow: elide;
                     }
                     if root.on-demand || root.c.now-title == "": Text {
                         text: root.c.group;
                         color: Theme.dim;
-                        font-size: 13px;
+                        font-size: 13px * Theme.text-scale;
                     }
                     if !root.on-demand && root.c.now-title != "": NowNext {
                         c: root.c;
@@ -2660,7 +2694,7 @@ component PlayerScreen inherits Rectangle {
         dt := Text {
             text: root.digits;
             color: Theme.ink;
-            font-size: 56px;
+            font-size: 56px * Theme.text-scale;
             font-weight: 300;
         }
     }
@@ -2678,19 +2712,19 @@ component PlayerScreen inherits Rectangle {
                 Text {
                     text: @tr("Next episode");
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                 }
                 Text {
                     text: root.next-label;
                     color: Theme.ink;
-                    font-size: 17px;
+                    font-size: 17px * Theme.text-scale;
                     font-weight: 600;
                     overflow: elide;
                 }
                 Text {
                     text: @tr("Starts in {} s", root.next-countdown);
                     color: Theme.needle;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                 }
                 HorizontalLayout {
                     spacing: 10px;
@@ -2732,14 +2766,14 @@ component PlayerScreen inherits Rectangle {
                 Text {
                     text: @tr("Audio");
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     height: 28px;
                     vertical-alignment: center;
                 }
                 if root.audio-tracks.length == 0: Text {
                     text: @tr("Only one audio track");
                     color: Theme.faint;
-                    font-size: 14px;
+                    font-size: 14px * Theme.text-scale;
                     height: 40px;
                     vertical-alignment: center;
                 }
@@ -2781,7 +2815,7 @@ component PlayerScreen inherits Rectangle {
                 Text {
                     text: @tr("Subtitles");
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     height: 28px;
                     vertical-alignment: center;
                 }
@@ -2828,7 +2862,7 @@ component PlayerScreen inherits Rectangle {
             Text {
                 text: @tr("Aspect ratio");
                 color: Theme.dim;
-                font-size: 13px;
+                font-size: 13px * Theme.text-scale;
                 height: 28px;
                 vertical-alignment: center;
             }
@@ -2890,7 +2924,7 @@ component PlayerScreen inherits Rectangle {
                 Text {
                     text: @tr("↑ ↓ browse   ·   Enter watch   ·   Esc close");
                     color: Theme.faint;
-                    font-size: 12px;
+                    font-size: 12px * Theme.text-scale;
                     horizontal-alignment: center;
                     height: 44px;
                 }
@@ -2978,7 +3012,7 @@ export component PipWindow inherits Window {
             width: parent.width - 32px;
             text: root.num + " · " + root.name;
             color: Theme.ink;
-            font-size: 12px;
+            font-size: 12px * Theme.text-scale;
             font-weight: 600;
             overflow: elide;
         }
@@ -3265,7 +3299,12 @@ export component MainWindow inherits Window {
     callback page-changed(int);
 
     // tasto Home del telecomando
+    // con il telecomando lo stesso tasto apre il menu dal video e lo richiude
     public function go-home() {
+        if (Nav.tv && !root.playing && root.has-current) {
+            root.watch-current();
+            return;
+        }
         root.playing = false;
         root.page = 0;
     }
@@ -3683,7 +3722,7 @@ export component MainWindow inherits Window {
                     width: 46px;
                     text: Video.muted ? @tr("Mute") : Video.volume;
                     color: Theme.ink;
-                    font-size: 18px;
+                    font-size: 18px * Theme.text-scale;
                     font-weight: 600;
                     horizontal-alignment: right;
                     vertical-alignment: center;
