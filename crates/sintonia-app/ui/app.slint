@@ -16,6 +16,10 @@ component TopBar inherits HorizontalLayout {
     in-out property <string> search;
     // a schermo intero, accanto all'ingranaggio c'è il pulsante per uscirne
     in property <bool> fullscreen;
+    // versione nuova disponibile ("" = nessuna)
+    in property <string> update-version;
+    callback open-update();
+    callback dismiss-update();
     callback search-edited(string);
     callback search-done();
     callback toggle-fullscreen();
@@ -44,6 +48,42 @@ component TopBar inherits HorizontalLayout {
         }
     }
     Rectangle { horizontal-stretch: 1; }
+    if root.update-version != "": VerticalLayout {
+        alignment: start;
+        Rectangle {
+            height: 40px;
+            width: ul.preferred-width;
+            Sq { r: 20px; fill: uta.has-hover ? Theme.base.brighter(0.5) : Theme.base.brighter(0.2); }
+            ul := HorizontalLayout {
+                padding-left: 18px;
+                padding-right: 6px;
+                spacing: 10px;
+                Text {
+                    text: @tr("Sintonia {} is out · Download", root.update-version);
+                    color: Theme.ink;
+                    font-size: 13px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        Sq { r: 14px; fill: xta.has-hover ? #00000060 : #00000030; }
+                        Icon { commands: Icons.close; width: 12px; height: 12px; }
+                        xta := TouchArea { clicked => { root.dismiss-update(); } }
+                    }
+                }
+            }
+            // la zona del testo apre la pagina; la crocetta (sopra) la nasconde
+            uta := TouchArea {
+                width: parent.width - 40px;
+                x: 0;
+                clicked => { root.open-update(); }
+            }
+        }
+    }
     Rectangle {
         width: 300px;
         height: 40px;
@@ -1009,6 +1049,7 @@ component SettingsScreen inherits Rectangle {
     in-out property <bool> reconnect;
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview;
+    in-out property <bool> update-check;
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     // cresce dopo un salvataggio riuscito: il modulo si svuota (password compresa)
@@ -1295,6 +1336,13 @@ component SettingsScreen inherits Rectangle {
                 color: Theme.faint;
                 font-size: 13px;
                 wrap: word-wrap;
+            }
+            Rectangle { height: 8px; }
+            SwitchRow {
+                label: @tr("Tell me when a new version of Sintonia is out");
+                detail: @tr("Once a day Sintonia asks GitHub which is the latest version. Nothing else is sent.");
+                on <=> root.update-check;
+                toggled(v) => { root.setting-changed("update_check", v ? "1" : "0"); }
             }
         }
         // controllo genitori
@@ -2256,6 +2304,10 @@ export component MainWindow inherits Window {
     in-out property <bool> reconnect: true;
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview: true;
+    in-out property <bool> update-check: true;
+    in property <string> update-version;
+    callback open-update();
+    callback dismiss-update();
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     in-out property <int> settings-section: 0;
@@ -2386,6 +2438,9 @@ export component MainWindow inherits Window {
             clock: root.clock;
             search <=> root.search;
             fullscreen: root.fullscreen;
+            update-version: root.update-version;
+            open-update => { root.open-update(); }
+            dismiss-update => { root.dismiss-update(); }
             toggle-fullscreen => { root.toggle-fullscreen(); }
             search-edited(text) => {
                 root.search-edited(text);
@@ -2513,6 +2568,7 @@ export component MainWindow inherits Window {
                 reconnect <=> root.reconnect;
                 fullscreen-start <=> root.fullscreen-start;
                 live-preview <=> root.live-preview;
+                update-check <=> root.update-check;
                 user-agent <=> root.user-agent;
                 playlist-interval: root.playlist-interval;
                 epg-interval: root.epg-interval;

@@ -19,6 +19,7 @@ use sintonia_core::service::{
     Command, EpgState, Event, LogoImage, Playable, ResolvedStream, Service, SourceError,
     SourceReport,
 };
+use sintonia_core::update::{self, Update};
 use sintonia_core::xtream::{Episode, MovieDetail, SeriesDetail};
 use sintonia_player::TrackKind;
 use slint::winit_030::WinitWindowAccessor;
@@ -270,6 +271,9 @@ pub struct App {
     reveal_episode: Cell<bool>,
     reveal_timer: slint::Timer,
 
+    /// Versione nuova da proporre.
+    update: RefCell<Option<Update>>,
+
     // controllo genitori
     /// Il PIN è stato inserito in questa sessione: le categorie bloccate si vedono.
     pin_unlocked: Cell<bool>,
@@ -391,6 +395,7 @@ impl App {
             last_media: RefCell::new(None),
             reveal_episode: Cell::new(false),
             reveal_timer: slint::Timer::default(),
+            update: RefCell::new(None),
             pin_unlocked: Cell::new(false),
             after_pin: Cell::new(None),
         });
@@ -488,6 +493,12 @@ impl App {
             Event::SeriesDetail { id, result } => self.on_series_detail(id, result),
             Event::Image { url, poster, image } => self.on_image(url, poster, image),
             Event::Health(health) => self.on_health(health),
+            Event::Update(update) => {
+                if let Some(main) = self.main() {
+                    main.set_update_version(update.version.as_str().into());
+                }
+                *self.update.borrow_mut() = Some(update);
+            }
             Event::Error(message) => log::error!("{message}"),
         }
     }
@@ -544,6 +555,7 @@ Una copia dell'archivio com'era è in:
             main.set_reconnect(settings.reconnect);
             main.set_fullscreen_start(settings.fullscreen_start);
             main.set_live_preview(settings.live_preview);
+            main.set_update_check(settings.update_check);
             main.set_playlist_interval(interval_index(settings.playlist_hours));
             main.set_epg_interval(interval_index(settings.epg_hours));
             main.set_user_agent(settings.user_agent.clone().unwrap_or_default().into());
@@ -2229,6 +2241,19 @@ Una copia dell'archivio com'era è in:
             }
         }));
 
+        // versione nuova
+        main.on_open_update(on(|app| app.open_update()));
+        main.on_dismiss_update(on(|app| {
+            let update = app.update.borrow_mut().take();
+            if let Some(update) = update {
+                // non la si propone più; la prossima sì
+                app.save_setting("update_skipped", &update.version);
+            }
+            if let Some(main) = app.main() {
+                main.set_update_version(SharedString::new());
+            }
+        }));
+
         // controllo genitori
         main.on_pin_create(with_app!(
             |app, first: SharedString, again: SharedString| app.create_pin(&first, &again)
@@ -2303,6 +2328,25 @@ Una copia dell'archivio com'era è in:
                 log::error!("{err}");
             }
         }));
+    }
+
+    /// Apre nel browser la pagina della versione nuova (solo pagine delle Release di Sintonia).
+    fn open_update(&self) {
+        let Some(url) = self.update.borrow().as_ref().map(|u| u.url.clone()) else {
+            return;
+        };
+        if !update::is_release_page(&url) {
+            return;
+        }
+        #[cfg(windows)]
+        let opened = std::process::Command::new("explorer").arg(&url).spawn();
+        #[cfg(target_os = "macos")]
+        let opened = std::process::Command::new("open").arg(&url).spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let opened = std::process::Command::new("xdg-open").arg(&url).spawn();
+        if let Err(err) = opened {
+            log::warn!("pagina della versione nuova: {err}");
+        }
     }
 
     // ───────────── controllo genitori ─────────────

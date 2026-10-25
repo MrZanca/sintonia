@@ -519,6 +519,15 @@ msgstr "I miei canali"
 msgid "No channels here yet: choose a channel in another category and press the lock button."
 msgstr "Ancora nessun canale qui: scegli un canale in un'altra categoria e premi il pulsante con il lucchetto."
 
+msgid "Sintonia {} is out · Download"
+msgstr "È uscita Sintonia {} · Scarica"
+
+msgid "Tell me when a new version of Sintonia is out"
+msgstr "Avvisami quando esce una nuova versione di Sintonia"
+
+msgid "Once a day Sintonia asks GitHub which is the latest version. Nothing else is sent."
+msgstr "Una volta al giorno Sintonia chiede a GitHub qual è l'ultima versione. Non viene mandato nient'altro."
+
 msgid "Your category"
 msgstr "La tua categoria"
 

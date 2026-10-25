@@ -9,6 +9,7 @@ pub mod pin;
 pub mod redact;
 pub mod secrets;
 pub mod service;
+pub mod update;
 pub mod xtream;
 #[cfg(any(test, feature = "mock"))]
 pub mod xtream_mock;
