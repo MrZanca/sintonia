@@ -9,7 +9,7 @@
 //! per i canali M3U è un hash (con un sale dell'installazione) dell'indirizzo, per Xtream
 //! l'identificativo del server. Preferiti e cronologia si appoggiano a questa chiave.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use sha2::{Digest, Sha256};
@@ -36,6 +36,78 @@ pub enum StoreError {
     /// L'operazione è stata interrotta (chiusura dell'app o panic).
     #[error("operazione sull'archivio interrotta")]
     Interrupted,
+    /// La copia di sicurezza prima di una riparazione non è riuscita.
+    #[error("copia dell'archivio: {0}")]
+    Backup(String),
+}
+
+/// Stato dell'archivio all'apertura (vedi [`check_and_repair`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Health {
+    /// Integro (o nuovo).
+    Ok,
+    /// Aveva indici rovinati, ricostruiti; prima della riparazione è stata fatta una copia.
+    Repaired {
+        /// La copia dell'archivio com'era.
+        backup: PathBuf,
+    },
+    /// Danneggiato e non riparabile da qui: c'è una copia, l'app prova ad andare avanti.
+    Damaged {
+        /// La copia dell'archivio com'era.
+        backup: PathBuf,
+        /// Il primo problema trovato.
+        problem: String,
+    },
+}
+
+/// Controlla l'archivio prima di aprirlo (`PRAGMA integrity_check`, pochi millisecondi per
+/// qualche decina di MB). Se trova problemi copia i file accanto all'originale
+/// (`archivio-danneggiato-AAAAMMGG-HHMMSS.db`) e prova a ricostruire gli indici (`REINDEX`): il
+/// caso più comune, e i dati delle tabelle restano. Un archivio che non esiste ancora è integro.
+pub fn check_and_repair(path: &Path) -> Result<Health, StoreError> {
+    if !path.exists() {
+        return Ok(Health::Ok);
+    }
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let problem = match integrity_problem(&conn) {
+        Ok(None) => return Ok(Health::Ok),
+        Ok(Some(problem)) => problem,
+        Err(err) => err.to_string(),
+    };
+    let backup = backup_files(path)?;
+    let repaired = conn
+        .execute_batch("REINDEX;")
+        .ok()
+        .and_then(|()| integrity_problem(&conn).ok())
+        .is_some_and(|p| p.is_none());
+    Ok(if repaired {
+        Health::Repaired { backup }
+    } else {
+        Health::Damaged { backup, problem }
+    })
+}
+
+/// Il primo problema di `PRAGMA integrity_check` (`None`: integro).
+fn integrity_problem(conn: &Connection) -> Result<Option<String>, rusqlite::Error> {
+    let first: String = conn.query_row("PRAGMA integrity_check(1)", [], |r| r.get(0))?;
+    Ok((first != "ok").then_some(first))
+}
+
+/// Copia l'archivio (con `-wal` e `-shm`, se ci sono) accanto all'originale.
+fn backup_files(path: &Path) -> Result<PathBuf, StoreError> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let backup = path.with_file_name(format!("archivio-danneggiato-{stamp}.db"));
+    for suffix in ["", "-wal", "-shm"] {
+        let from = PathBuf::from(format!("{}{suffix}", path.display()));
+        if from.exists() {
+            let to = PathBuf::from(format!("{}{suffix}", backup.display()));
+            std::fs::copy(&from, &to).map_err(|e| StoreError::Backup(e.to_string()))?;
+        }
+    }
+    Ok(backup)
 }
 
 /// Tipo di sorgente.
@@ -1656,6 +1728,60 @@ mod tests {
 
     fn store() -> Store {
         Store::open_in_memory(Cipher::new(&[9; 32])).unwrap()
+    }
+
+    #[test]
+    fn broken_indexes_are_rebuilt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("archivio.db");
+        assert_eq!(
+            check_and_repair(&path).unwrap(),
+            Health::Ok,
+            "archivio nuovo"
+        );
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE t(a); CREATE INDEX ti ON t(a);
+                 CREATE TABLE u(b); CREATE INDEX ui ON u(b);
+                 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+                 INSERT INTO t SELECT i FROM n;",
+            )
+            .unwrap();
+            // due indici che si scambiano le pagine: i conteggi non tornano più
+            let root = |name: &str| -> i64 {
+                conn.query_row(
+                    "SELECT rootpage FROM sqlite_master WHERE name = ?1",
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap()
+            };
+            let (ti, ui) = (root("ti"), root("ui"));
+            conn.execute_batch("PRAGMA writable_schema = ON;").unwrap();
+            conn.execute(
+                "UPDATE sqlite_master SET rootpage = ?1 WHERE name = 'ti'",
+                [ui],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE sqlite_master SET rootpage = ?1 WHERE name = 'ui'",
+                [ti],
+            )
+            .unwrap();
+        }
+        // la connessione con lo schema vecchio è chiusa: una nuova vede gli indici scambiati
+        match check_and_repair(&path).unwrap() {
+            Health::Repaired { backup } => {
+                assert!(backup.exists(), "copia prima della riparazione")
+            }
+            other => panic!("atteso Repaired, arrivato {other:?}"),
+        }
+        assert_eq!(
+            check_and_repair(&path).unwrap(),
+            Health::Ok,
+            "dopo la riparazione"
+        );
     }
 
     fn source(store: &mut Store, name: &str) -> i64 {

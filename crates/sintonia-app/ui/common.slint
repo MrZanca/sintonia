@@ -268,10 +268,13 @@ export component Sq inherits Path {
     // le proporzioni e restringerebbe di molto le forme larghe e basse
     fit: fill;
     fill: transparent;
-    commands: "M " + root.p + " 0 L " + (root.w - root.p) + " 0 C " + (root.w - root.q) + " 0 " + root.w + " " + root.q + " " + root.w + " " + root.p
+    // il percorso parte da metà del lato alto: chiuso sul primo punto (curva che finisce dove
+    // inizia, poi Z) il tratto iniziale del bordo non veniva disegnato
+    commands: "M " + round(root.w / 2) + " 0 L " + (root.w - root.p) + " 0 C " + (root.w - root.q) + " 0 " + root.w + " " + root.q + " " + root.w + " " + root.p
         + " L " + root.w + " " + (root.h - root.p) + " C " + root.w + " " + (root.h - root.q) + " " + (root.w - root.q) + " " + root.h + " " + (root.w - root.p) + " " + root.h
         + " L " + root.p + " " + root.h + " C " + root.q + " " + root.h + " 0 " + (root.h - root.q) + " 0 " + (root.h - root.p)
         + " L 0 " + root.p + " C 0 " + root.q + " " + root.q + " 0 " + root.p + " 0 Z";
+    // (la Z chiude con un tratto vero, da (p, 0) a metà del lato alto)
 }
 
 // Il riquadro in cui compare il video. Ce n'è al massimo uno visibile per finestra.
