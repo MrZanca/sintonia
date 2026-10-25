@@ -2333,8 +2333,16 @@ component PlayerScreen inherits Rectangle {
         // in onda: le informazioni restano altri 5 secondi da adesso
         if (Nav.tv && self.video-state == 2 && root.overlay) { root.show-overlay(); }
     }
+    // con il telecomando, sui pulsanti, ogni tasto fa ripartire il tempo (10 secondi invece di 5)
+    property <int> keys-pressed: Nav.key-count;
+    changed keys-pressed => {
+        if (Nav.tv && root.controls-focused) { root.show-overlay(); }
+    }
+    changed controls-focused => {
+        if (Nav.tv && self.controls-focused) { root.show-overlay(); }
+    }
     hide-timer := Timer {
-        interval: 5s;
+        interval: Nav.tv && root.controls-focused ? 10s : 5s;
         running: false;
         triggered => {
             self.stop();
@@ -2342,7 +2350,7 @@ component PlayerScreen inherits Rectangle {
             // partono quando è in onda
             let loading = Nav.tv && !root.on-demand
                 && (Video.state == 1 || Video.state == 3 || Video.state == 5);
-            // con il telecomando un pulsante con il fuoco non tiene le informazioni: dopo 5 secondi
+            // con il telecomando un pulsante con il fuoco non tiene le informazioni: dopo 10 secondi
             // senza tasti si torna al video
             let held = root.controls-focused && !Nav.tv;
             if (root.drawer || root.controls-hovered || held || root.paused || loading) {
@@ -2520,11 +2528,6 @@ component PlayerScreen inherits Rectangle {
     ctl := FocusScope {
         focus-on-tab-navigation: false;
         focus-on-click: false;
-        // ogni tasto sui pulsanti fa ripartire i 5 secondi
-        capture-key-pressed(event) => {
-            root.show-overlay();
-            reject
-        }
         key-pressed(event) => {
             if (event.text == Key.Escape || event.text == Key.UpArrow) {
                 fs.focus();
@@ -3379,6 +3382,7 @@ export component MainWindow inherits Window {
         focus-on-click: false;
         capture-key-pressed(event) => {
             Nav.key-seen = true;
+            Nav.key-count += 1;
             reject
         }
         key-pressed(event) => {
