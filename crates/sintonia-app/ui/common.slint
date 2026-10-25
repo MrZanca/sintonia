@@ -156,15 +156,19 @@ export global Nav {
 
 // I tasti delle azioni (scelti dall'utente in Impostazioni › Tasti). Li imposta Rust.
 // Azioni: 0 schermo intero, 1 mini player, 2 muto, 3 volume su, 4 volume giù, 5 preferito (Live),
-// 6 Guida, 7 Home.
+// 6 Guida, 7 Home, 8 indietro, 9 cerca, 10 canale seguente, 11 canale precedente.
 export global Keys {
     // il tasto di ogni azione, come lo manda Slint ("" = nessuno), e la sua variante maiuscola
     in property <[string]> keys;
     in property <[string]> alt;
     // il nome del tasto da mostrare
     in property <[string]> labels;
+    // l'ultimo tasto arrivato (per scoprire che cosa manda un tasto del telecomando)
+    in property <string> last;
     callback set-key(int, string);
     callback reset();
+    // «indietro»: Rust preme Esc
+    callback back();
     public pure function is(action: int, text: string) -> bool {
         return text != "" && (text == root.keys[action] || text == root.alt[action]);
     }

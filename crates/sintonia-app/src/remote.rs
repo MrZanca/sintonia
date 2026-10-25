@@ -15,7 +15,8 @@ use slint::winit_030::winit::keyboard::{Key as WinitKey, NamedKey};
 use slint::winit_030::{EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, SharedString};
 
-use crate::{MainWindow, Nav};
+use crate::mediakeys::VolumeKey;
+use crate::{Keys, MainWindow, Nav};
 
 /// Cosa fare per un tasto speciale del telecomando.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -49,12 +50,26 @@ pub fn remote_action(key: &WinitKey) -> Option<Action> {
         NamedKey::MediaStop => Some(Action::Press(Key::F19)),
         NamedKey::LaunchMail => Some(Action::Press(Key::F20)),
         NamedKey::LaunchApplication1 => Some(Action::Press(Key::F21)),
-        NamedKey::LaunchApplication2 => Some(Action::Press(Key::F22)),
+        NamedKey::LaunchMediaPlayer => Some(Action::Press(Key::F22)),
         NamedKey::Info => Some(Action::Press(Key::F23)),
         NamedKey::Guide => Some(Action::Press(Key::F24)),
         NamedKey::ChannelUp => Some(Action::Press(Key::PageUp)),
         NamedKey::ChannelDown => Some(Action::Press(Key::PageDown)),
         _ => None,
+    }
+}
+
+/// Come si chiama un tasto (Impostazioni › Navigazione, «Ultimo tasto premuto»): la lettera, il
+/// nome del tasto speciale, o il codice se Windows non sa che tasto sia.
+pub fn key_name(
+    logical: &WinitKey,
+    physical: &slint::winit_030::winit::keyboard::PhysicalKey,
+) -> String {
+    match logical {
+        WinitKey::Character(c) if c.trim().is_empty() => "Space".to_owned(),
+        WinitKey::Character(c) => c.to_uppercase(),
+        WinitKey::Named(named) => format!("{named:?}"),
+        _ => format!("{physical:?}"),
     }
 }
 
@@ -80,6 +95,11 @@ fn press(main: &MainWindow, key: Key) {
         .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
     main.window()
         .dispatch_event(WindowEvent::KeyReleased { text });
+}
+
+/// Preme `key` appena finita la gestione dell'evento in corso.
+pub fn press_later(main: &MainWindow, key: Key) {
+    later(main, move |main| press(main, key));
 }
 
 /// Esegue `f` appena finita la gestione dell'evento in corso (dentro, Slint è ancora occupato).
@@ -110,6 +130,32 @@ pub fn install(main: &MainWindow) {
         let Some(main) = weak.upgrade() else {
             return EventResult::Propagate;
         };
+        log::debug!(
+            "tasto {:?} ({:?}) {}",
+            event.logical_key,
+            event.physical_key,
+            if event.state.is_pressed() {
+                "premuto"
+            } else {
+                "lasciato"
+            }
+        );
+        if event.state.is_pressed() && !event.repeat {
+            main.global::<Keys>()
+                .set_last(key_name(&event.logical_key, &event.physical_key).into());
+        }
+        // i tasti del volume, se arrivano fin qui, regolano il player (vedi mediakeys.rs)
+        let volume = match &event.logical_key {
+            WinitKey::Named(NamedKey::AudioVolumeUp) => Some(VolumeKey::Up),
+            WinitKey::Named(NamedKey::AudioVolumeDown) => Some(VolumeKey::Down),
+            WinitKey::Named(NamedKey::AudioVolumeMute) => Some(VolumeKey::Mute),
+            _ => None,
+        };
+        if let Some(key) = volume {
+            if event.state.is_pressed() && crate::mediakeys::from_window(key, event.repeat) {
+                return EventResult::PreventDefault;
+            }
+        }
         if let Some(action) = remote_action(&event.logical_key) {
             if event.state.is_pressed() {
                 log::debug!("telecomando: {:?} → {action:?}", event.logical_key);
@@ -152,6 +198,17 @@ mod tests {
         // le frecce e le lettere le gestisce già Slint
         assert_eq!(remote_action(&WinitKey::Named(NamedKey::ArrowUp)), None);
         assert_eq!(remote_action(&WinitKey::Character("a".into())), None);
+    }
+
+    #[test]
+    fn key_names() {
+        use slint::winit_030::winit::keyboard::{KeyCode, PhysicalKey};
+        let physical = PhysicalKey::Code(KeyCode::KeyA);
+        assert_eq!(key_name(&WinitKey::Character("a".into()), &physical), "A");
+        assert_eq!(
+            key_name(&WinitKey::Named(NamedKey::AudioVolumeUp), &physical),
+            "AudioVolumeUp"
+        );
     }
 
     #[test]

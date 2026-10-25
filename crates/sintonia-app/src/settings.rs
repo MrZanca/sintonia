@@ -174,8 +174,8 @@ impl Settings {
             volume: 100,
             bg_motion: true,
             media_volume: true,
-            keys: crate::keys::defaults(),
-            remote_keys: crate::keys::defaults(),
+            keys: crate::keys::defaults(false),
+            remote_keys: crate::keys::defaults(true),
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
             epg_hours: EPG_HOURS_DEFAULT,
             user_agent: None,
@@ -308,7 +308,7 @@ mod tests {
         let s = Settings::from_pairs(&pairs, Language::Italian);
         assert_eq!(s.keys[2], "x");
         assert_eq!(s.remote_keys[2], "z");
-        assert_eq!(s.remote_keys[0], "f");
+        assert_eq!(s.remote_keys[1], "p");
         assert_eq!(s.keys[0], "f");
         assert_eq!(s.keys.len(), crate::keys::ACTIONS.len());
     }

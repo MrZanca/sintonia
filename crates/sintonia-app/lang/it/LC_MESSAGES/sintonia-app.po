@@ -621,3 +621,18 @@ msgstr "I tasti del volume regolano Sintonia"
 
 msgid "Remote and multimedia keyboard. Off: they change the Windows volume."
 msgstr "Telecomando e tastiere multimediali. Spento: cambiano il volume di Windows."
+
+msgid "Last key pressed: {}"
+msgstr "Ultimo tasto premuto: {}"
+
+msgid "Back"
+msgstr "Indietro"
+
+msgid "Search"
+msgstr "Cerca"
+
+msgid "Next channel"
+msgstr "Canale successivo"
+
+msgid "Previous channel"
+msgstr "Canale precedente"

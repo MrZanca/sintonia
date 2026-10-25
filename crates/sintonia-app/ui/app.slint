@@ -57,6 +57,9 @@ component Backdrop inherits Rectangle {
 
 component TopBar inherits HorizontalLayout {
     in-out property <int> page;
+    // cresce quando il fuoco deve andare alla ricerca (tasto «Cerca»)
+    in property <int> focus-tick;
+    changed focus-tick => { si.focus(); }
     in property <string> clock;
     in-out property <string> search;
     // a schermo intero, accanto all'ingranaggio c'è il pulsante per uscirne
@@ -1937,6 +1940,12 @@ component SettingsScreen inherits Rectangle {
                     spacing: 8px;
                     Title { text: Nav.mode == 1 ? @tr("Keys for the remote control") : @tr("Keys for mouse and keyboard"); }
                     Text {
+                        text: @tr("Last key pressed: {}", Keys.last != "" ? Keys.last : "—");
+                        color: Theme.needle;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    Text {
                         text: @tr("Press Change, then the key. Esc cancels. The arrows, OK and Back can't be changed.");
                         color: Theme.dim;
                         font-size: 13px;
@@ -1970,40 +1979,51 @@ component SettingsScreen inherits Rectangle {
                             accept
                         }
                     }
-                    for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home")]: Rectangle {
-                        height: 50px;
-                        Sq {
-                            r: 18px;
-                            fill: root.capturing == i ? #ffffff26 : Theme.glass;
-                            stroke: root.capturing == i ? Theme.needle : transparent;
-                            stroke-width: 2px;
-                        }
-                        HorizontalLayout {
-                            padding-left: 18px;
-                            padding-right: 8px;
-                            spacing: 12px;
-                            Text {
-                                text: name;
-                                color: Theme.ink;
-                                font-size: 15px;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                            }
-                            Text {
-                                text: root.capturing == i ? @tr("Press a key…") : (Keys.labels[i] != "" ? Keys.labels[i] : "—");
-                                color: root.capturing == i ? Theme.needle : Theme.ink;
-                                font-size: 15px;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                            }
-                            VerticalLayout {
-                                alignment: center;
-                                Btn {
-                                    label: @tr("Change");
-                                    height: 34px;
-                                    clicked => {
-                                        root.capturing = i;
-                                        cap.focus();
+                    keys-fl := Flickable {
+                        vertical-stretch: 1;
+                        content-height: keys-list.preferred-height;
+                        keys-list := VerticalLayout {
+                            x: 0;
+                            width: keys-fl.width;
+                            spacing: 6px;
+                            for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home"), @tr("Back"), @tr("Search"), @tr("Next channel"), @tr("Previous channel")]: Rectangle {
+                                height: 44px;
+                                Sq {
+                                    r: 18px;
+                                    fill: root.capturing == i ? #ffffff26 : Theme.glass;
+                                    stroke: root.capturing == i ? Theme.needle : transparent;
+                                    stroke-width: 2px;
+                                }
+                                HorizontalLayout {
+                                    padding-left: 18px;
+                                    padding-right: 8px;
+                                    spacing: 12px;
+                                    Text {
+                                        text: name;
+                                        color: Theme.ink;
+                                        font-size: 15px;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                    }
+                                    Text {
+                                        text: root.capturing == i ? @tr("Press a key…") : (Keys.labels[i] != "" ? Keys.labels[i] : "—");
+                                        max-width: 150px;
+                                        overflow: elide;
+                                        color: root.capturing == i ? Theme.needle : Theme.ink;
+                                        font-size: 15px;
+                                        font-weight: 700;
+                                        vertical-alignment: center;
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Btn {
+                                            label: @tr("Change");
+                                            height: 34px;
+                                            clicked => {
+                                                root.capturing = i;
+                                                cap.focus();
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -3090,6 +3110,7 @@ export component MainWindow inherits Window {
     property <int> player-focus-tick;
     property <int> dock-focus-tick;
     property <int> pin-focus-tick;
+    property <int> search-focus-tick;
 
     // c'è un riquadro video sullo schermo (Home, Live o player)
     out property <bool> video-visible: root.playing || (root.page <= 1 && !root.no-source);
@@ -3242,6 +3263,19 @@ export component MainWindow inherits Window {
                 root.go-home();
                 return accept;
             }
+            if (Keys.is(8, event.text)) {
+                Keys.back();
+                return accept;
+            }
+            if (Keys.is(9, event.text)) {
+                root.playing = false;
+                root.search-focus-tick += 1;
+                return accept;
+            }
+            if ((Keys.is(10, event.text) || Keys.is(11, event.text)) && root.playing) {
+                root.zap(Keys.is(10, event.text) ? 1 : -1);
+                return accept;
+            }
             if (!Nav.tv) { return reject; }
             if (event.text == Key.LeftArrow || event.text == Key.UpArrow) {
                 Nav.step(false);
@@ -3279,6 +3313,7 @@ export component MainWindow inherits Window {
                 }
                 VerticalLayout {
                     TopBar {
+                        focus-tick: root.search-focus-tick;
                         page <=> root.page;
                         clock: root.clock;
                         search <=> root.search;

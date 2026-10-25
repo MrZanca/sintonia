@@ -621,7 +621,7 @@ Una copia dell'archivio com'era è in:
     /// I tasti della modalità in uso come all'inizio.
     fn reset_action_keys(&self) {
         let remote = self.settings.borrow().remote;
-        for (i, key) in crate::keys::defaults().iter().enumerate() {
+        for (i, key) in crate::keys::defaults(remote).iter().enumerate() {
             if let Some(name) = crate::keys::setting_key(i, remote) {
                 self.save_setting(&name, key);
             }
@@ -2203,6 +2203,15 @@ Una copia dell'archivio com'era è in:
             }));
         main.global::<Keys>()
             .on_reset(on(|app| app.reset_action_keys()));
+        // «Indietro» su un altro tasto: lo stesso di Esc
+        {
+            let main_weak = main.as_weak();
+            main.global::<Keys>().on_back(move || {
+                if let Some(main) = main_weak.upgrade() {
+                    crate::remote::press_later(&main, slint::platform::Key::Escape);
+                }
+            });
+        }
         main.global::<Video>()
             .on_set_volume(with_app!(|app, volume: i32| {
                 app.router.set_volume(volume);

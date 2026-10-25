@@ -9,8 +9,9 @@ use slint::platform::Key;
 
 use crate::settings::Language;
 
-/// Le azioni, nell'ordine dell'interfaccia: nome nell'archivio e tasto di partenza.
-pub const ACTIONS: [(&str, &str); 8] = [
+/// Le azioni, nell'ordine dell'interfaccia: nome nell'archivio e tasto di partenza (con mouse e
+/// tastiera; quelli del telecomando in [`defaults`]).
+pub const ACTIONS: [(&str, &str); 12] = [
     ("fullscreen", "f"),
     ("pip", "p"),
     ("mute", "m"),
@@ -19,6 +20,26 @@ pub const ACTIONS: [(&str, &str); 8] = [
     ("favorite", "s"),
     ("guide", "g"),
     ("home", "h"),
+    ("back", ""),
+    ("search", ""),
+    ("channel_next", ""),
+    ("channel_prev", ""),
+];
+
+/// I tasti in più dei telecomandi, come arrivano (vedi `remote.rs`), con il loro nome.
+const EXTRA_KEYS: [(Key, &str, &str); 12] = [
+    (Key::F13, "Preferiti", "Favorites"),
+    (Key::F14, "Cerca", "Search"),
+    (Key::F15, "Aggiorna", "Refresh"),
+    (Key::F16, "Avanti", "Forward"),
+    (Key::F17, "Traccia succ.", "Next track"),
+    (Key::F18, "Traccia prec.", "Prev. track"),
+    (Key::F19, "Stop", "Stop"),
+    (Key::F20, "Posta", "Mail"),
+    (Key::F21, "Tasto «e»", "«e» key"),
+    (Key::F22, "Lettore", "Media player"),
+    (Key::F23, "Info", "Info"),
+    (Key::F24, "Guida TV", "TV guide"),
 ];
 
 /// Chiave dell'impostazione dell'azione `index`: mouse e tastiera e telecomando hanno tasti propri.
@@ -29,9 +50,21 @@ pub fn setting_key(index: usize, remote: bool) -> Option<String> {
         .map(|(name, _)| format!("key.{mode}{name}"))
 }
 
-/// I tasti di partenza.
-pub fn defaults() -> Vec<String> {
-    ACTIONS.iter().map(|(_, key)| (*key).to_owned()).collect()
+/// I tasti di partenza. Con il telecomando (provati su un Esynic): lettore multimediale per lo
+/// schermo intero, posta per la Guida, «e» per indietro, cerca per la ricerca, traccia seguente e
+/// precedente per cambiare canale.
+pub fn defaults(remote: bool) -> Vec<String> {
+    let mut keys: Vec<String> = ACTIONS.iter().map(|(_, key)| (*key).to_owned()).collect();
+    if remote {
+        let text = |k: Key| slint::SharedString::from(k).to_string();
+        keys[0] = text(Key::F22);
+        keys[6] = text(Key::F20);
+        keys[8] = text(Key::F21);
+        keys[9] = text(Key::F14);
+        keys[10] = text(Key::F17);
+        keys[11] = text(Key::F18);
+    }
+    keys
 }
 
 /// La variante maiuscola di una lettera (con Maiusc o il blocco maiuscole la lettera arriva così).
@@ -104,26 +137,8 @@ pub fn label(key: &str, language: Language) -> String {
     if let Some(n) = function_keys.iter().position(|k| named(*k)) {
         return format!("F{}", n + 1);
     }
-    let extra_keys = [
-        Key::F13,
-        Key::F14,
-        Key::F15,
-        Key::F16,
-        Key::F17,
-        Key::F18,
-        Key::F19,
-        Key::F20,
-        Key::F21,
-        Key::F22,
-        Key::F23,
-        Key::F24,
-    ];
-    if let Some(n) = extra_keys.iter().position(|k| named(*k)) {
-        return if it {
-            format!("Tasto speciale {}", n + 1)
-        } else {
-            format!("Special key {}", n + 1)
-        };
+    if let Some((_, it_name, en_name)) = EXTRA_KEYS.iter().find(|(k, _, _)| named(*k)) {
+        return if it { *it_name } else { *en_name }.to_owned();
     }
     // altri tasti speciali senza nome: meglio dirlo che mostrare un carattere invisibile
     if ('\u{f700}'..='\u{f7ff}').contains(&c) || c.is_control() {
@@ -138,7 +153,12 @@ mod tests {
 
     #[test]
     fn defaults_and_names() {
-        assert_eq!(defaults().len(), ACTIONS.len());
+        assert_eq!(defaults(false).len(), ACTIONS.len());
+        assert_eq!(defaults(false)[8], "");
+        assert_eq!(
+            defaults(true)[8],
+            slint::SharedString::from(Key::F21).as_str()
+        );
         assert_eq!(setting_key(0, false).as_deref(), Some("key.fullscreen"));
         assert_eq!(setting_key(2, true).as_deref(), Some("key.remote.mute"));
         assert_eq!(setting_key(99, false), None);
@@ -148,7 +168,7 @@ mod tests {
 
     #[test]
     fn assigning_moves_a_taken_key() {
-        let mut keys = defaults();
+        let mut keys = defaults(false);
         // «m» era del muto: passa allo schermo intero e il muto resta senza tasto
         let changed = assign(&mut keys, 0, "M");
         assert_eq!(keys[0], "m");
@@ -163,7 +183,7 @@ mod tests {
         assert_eq!(label("+", Language::English), "+");
         assert_eq!(label(" ", Language::Italian), "Spazio");
         let f13 = slint::SharedString::from(Key::F13);
-        assert_eq!(label(&f13, Language::Italian), "Tasto speciale 1");
+        assert_eq!(label(&f13, Language::Italian), "Preferiti");
         let f5 = slint::SharedString::from(Key::F5);
         assert_eq!(label(&f5, Language::English), "F5");
         assert_eq!(label("", Language::Italian), "");

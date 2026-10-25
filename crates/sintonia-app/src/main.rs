@@ -133,20 +133,20 @@ fn install_volume_keys(weak: slint::Weak<MainWindow>, retries: u32) {
     slint::Timer::single_shot(delay, move || {
         let Some(main) = weak.upgrade() else { return };
         let handler_weak = weak.clone();
-        let installed = mediakeys::install(main.window(), move |key| {
+        let installed = mediakeys::install(main.window(), move |key, repeat| {
             let weak = handler_weak.clone();
             // dopo il messaggio di Windows in corso
             slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                 let Some(main) = weak.upgrade() else { return };
                 let video = main.global::<Video>();
                 match key {
-                    mediakeys::VolumeKey::Up => {
-                        video.invoke_set_volume((video.get_volume() + 5).min(100));
+                    // tenendo premuto il muto non deve accendersi e spegnersi di continuo
+                    mediakeys::VolumeKey::Mute if !repeat => video.invoke_toggle_mute(),
+                    mediakeys::VolumeKey::Mute => {}
+                    _ => {
+                        let volume = video.get_volume() + mediakeys::step(key, repeat);
+                        video.invoke_set_volume(volume.clamp(0, 100));
                     }
-                    mediakeys::VolumeKey::Down => {
-                        video.invoke_set_volume((video.get_volume() - 5).max(0));
-                    }
-                    mediakeys::VolumeKey::Mute => video.invoke_toggle_mute(),
                 }
             });
         });
