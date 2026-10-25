@@ -69,6 +69,8 @@ pub struct Settings {
     pub volume: u32,
     /// Lo sfondo si sposta verso il mouse.
     pub bg_motion: bool,
+    /// I tasti del volume (telecomando, tastiere multimediali) regolano Sintonia e non Windows.
+    pub media_volume: bool,
     /// Il tasto di ogni azione, nell'ordine di [`crate::keys::ACTIONS`] ("" = nessuno): con il
     /// mouse e la tastiera, e con il telecomando.
     pub keys: Vec<String>,
@@ -171,6 +173,7 @@ impl Settings {
             remote: false,
             volume: 100,
             bg_motion: true,
+            media_volume: true,
             keys: crate::keys::defaults(),
             remote_keys: crate::keys::defaults(),
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
@@ -217,6 +220,7 @@ impl Settings {
             "live_preview" => self.live_preview = flag,
             "update_check" => self.update_check = flag,
             "bg_motion" => self.bg_motion = flag,
+            "media_volume" => self.media_volume = flag,
             "navigation" => self.remote = value == "remote",
             "volume" => {
                 if let Ok(volume) = value.trim().parse::<u32>() {

@@ -12,6 +12,7 @@ mod catalog;
 mod guide;
 mod images;
 mod keys;
+mod mediakeys;
 mod remote;
 mod settings;
 mod video;
@@ -126,6 +127,35 @@ fn single_instance(data_dir: &Path) -> Option<Option<std::fs::File>> {
     }
 }
 
+/// Collega i tasti del volume (telecomandi, tastiere multimediali) al volume del player.
+fn install_volume_keys(weak: slint::Weak<MainWindow>, retries: u32) {
+    let delay = std::time::Duration::from_millis(if retries > 0 { 300 } else { 2000 });
+    slint::Timer::single_shot(delay, move || {
+        let Some(main) = weak.upgrade() else { return };
+        let handler_weak = weak.clone();
+        let installed = mediakeys::install(main.window(), move |key| {
+            let weak = handler_weak.clone();
+            // dopo il messaggio di Windows in corso
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                let Some(main) = weak.upgrade() else { return };
+                let video = main.global::<Video>();
+                match key {
+                    mediakeys::VolumeKey::Up => {
+                        video.invoke_set_volume((video.get_volume() + 5).min(100));
+                    }
+                    mediakeys::VolumeKey::Down => {
+                        video.invoke_set_volume((video.get_volume() - 5).max(0));
+                    }
+                    mediakeys::VolumeKey::Mute => video.invoke_toggle_mute(),
+                }
+            });
+        });
+        if !installed && retries > 0 {
+            install_volume_keys(weak, retries - 1);
+        }
+    });
+}
+
 /// Se la chiave è nuova, un archivio vecchio non sarebbe più leggibile: lo si mette da parte.
 fn set_aside_old_database(database: &Path) {
     if !database.exists() {
@@ -226,6 +256,9 @@ fn run() -> Result<(), AppError> {
     });
 
     main.show()?;
+    // i tasti del volume dei telecomandi: la finestra di Windows nasce con il ciclo degli eventi,
+    // quindi si collegano poco dopo (e si riprova una volta)
+    install_volume_keys(main.as_weak(), 1);
     slint::run_event_loop()?;
     app.shutdown();
     pip.hide()?;

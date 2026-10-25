@@ -561,11 +561,13 @@ Una copia dell'archivio com'era è in:
             main.set_live_preview(settings.live_preview);
             main.set_update_check(settings.update_check);
             main.set_bg_motion(settings.bg_motion);
+            main.set_media_volume(settings.media_volume);
             main.global::<Nav>().set_mode(i32::from(settings.remote));
             main.set_playlist_interval(interval_index(settings.playlist_hours));
             main.set_epg_interval(interval_index(settings.epg_hours));
             main.set_user_agent(settings.user_agent.clone().unwrap_or_default().into());
         }
+        crate::mediakeys::set_enabled(settings.media_volume);
         *self.settings.borrow_mut() = settings;
         self.show_keys();
         self.show_custom_name();
@@ -2354,6 +2356,9 @@ Una copia dell'archivio com'era è in:
             // i tasti cambiano con la modalità
             if key == "navigation" {
                 app.show_keys();
+            }
+            if key == "media_volume" {
+                crate::mediakeys::set_enabled(settings.media_volume);
             }
             if key == "user_agent" {
                 if let Err(err) = app
