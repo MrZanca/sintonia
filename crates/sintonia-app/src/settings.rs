@@ -69,7 +69,7 @@ pub struct Settings {
     pub volume: u32,
     /// Lo sfondo si sposta verso il mouse.
     pub bg_motion: bool,
-    /// Grandezza dei testi: 0 normale, 1 grande (1,5×), 2 molto grande (2×).
+    /// Grandezza dei testi: 0 normale, 1 grande (1,5×).
     pub text_size: u32,
     /// I tasti del volume (telecomando, tastiere multimediali) regolano Sintonia e non Windows.
     pub media_volume: bool,
@@ -224,7 +224,7 @@ impl Settings {
             "live_preview" => self.live_preview = flag,
             "update_check" => self.update_check = flag,
             "bg_motion" => self.bg_motion = flag,
-            "text_size" => self.text_size = value.trim().parse::<u32>().unwrap_or(0).min(2),
+            "text_size" => self.text_size = value.trim().parse::<u32>().unwrap_or(0).min(1),
             "media_volume" => self.media_volume = flag,
             "navigation" => self.remote = value == "remote",
             "volume" => {
@@ -320,10 +320,11 @@ mod tests {
 
     #[test]
     fn text_size() {
-        let big = [("text_size".to_owned(), "2".to_owned())];
-        assert_eq!(Settings::from_pairs(&big, Language::Italian).text_size, 2);
-        let bad = [("text_size".to_owned(), "9".to_owned())];
-        assert_eq!(Settings::from_pairs(&bad, Language::Italian).text_size, 2);
+        let big = [("text_size".to_owned(), "1".to_owned())];
+        assert_eq!(Settings::from_pairs(&big, Language::Italian).text_size, 1);
+        // «molto grande» non c'è più: diventa «grande»
+        let old = [("text_size".to_owned(), "2".to_owned())];
+        assert_eq!(Settings::from_pairs(&old, Language::Italian).text_size, 1);
         assert_eq!(Settings::defaults(Language::Italian).text_size, 0);
     }
 

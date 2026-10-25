@@ -652,5 +652,3 @@ msgstr "Normale"
 msgid "Large"
 msgstr "Grande"
 
-msgid "Very large"
-msgstr "Molto grande"

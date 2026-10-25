@@ -566,7 +566,6 @@ Una copia dell'archivio com'era è in:
             main.set_bg_motion(settings.bg_motion);
             main.global::<Theme>()
                 .set_text_scale(match settings.text_size {
-                    2 => 2.0,
                     1 => 1.5,
                     _ => 1.0,
                 });

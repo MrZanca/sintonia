@@ -1656,11 +1656,11 @@ component SettingsScreen inherits Rectangle {
                 Rectangle { height: 8px; }
                 Title { text: @tr("Text size"); }
                 Tabs {
-                    options: [@tr("Normal"), @tr("Large"), @tr("Very large")];
-                    current: Theme.text-scale >= 1.9 ? 2 : (Theme.text-scale >= 1.4 ? 1 : 0);
+                    options: [@tr("Normal"), @tr("Large")];
+                    current: Theme.text-scale >= 1.4 ? 1 : 0;
                     clicked(i) => {
-                        Theme.text-scale = i == 2 ? 2 : (i == 1 ? 1.5 : 1);
-                        root.setting-changed("text_size", i == 2 ? "2" : (i == 1 ? "1" : "0"));
+                        Theme.text-scale = i == 1 ? 1.5 : 1;
+                        root.setting-changed("text_size", i == 1 ? "1" : "0");
                     }
                 }
                 Text {
@@ -2531,11 +2531,16 @@ component PlayerScreen inherits Rectangle {
             x: 36px;
             y: 28px;
             spacing: 10px;
-            // con il telecomando non servono: Indietro e Home sono sul telecomando
-            opacity: root.overlay && !root.drawer && !Nav.tv ? 1 : 0;
-            visible: !Nav.tv && (self.opacity > 0.01 || (root.overlay && !root.drawer));
+            // con il telecomando resta solo Home (Indietro sul video non chiude il player)
+            opacity: root.overlay && !root.drawer ? 1 : 0;
+            visible: self.opacity > 0.01 || (root.overlay && !root.drawer);
             animate opacity { duration: 250ms; }
-            back-btn := IconBtn { icon: Icons.back; clicked => { root.back(); } }
+            back-btn := IconBtn {
+                visible: !Nav.tv;
+                width: Nav.tv ? 0px : self.size;
+                icon: Icons.back;
+                clicked => { root.back(); }
+            }
             home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
         }
 
