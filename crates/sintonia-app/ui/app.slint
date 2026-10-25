@@ -848,7 +848,8 @@ component SourceRow inherits Rectangle {
         r: 20px;
         fill: root.s.active ? #ffffff1c : Theme.glass;
         stroke: root.s.active ? Theme.needle : transparent;
-        stroke-width: 1.5px;
+        // 2 px: con 1,5 px il bordo cade a metà pixel e un tratto in alto spariva
+        stroke-width: 2px;
     }
     inner := VerticalLayout {
         padding-left: 20px;
@@ -1099,6 +1100,8 @@ component SettingsScreen inherits Rectangle {
                     vertical-stretch: 1;
                     content-height: source-list.preferred-height;
                     source-list := VerticalLayout {
+                        // senza x esplicita il contenuto finiva 2 px a destra, tagliando il bordo
+                        x: 0;
                         width: source-fl.width;
                         padding-top: 2px;
                         alignment: start;
@@ -1337,31 +1340,6 @@ component SettingsScreen inherits Rectangle {
                 font-size: 14px;
                 wrap: word-wrap;
             }
-            Rectangle { height: 6px; }
-            Text { text: @tr("Your category"); color: Theme.ink; font-size: 16px; font-weight: 600; }
-            Text {
-                text: root.pin-set
-                    ? @tr("Put the channels you want in it with the lock button under the channel, in Live. It is always locked by the PIN, and so are its channels.")
-                    : @tr("Put the channels you want in it with the lock button under the channel, in Live. Set a PIN to lock it.");
-                color: Theme.dim;
-                font-size: 13px;
-                wrap: word-wrap;
-            }
-            if !root.pin-set || root.pin-unlocked: HorizontalLayout {
-                alignment: start;
-                Rectangle {
-                    width: 320px;
-                    height: cf.preferred-height;
-                    cf := Field {
-                        width: parent.width;
-                        label: @tr("Name");
-                        placeholder: @tr("My channels");
-                        value <=> root.custom-name;
-                        edited(v) => { root.setting-changed("custom_name", v); }
-                    }
-                }
-            }
-            Rectangle { height: 6px; }
             if root.pin-set && !root.pin-unlocked: HorizontalLayout {
                 spacing: 12px;
                 alignment: start;
@@ -1394,10 +1372,11 @@ component SettingsScreen inherits Rectangle {
               alignment: start;
               lock-fl := Flickable {
                 // poche centinaia di categorie: un `for` basta
-                height: min(lock-list.preferred-height, 360px);
+                height: min(lock-list.preferred-height, 300px);
                 width: 620px;
                 content-height: lock-list.preferred-height;
                 lock-list := VerticalLayout {
+                    x: 0;
                     width: lock-fl.width;
                     spacing: 6px;
                     for c[i] in root.lock-shown: Rectangle {
@@ -1437,6 +1416,30 @@ component SettingsScreen inherits Rectangle {
                     }
                 }
               }
+            }
+            Rectangle { height: 10px; }
+            Text { text: @tr("Your category"); color: Theme.ink; font-size: 16px; font-weight: 600; }
+            Text {
+                text: root.pin-set
+                    ? @tr("Put the channels you want in it with the lock button under the channel, in Live. It is always locked by the PIN, and so are its channels.")
+                    : @tr("Put the channels you want in it with the lock button under the channel, in Live. Set a PIN to lock it.");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            if !root.pin-set || root.pin-unlocked: HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    width: 320px;
+                    height: cf.preferred-height;
+                    cf := Field {
+                        width: parent.width;
+                        label: @tr("Name");
+                        placeholder: @tr("My channels");
+                        value <=> root.custom-name;
+                        edited(v) => { root.setting-changed("custom_name", v); }
+                    }
+                }
             }
         }
     }

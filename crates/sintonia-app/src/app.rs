@@ -9,11 +9,11 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sintonia_core::db::GuideProgramme;
 use sintonia_core::db::{
     ChannelRow, EpisodeRef, HistoryEntry, ItemKind, MovieRow, NewSource, SeriesRow, SourceInfo,
     SourceKind,
 };
+use sintonia_core::db::{GuideProgramme, Health};
 use sintonia_core::pin;
 use sintonia_core::service::{
     Command, EpgState, Event, LogoImage, Playable, ResolvedStream, Service, SourceError,
@@ -487,7 +487,46 @@ impl App {
             Event::MovieDetail { id, result } => self.on_movie_detail(id, result),
             Event::SeriesDetail { id, result } => self.on_series_detail(id, result),
             Event::Image { url, poster, image } => self.on_image(url, poster, image),
+            Event::Health(health) => self.on_health(health),
             Event::Error(message) => log::error!("{message}"),
+        }
+    }
+
+    /// L'archivio era rovinato: riparato basta il log, altrimenti lo si dice (con la copia).
+    fn on_health(&self, health: Health) {
+        let Health::Damaged { backup, problem } = health else {
+            return;
+        };
+        log::error!(
+            "archivio danneggiato ({problem}), copia in {}",
+            backup.display()
+        );
+        let text = match self.settings.borrow().language {
+            Language::Italian => format!(
+                "L'archivio di Sintonia è danneggiato e non si è potuto riparare da solo.                  Alcune sorgenti o impostazioni potrebbero mancare: se succede, aggiungile di                  nuovo.
+
+Una copia dell'archivio com'era è in:
+{}",
+                backup.display()
+            ),
+            Language::English => format!(
+                "Sintonia's database is damaged and could not be repaired automatically.                  Some sources or settings may be missing: if so, add them again.
+
+                 A copy of the database as it was is in:
+{}",
+                backup.display()
+            ),
+        };
+        let shown = slint::spawn_local(async move {
+            rfd::AsyncMessageDialog::new()
+                .set_title("Sintonia")
+                .set_description(text)
+                .set_level(rfd::MessageLevel::Warning)
+                .show()
+                .await;
+        });
+        if let Err(err) = shown {
+            log::error!("{err}");
         }
     }
 

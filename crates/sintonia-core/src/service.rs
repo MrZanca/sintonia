@@ -20,9 +20,9 @@ use tokio::sync::{mpsc, Semaphore};
 
 use crate::crypto::Cipher;
 use crate::db::{
-    ChannelInput, ChannelRow, ChannelStream, EpgSummary, EpisodeRef, GuideProgramme, HistoryEntry,
-    ItemKind, MovieRow, NewSource, SeriesRow, SourceInfo, SourceKind, Store, StoreError,
-    StreamInfo,
+    self, ChannelInput, ChannelRow, ChannelStream, EpgSummary, EpisodeRef, GuideProgramme, Health,
+    HistoryEntry, ItemKind, MovieRow, NewSource, SeriesRow, SourceInfo, SourceKind, Store,
+    StoreError, StreamInfo,
 };
 use crate::epg::{self, EpgError, ParseStats, Programme, XmltvChannel};
 use crate::m3u::{self, Parser, Playlist};
@@ -393,6 +393,8 @@ pub enum Event {
         /// Programmi, per canale e in ordine di inizio.
         programmes: Arc<Vec<GuideProgramme>>,
     },
+    /// L'archivio all'avvio era rovinato (riparato o no); solo se non era integro.
+    Health(Health),
     /// Errore da mostrare.
     Error(String),
 }
@@ -441,6 +443,8 @@ struct Shared {
     epg_in_flight: Mutex<HashSet<i64>>,
     /// Un controllo automatico (playlist e guida) è in corso.
     auto_in_flight: AtomicBool,
+    /// Stato dell'archivio all'avvio (si manda all'interfaccia con `Init`).
+    health: Mutex<Option<Health>>,
     /// Ultimo aggiornamento automatico fallito, per sorgente (playlist o guida): si riprova dopo
     /// [`AUTO_RETRY`], non a ogni controllo.
     auto_failed: Mutex<HashMap<(i64, Refresh), i64>>,
@@ -542,6 +546,16 @@ impl Service {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::create_dir_all(config.cache_dir.join("immagini"))?;
+        // prima di aprirlo: se l'archivio è rovinato si prova a ripararlo (l'esito arriva con Init)
+        let health = db::check_and_repair(&config.database).unwrap_or_else(|err| {
+            log::error!("controllo dell'archivio: {err}");
+            Health::Ok
+        });
+        match &health {
+            Health::Ok => {}
+            Health::Repaired { .. } => log::warn!("archivio riparato (indici ricostruiti)"),
+            Health::Damaged { problem, .. } => log::error!("archivio danneggiato: {problem}"),
+        }
         let store = Store::open(&config.database, config.cipher)?;
         let http = reqwest::Client::builder()
             .user_agent(config.user_agent)
@@ -566,6 +580,7 @@ impl Service {
             images_in_flight: Mutex::new(HashSet::new()),
             epg_in_flight: Mutex::new(HashSet::new()),
             auto_in_flight: AtomicBool::new(false),
+            health: Mutex::new(Some(health)),
             auto_failed: Mutex::new(HashMap::new()),
         });
         let (commands, mut inbox) = mpsc::unbounded_channel::<Command>();
@@ -629,6 +644,14 @@ fn now() -> i64 {
 async fn handle(shared: Arc<Shared>, command: Command) {
     match command {
         Command::Init => {
+            let health = shared
+                .health
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            if let Some(health) = health.filter(|h| *h != Health::Ok) {
+                shared.emit(Event::Health(health));
+            }
             match shared.with_store(|s| s.settings()).await {
                 Ok(settings) => shared.emit(Event::Settings(settings)),
                 Err(err) => shared.emit(Event::Error(err.to_string())),
