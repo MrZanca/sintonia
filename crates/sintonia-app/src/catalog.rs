@@ -631,6 +631,15 @@ impl<E: CatalogEntry> CatalogModel<E> {
         self.all.borrow().get(index).map(CatalogEntry::id)
     }
 
+    /// La prima voce (non nascosta dal PIN) per cui `pred` è vero.
+    pub fn find(&self, pred: impl Fn(&E) -> bool) -> Option<i64> {
+        let all = self.all.borrow();
+        all.iter()
+            .enumerate()
+            .find(|(index, e)| !self.is_hidden(*index) && pred(e))
+            .map(|(_, e)| e.id())
+    }
+
     /// La voce `id` è nascosta dal PIN.
     pub fn is_id_hidden(&self, id: i64) -> bool {
         let index = self.by_id.borrow().get(&id).copied();

@@ -167,6 +167,24 @@ impl VideoRouter {
         router
     }
 
+    /// Volume da 0 a 100. Muovere il volume con l'audio spento lo riaccende.
+    pub fn set_volume(&self, percent: i32) {
+        let percent = percent.clamp(0, 100);
+        if let Err(err) = self.player.set_volume(percent.unsigned_abs()) {
+            log::warn!("{err}");
+            return;
+        }
+        if self.muted.get() && percent > 0 {
+            self.toggle_mute();
+        }
+        if let Some(main) = self.main.upgrade() {
+            main.global::<Video>().set_volume(percent);
+        }
+        if let Some(pip) = self.pip.upgrade() {
+            pip.global::<Video>().set_volume(percent);
+        }
+    }
+
     /// Accende o spegne l'audio, con il pulsante giusto in tutte e due le finestre.
     pub fn toggle_mute(&self) {
         let muted = !self.muted.get();

@@ -73,8 +73,6 @@ msgstr "Elimina"
 msgid "File"
 msgstr "File"
 
-msgid "Fill"
-msgstr "Riempi"
 
 msgid "Fill in the name and the address."
 msgstr "Inserisci il nome e l'indirizzo."
@@ -289,8 +287,6 @@ msgstr "Film e serie arrivano con un account Xtream Codes: aggiungilo nelle Impo
 msgid "Next episode"
 msgstr "Prossimo episodio"
 
-msgid "No favorite channels yet: choose a channel and press the star (or the S key)."
-msgstr "Ancora nessun canale preferito: scegli un canale e premi la stella (o il tasto S)."
 
 msgid "No source yet"
 msgstr "Ancora nessuna sorgente"
@@ -456,8 +452,6 @@ msgstr "3 giorni"
 msgid "1 week"
 msgstr "1 settimana"
 
-msgid "You can always update by hand: Refresh on each source, or the button in the Guide."
-msgstr "Puoi sempre aggiornare a mano: «Aggiorna» su ogni sorgente, o il pulsante nella Guida."
 
 msgid "Locked categories disappear from every list, from search and from the Home until the PIN is entered. The PIN is asked again every time Sintonia starts."
 msgstr "Le categorie bloccate spariscono da tutti gli elenchi, dalla ricerca e dalla Home finché non si inserisce il PIN. Il PIN si richiede a ogni avvio di Sintonia."
@@ -525,8 +519,6 @@ msgstr "È uscita Sintonia {} · Scarica"
 msgid "Tell me when a new version of Sintonia is out"
 msgstr "Avvisami quando esce una nuova versione di Sintonia"
 
-msgid "Once a day Sintonia asks GitHub which is the latest version. Nothing else is sent."
-msgstr "Una volta al giorno Sintonia chiede a GitHub qual è l'ultima versione. Non viene mandato nient'altro."
 
 msgid "Your category"
 msgstr "La tua categoria"
@@ -536,3 +528,117 @@ msgstr "Mettici i canali che vuoi con il pulsante con il lucchetto sotto il cana
 
 msgid "Put the channels you want in it with the lock button under the channel, in Live. Set a PIN to lock it."
 msgstr "Mettici i canali che vuoi con il pulsante con il lucchetto sotto il canale, in Live. Imposta un PIN per bloccarla."
+
+msgid "Navigation"
+msgstr "Navigazione"
+
+msgid "How you move around Sintonia"
+msgstr "Come ti muovi in Sintonia"
+
+msgid "Mouse and keyboard"
+msgstr "Mouse e tastiera"
+
+msgid "Remote control"
+msgstr "Telecomando"
+
+msgid "Click with the mouse."
+msgstr "Si clicca con il mouse."
+
+msgid "Arrows, OK and Back. Bigger buttons."
+msgstr "Frecce, OK e Indietro. Pulsanti più grandi."
+
+msgid "With the remote control: the arrows move the white ring from one button or list to the next, OK opens what has the ring, Back goes back (from a page it goes to the menu at the bottom, from the menu to the Home)."
+msgstr "Con il telecomando: le frecce spostano l'anello bianco da un pulsante o da un elenco all'altro, OK apre quello che ha l'anello, Indietro torna indietro (da una pagina va al menu in basso, dal menu alla Home)."
+
+msgid "In the player: ↑ ↓ change channel, OK opens the channel list, ← → reach the buttons. Movies and episodes: ← → skip 10 seconds, OK pauses, ↓ shows the buttons."
+msgstr "Nel player: ↑ ↓ cambiano canale, OK apre l'elenco dei canali, ← → portano ai pulsanti. Film ed episodi: ← → saltano di 10 secondi, OK mette in pausa, ↓ mostra i pulsanti."
+
+msgid "To type (an address, a search) you need the keyboard: the one on the back of the remote, if it has one, or the Windows on-screen keyboard."
+msgstr "Per scrivere (un indirizzo, una ricerca) serve la tastiera: quella sul retro del telecomando, se ce l'ha, o la tastiera su schermo di Windows."
+
+
+msgid "Aspect ratio"
+msgstr "Proporzioni dell'immagine"
+
+msgid "Fill the screen"
+msgstr "Riempi lo schermo"
+
+msgid "No favorite channels yet: choose a channel and press the star."
+msgstr "Ancora nessun canale preferito: scegli un canale e premi la stella."
+
+
+
+msgid "Full screen"
+msgstr "Schermo intero"
+
+msgid "Mini player"
+msgstr "Mini player"
+
+msgid "Mute"
+msgstr "Muto"
+
+msgid "Volume up"
+msgstr "Alza il volume"
+
+msgid "Volume down"
+msgstr "Abbassa il volume"
+
+msgid "Favorite (in Live)"
+msgstr "Preferito (in Live)"
+
+msgid "Open the Guide"
+msgstr "Apri la Guida"
+
+msgid "Go to the Home"
+msgstr "Vai alla Home"
+
+msgid "Press a key…"
+msgstr "Premi un tasto…"
+
+msgid "Change"
+msgstr "Cambia"
+
+msgid "Restore the default keys"
+msgstr "Rimetti i tasti di partenza"
+
+msgid "The background follows the mouse"
+msgstr "Lo sfondo segue il mouse"
+
+msgid "It stays still while you watch a video."
+msgstr "Resta fermo mentre guardi un video."
+
+msgid "Keys for the remote control"
+msgstr "Tasti del telecomando"
+
+msgid "Keys for mouse and keyboard"
+msgstr "Tasti di mouse e tastiera"
+
+msgid "Press Change, then the key. Back or Esc cancels. Arrows, OK, Back, Play/Pause and the volume keys have a fixed job and can't be chosen."
+msgstr "Premi Cambia, poi il tasto. Indietro o Esc annulla. Frecce, OK, Indietro, Play/Pausa e i tasti del volume hanno un compito fisso e non si possono scegliere."
+
+msgid "Volume keys control Sintonia"
+msgstr "I tasti del volume regolano Sintonia"
+
+msgid "Remote and multimedia keyboard. Off: they change the Windows volume."
+msgstr "Telecomando e tastiere multimediali. Spento: cambiano il volume di Windows."
+
+msgid "Last key pressed: {}"
+msgstr "Ultimo tasto premuto: {}"
+
+msgid "Back"
+msgstr "Indietro"
+
+msgid "Search"
+msgstr "Cerca"
+
+msgid "Next channel"
+msgstr "Canale successivo"
+
+msgid "Previous channel"
+msgstr "Canale precedente"
+
+msgid "Open the Settings"
+msgstr "Apri le Impostazioni"
+
+msgid "Last channel watched"
+msgstr "Ultimo canale guardato"

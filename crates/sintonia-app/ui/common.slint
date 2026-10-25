@@ -141,6 +141,42 @@ export global Theme {
     out property <color> needle: base.brighter(0.9);
 }
 
+// Come si usa Sintonia: con il mouse oppure con il telecomando (frecce, OK, Indietro).
+// Con il telecomando le frecce che un elemento non usa portano all'elemento seguente o precedente
+// (come Tab e Maiusc+Tab: lo fa Rust, vedi remote.rs) e l'elemento attivo ha un anello attorno.
+export global Nav {
+    // 0 mouse e tastiera, 1 telecomando
+    in-out property <int> mode: 0;
+    out property <bool> tv: root.mode == 1;
+    // un tasto è arrivato a un elemento della finestra (se no il fuoco si era perso: Rust lo rimette)
+    in-out property <bool> key-seen;
+    // sposta il fuoco all'elemento seguente (true) o precedente (false)
+    callback step(bool);
+}
+
+// I tasti delle azioni (scelti dall'utente in Impostazioni › Tasti). Li imposta Rust.
+// Azioni: 0 schermo intero, 1 mini player, 2 muto, 3 volume su, 4 volume giù, 5 preferito (Live),
+// 6 Guida, 7 Home, 8 indietro, 9 cerca, 10 canale seguente, 11 canale precedente, 12 Impostazioni,
+// 13 ultimo canale guardato.
+export global Keys {
+    // il tasto di ogni azione, come lo manda Slint ("" = nessuno), e la sua variante maiuscola
+    in property <[string]> keys;
+    in property <[string]> alt;
+    // il nome del tasto da mostrare
+    in property <[string]> labels;
+    // l'ultimo tasto arrivato (per scoprire che cosa manda un tasto del telecomando)
+    in property <string> last;
+    // le Impostazioni aspettano il tasto da assegnare a un'azione
+    in-out property <bool> capturing;
+    callback set-key(int, string);
+    callback reset();
+    // «indietro»: Rust preme Esc
+    callback back();
+    public pure function is(action: int, text: string) -> bool {
+        return text != "" && (text == root.keys[action] || text == root.alt[action]);
+    }
+}
+
 // Il video di libmpv. Rust disegna il fotogramma in una texture OpenGL grande quanto il riquadro
 // (`w` × `h`), con gli angoli già ritagliati a super-ellisse di raggio `r`, e la passa in `frame`.
 // Ogni finestra ha la sua istanza di questo global.
@@ -155,6 +191,9 @@ export global Video {
     // audio spento; il pulsante muto di ogni player chiama `toggle-mute`
     in property <bool> muted;
     callback toggle-mute();
+    // volume da 0 a 100; il cursore del player chiama `set-volume`
+    in property <int> volume: 100;
+    callback set-volume(int);
     // scritte da `VideoView`, lette da Rust
     in-out property <length> w;
     in-out property <length> h;
@@ -332,13 +371,45 @@ export global Icons {
     out property <string> forward: "M13 6 L20 12 L13 18 Z M4 6 L11 12 L4 18 Z";
     out property <string> next: "M5 5 L15 12 L5 19 Z M19 5 V19";
     out property <string> lock: "M6 11 H18 V20 H6 Z M8.5 11 V8 A3.5 3.5 0 0 1 15.5 8 V11";
+    // proporzioni dell'immagine: un riquadro con gli angoli che si allargano
+    out property <string> aspect: "M3 6 H21 V18 H3 Z M7 12 V9 H10 M17 12 V15 H14";
+}
+
+// Rende premibile con OK (Invio) un pulsante raggiunto con le frecce. Con il telecomando, quando ha
+// il fuoco, disegna un anello appena fuori dal bordo: si vede anche sui pulsanti bianchi.
+// Va messo dopo il disegno del pulsante e prima della sua TouchArea.
+export component Press inherits FocusScope {
+    in property <length> r: 20px;
+    callback activate();
+    // un clic del mouse non sposta il fuoco (resta dov'era, per esempio sull'elenco)
+    focus-on-click: false;
+    key-pressed(event) => {
+        if (event.text == Key.Return || event.text == " ") {
+            root.activate();
+            return accept;
+        }
+        reject
+    }
+    if Nav.tv && root.has-focus: Sq {
+        x: -5px;
+        y: -5px;
+        width: root.width + 10px;
+        height: root.height + 10px;
+        r: root.r + 5px;
+        stroke: Theme.ink;
+        stroke-width: 3px;
+    }
 }
 
 export component IconBtn inherits Rectangle {
     in property <string> icon;
     in property <length> size: 44px;
+    // false: le frecce lo saltano (resta cliccabile con il mouse)
+    in property <bool> tab-stop: true;
     out property <bool> hovered: ta.has-hover;
+    out property <bool> focused: press.has-focus;
     callback clicked;
+    forward-focus: press;
     width: root.size;
     height: root.size;
     Sq { r: root.size / 2; fill: ta.has-hover ? #ffffff40 : #000000a0; }
@@ -346,6 +417,13 @@ export component IconBtn inherits Rectangle {
         commands: root.icon;
         width: root.size * 0.46;
         height: root.size * 0.46;
+    }
+    press := Press {
+        r: root.size / 2;
+        // nascosto (per esempio i comandi del player che spariscono) non si raggiunge
+        enabled: root.visible;
+        focus-on-tab-navigation: root.tab-stop;
+        activate => { root.clicked(); }
     }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
@@ -355,22 +433,35 @@ export component Btn inherits Rectangle {
     in property <bool> primary;
     in property <bool> danger;
     in property <bool> enabled: true;
+    // false: il pulsante sparisce e non occupa spazio (resta raggiungibile per nome, a differenza
+    // di un `if`)
+    in property <bool> shown: true;
+    // pulsante piccolo, con meno spazio ai lati (le righe con tanti pulsanti)
+    in property <bool> compact;
     out property <bool> hovered: ta.has-hover;
+    out property <bool> focused: press.has-focus;
     callback clicked;
-    height: 38px;
+    forward-focus: press;
+    height: Nav.tv ? 44px : 38px;
     horizontal-stretch: 0;
-    width: t.preferred-width + 40px;
+    width: root.shown ? t.preferred-width + (root.compact ? 26px : 40px) : 0px;
+    visible: root.shown;
     opacity: root.enabled ? 1 : 0.4;
     Sq {
-        r: 19px;
+        r: root.height / 2;
         fill: root.danger ? (ta.has-hover ? Theme.live.brighter(0.2) : Theme.live)
             : root.primary ? (ta.has-hover ? #e6e0ff : Theme.ink) : (ta.has-hover ? #ffffff30 : Theme.glass);
     }
     t := Text {
         text: root.label;
         color: root.primary && !root.danger ? Theme.bg : Theme.ink;
-        font-size: 14px;
+        font-size: Nav.tv ? 15px : 14px;
         font-weight: 600;
+    }
+    press := Press {
+        r: root.height / 2;
+        enabled: root.enabled && root.shown;
+        activate => { root.clicked(); }
     }
     ta := TouchArea {
         enabled: root.enabled;
@@ -378,28 +469,68 @@ export component Btn inherits Rectangle {
     }
 }
 
-export component Tabs inherits HorizontalLayout {
+// Scelta tra poche voci in fila. Con le frecce ← → si sceglie la voce, con OK la si attiva.
+export component Tabs inherits Rectangle {
     in property <[string]> options;
     in-out property <int> current;
     in property <int> disabled-from: 999;
+    out property <bool> focused: fs.has-focus;
     callback clicked(int);
-    spacing: 8px;
-    alignment: start;
-    height: 36px;
-    for o[i] in root.options: Rectangle {
-        width: t.preferred-width + 32px;
-        opacity: i >= root.disabled-from ? 0.45 : 1;
-        Sq { r: 18px; fill: i == root.current ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
-        t := Text {
-            text: o;
-            color: i == root.current ? Theme.bg : Theme.ink;
-            font-size: 14px;
-            font-weight: i == root.current ? 700 : 400;
+    forward-focus: fs;
+    // la voce evidenziata con le frecce
+    property <int> kc;
+    height: Nav.tv ? 42px : 36px;
+    min-width: row.min-width;
+    preferred-width: row.preferred-width;
+    fs := FocusScope {
+        focus-on-click: false;
+        focus-gained => { root.kc = max(0, root.current); }
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow && root.kc > 0) {
+                root.kc -= 1;
+                return accept;
+            }
+            if (event.text == Key.RightArrow && root.kc < min(root.options.length, root.disabled-from) - 1) {
+                root.kc += 1;
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == " ") {
+                if (root.kc < root.disabled-from) {
+                    root.current = root.kc;
+                    root.clicked(root.kc);
+                }
+                return accept;
+            }
+            reject
         }
-        ta := TouchArea {
-            clicked => {
-                root.current = i;
-                root.clicked(i);
+    }
+    row := HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        for o[i] in root.options: Rectangle {
+            width: t.preferred-width + 32px;
+            opacity: i >= root.disabled-from ? 0.45 : 1;
+            Sq { r: parent.height / 2; fill: i == root.current ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
+            t := Text {
+                text: o;
+                color: i == root.current ? Theme.bg : Theme.ink;
+                font-size: Nav.tv ? 15px : 14px;
+                font-weight: i == root.current ? 700 : 400;
+            }
+            if Nav.tv && fs.has-focus && i == root.kc: Sq {
+                x: -5px;
+                y: -5px;
+                width: parent.width + 10px;
+                height: parent.height + 10px;
+                r: parent.height / 2 + 5px;
+                stroke: Theme.ink;
+                stroke-width: 3px;
+            }
+            ta := TouchArea {
+                clicked => {
+                    root.current = i;
+                    root.clicked(i);
+                }
             }
         }
     }
@@ -448,10 +579,11 @@ export component NowNext inherits VerticalLayout {
     }
 }
 
+// i titoli delle sezioni: tutti uguali, bianchi
 export component Title inherits Text {
-    color: Theme.dim;
-    font-size: 15px;
-    font-weight: 600;
+    color: Theme.ink;
+    font-size: 18px;
+    font-weight: 700;
 }
 
 export component Ring inherits Rectangle {
@@ -466,7 +598,9 @@ export component Ring inherits Rectangle {
 
 export component Toggle inherits Rectangle {
     in-out property <bool> on;
+    out property <bool> focused: press.has-focus;
     callback toggled(bool);
+    forward-focus: press;
     width: 52px;
     height: 30px;
     Sq { r: 15px; fill: root.on ? Theme.base.brighter(0.4) : #ffffff2e; }
@@ -477,6 +611,13 @@ export component Toggle inherits Rectangle {
         border-radius: 12px;
         background: Theme.ink;
         animate x { duration: 160ms; easing: ease-out; }
+    }
+    press := Press {
+        r: 15px;
+        activate => {
+            root.on = !root.on;
+            root.toggled(root.on);
+        }
     }
     TouchArea {
         clicked => {
@@ -531,6 +672,9 @@ export component EmptyState inherits VerticalLayout {
     in property <string> body;
     in property <string> action;
     callback act();
+    forward-focus: act-btn;
+    // OK (Invio) preme subito il pulsante: con il telecomando non serve cercarlo
+    init => { act-btn.focus(); }
     alignment: center;
     spacing: 12px;
     HorizontalLayout {
@@ -556,22 +700,47 @@ export component EmptyState inherits VerticalLayout {
         horizontal-alignment: center;
         wrap: word-wrap;
     }
-    if root.action != "": HorizontalLayout {
+    HorizontalLayout {
         alignment: center;
         padding-top: 8px;
-        Btn { label: root.action; primary: true; clicked => { root.act(); } }
+        act-btn := Btn { shown: root.action != ""; label: root.action; primary: true; clicked => { root.act(); } }
     }
 }
 
-// Colonna delle categorie (scelta B): poche centinaia di righe, un `for` basta
+// Colonna delle categorie (scelta B): poche centinaia di righe, un `for` basta.
+// Con le frecce ↑ ↓ si evidenzia una categoria, con OK la si apre.
 export component CategoryList inherits Rectangle {
     in property <[CategoryItem]> model;
     in property <int> current;
     in property <bool> searching;
+    out property <bool> focused: fs.has-focus;
     callback picked(int);
+    forward-focus: fs;
     clip: true;
-    property <length> row-h: 40px;
-    Flickable {
+    property <length> row-h: Nav.tv ? 46px : 40px;
+    // la riga evidenziata con le frecce
+    property <int> kc;
+    function show(i: int) {
+        root.kc = max(0, min(root.model.length - 1, i));
+        if (root.kc * root.row-h + fl.content-y < 0px) {
+            fl.content-y = -root.kc * root.row-h;
+        } else if ((root.kc + 1) * root.row-h + fl.content-y > fl.height) {
+            fl.content-y = fl.height - (root.kc + 1) * root.row-h;
+        }
+    }
+    fs := FocusScope {
+        focus-on-click: false;
+        focus-gained => { root.show(root.searching ? 0 : root.current); }
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow) { root.show(root.kc - 1); return accept; }
+            if (event.text == Key.DownArrow) { root.show(root.kc + 1); return accept; }
+            if (event.text == Key.PageUp) { root.show(root.kc - 10); return accept; }
+            if (event.text == Key.PageDown) { root.show(root.kc + 10); return accept; }
+            if (event.text == Key.Return && root.model.length > 0) { root.picked(root.kc); return accept; }
+            reject
+        }
+    }
+    fl := Flickable {
         content-height: root.model.length * root.row-h;
         for c[i] in root.model: cr := Rectangle {
             x: 0px;
@@ -582,6 +751,8 @@ export component CategoryList inherits Rectangle {
             Sq {
                 r: 14px;
                 fill: cr.on ? Theme.base : (cta.has-hover ? #ffffff10 : transparent);
+                stroke: Nav.tv && fs.has-focus && i == root.kc ? Theme.ink : transparent;
+                stroke-width: 2px;
             }
             HorizontalLayout {
                 padding-left: 14px;
@@ -590,7 +761,7 @@ export component CategoryList inherits Rectangle {
                 Text {
                     text: Texts.category(c);
                     color: cr.on ? Theme.ink : Theme.dim;
-                    font-size: 14px;
+                    font-size: Nav.tv ? 15px : 14px;
                     font-weight: cr.on ? 700 : 400;
                     vertical-alignment: center;
                     overflow: elide;
@@ -617,3 +788,61 @@ export component CategoryList inherits Rectangle {
     }
 }
 
+// Elenco di voci grandi, una per riga (lingua, navigazione). ↑ ↓ e OK con il telecomando.
+export component ChoiceList inherits VerticalLayout {
+    in property <[string]> options;
+    in property <[string]> details;
+    in property <int> current;
+    out property <bool> focused: fs.has-focus;
+    callback picked(int);
+    forward-focus: fs;
+    property <int> kc;
+    spacing: 12px;
+    fs := FocusScope {
+        // nel layout non occupa spazio: serve solo per i tasti
+        height: 0px;
+        focus-on-click: false;
+        focus-gained => { root.kc = max(0, root.current); }
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow && root.kc > 0) { root.kc -= 1; return accept; }
+            if (event.text == Key.DownArrow && root.kc < root.options.length - 1) { root.kc += 1; return accept; }
+            if (event.text == Key.Return || event.text == " ") { root.picked(root.kc); return accept; }
+            reject
+        }
+    }
+    for l[i] in root.options: Rectangle {
+        height: root.details.length > i && root.details[i] != "" ? 84px : 72px;
+        max-width: 560px;
+        Sq {
+            r: 24px;
+            fill: root.current == i ? #ffffff26 : Theme.glass;
+            stroke: Nav.tv && fs.has-focus && i == root.kc ? Theme.ink : (root.current == i && !Nav.tv ? Theme.ink : transparent);
+            stroke-width: Nav.tv ? 3px : 2px;
+        }
+        VerticalLayout {
+            padding-left: 26px;
+            padding-right: 60px;
+            alignment: center;
+            spacing: 4px;
+            Text {
+                text: l;
+                color: Theme.ink;
+                font-size: 20px;
+                font-weight: root.current == i ? 700 : 400;
+            }
+            if root.details.length > i && root.details[i] != "": Text {
+                text: root.details[i];
+                color: Theme.dim;
+                font-size: 13px;
+                overflow: elide;
+            }
+        }
+        Text {
+            x: parent.width - self.width - 26px;
+            text: root.current == i ? "●" : "";
+            color: Theme.needle;
+            font-size: 18px;
+        }
+        TouchArea { clicked => { root.picked(i); } }
+    }
+}

@@ -1,0 +1,374 @@
+// Bozza: sfondi delle sezioni, movimento dello sfondo e bordi animati, da provare col mouse.
+// Usa i mattoncini veri dell'app (Sq, Theme, Btn…) così l'aspetto è quello di Sintonia.
+
+import { Theme, Sq, Icon, Icons, Btn, Tabs, Title } from "../../crates/sintonia-app/ui/common.slint";
+
+// ───────── Bordi ─────────
+
+// Riquadro con il bordo animato scelto. 0 fermo (anello al passaggio), 1 alone morbido,
+// 2 una luce fa il giro completo del bordo quando ci si passa sopra, 3 luce che gira sempre piano.
+component Fx inherits Rectangle {
+    in property <int> kind;
+    in property <length> r: 22px;
+    in property <color> glow: Theme.needle;
+    property <bool> hover: ta.has-hover;
+    // giro completo: parte quando il mouse entra e dura `lap`
+    property <duration> lap: 1400ms;
+    property <duration> start;
+    property <bool> running;
+    changed hover => {
+        if (self.hover && root.kind == 2) {
+            root.start = animation-tick();
+            root.running = true;
+        }
+    }
+    Timer {
+        interval: root.lap;
+        running: root.running;
+        triggered => { root.running = false; }
+    }
+    // posizione della luce lungo il bordo: 0..1 (si muove solo quando serve, così non ridisegna sempre)
+    property <float> t: root.kind == 2 && root.running ? (animation-tick() - root.start) / root.lap
+        : (root.kind == 3 ? Math.mod(animation-tick() / 6000ms, 1) : 0);
+    property <bool> light: (root.kind == 2 && root.running) || root.kind == 3;
+
+    // il bordo come rettangolo con gli angoli arrotondati, percorso a velocità costante:
+    // lato alto, angolo, lato destro, angolo, lato basso, angolo, lato sinistro, angolo
+    property <length> cr: min(root.r, min(root.width, root.height) / 2);
+    property <length> sa: root.width - 2 * root.cr;
+    property <length> sb: root.height - 2 * root.cr;
+    property <length> q: root.cr * 3.14159 / 2;
+    property <length> per: 2 * root.sa + 2 * root.sb + 4 * root.q;
+    pure function edge-x(p: float) -> length {
+        let d = p * root.per;
+        if (d < root.sa) { return root.cr + d; }
+        if (d < root.sa + root.q) { return root.width - root.cr + root.cr * Math.sin((d - root.sa) / root.q * 90deg); }
+        if (d < root.sa + root.q + root.sb) { return root.width; }
+        if (d < root.sa + 2 * root.q + root.sb) { return root.width - root.cr + root.cr * Math.cos((d - root.sa - root.q - root.sb) / root.q * 90deg); }
+        if (d < 2 * root.sa + 2 * root.q + root.sb) { return root.width - root.cr - (d - root.sa - 2 * root.q - root.sb); }
+        if (d < 2 * root.sa + 3 * root.q + root.sb) { return root.cr - root.cr * Math.sin((d - 2 * root.sa - 2 * root.q - root.sb) / root.q * 90deg); }
+        if (d < 2 * root.sa + 3 * root.q + 2 * root.sb) { return 0px; }
+        return root.cr - root.cr * Math.cos((d - 2 * root.sa - 3 * root.q - 2 * root.sb) / root.q * 90deg);
+    }
+    pure function edge-y(p: float) -> length {
+        let d = p * root.per;
+        if (d < root.sa) { return 0px; }
+        if (d < root.sa + root.q) { return root.cr - root.cr * Math.cos((d - root.sa) / root.q * 90deg); }
+        if (d < root.sa + root.q + root.sb) { return root.cr + (d - root.sa - root.q); }
+        if (d < root.sa + 2 * root.q + root.sb) { return root.height - root.cr + root.cr * Math.sin((d - root.sa - root.q - root.sb) / root.q * 90deg); }
+        if (d < 2 * root.sa + 2 * root.q + root.sb) { return root.height; }
+        if (d < 2 * root.sa + 3 * root.q + root.sb) { return root.height - root.cr + root.cr * Math.cos((d - 2 * root.sa - 2 * root.q - root.sb) / root.q * 90deg); }
+        if (d < 2 * root.sa + 3 * root.q + 2 * root.sb) { return root.height - root.cr - (d - 2 * root.sa - 3 * root.q - root.sb); }
+        return root.cr - root.cr * Math.sin((d - 2 * root.sa - 3 * root.q - 2 * root.sb) / root.q * 90deg);
+    }
+
+    // alone morbido
+    if root.kind == 1: Rectangle {
+        border-radius: root.r;
+        drop-shadow-blur: root.hover ? 28px : 0px;
+        drop-shadow-color: root.glow.with-alpha(root.hover ? 0.75 : 0);
+        animate drop-shadow-blur, drop-shadow-color { duration: 260ms; easing: ease-out; }
+    }
+    @children
+    // anello al passaggio (com'è oggi): nei modi 0 e 1
+    if root.kind <= 1: Sq {
+        r: root.r;
+        stroke: root.hover ? Theme.ink.with-alpha(root.kind == 1 ? 0.55 : 1) : transparent;
+        stroke-width: root.kind == 1 ? 2px : 3px;
+    }
+    // la luce che corre: una scia di punti luminosi sul bordo (super-ellisse, come Sq)
+    if root.light: Sq {
+        r: root.r;
+        stroke: root.glow.with-alpha(0.35);
+        stroke-width: 1.5px;
+    }
+    if root.light: Rectangle {
+        clip: false;
+        for k in 18: Rectangle {
+            // i punti della scia distano circa 5 px lungo il bordo, qualunque sia la grandezza
+            property <float> p: Math.mod(root.t - k * 5px / root.per + 1, 1);
+            property <length> d: min(40px, max(18px, root.height * 0.7)) * (1 - k / 30);
+            x: root.edge-x(self.p) - self.d / 2;
+            y: root.edge-y(self.p) - self.d / 2;
+            width: self.d;
+            height: self.d;
+            opacity: (1 - k / 18) * (root.kind == 2 ? 1 - max(0, root.t - 0.85) / 0.15 : 0.8);
+            background: @radial-gradient(circle, root.glow 0%, root.glow.with-alpha(0.35) 25%, transparent 65%);
+        }
+    }
+    ta := TouchArea { }
+}
+
+// ───────── Sfondi ─────────
+
+// Lo sfondo di una sezione. `dx`/`dy` spostano i livelli (movimento), con un po' di profondità:
+// i livelli più grandi si muovono meno.
+component Backdrop inherits Rectangle {
+    // 0 bagliori (oggi), 1 aurora, 2 scala della radio, 3 onde
+    in property <int> kind;
+    in property <length> dx;
+    in property <length> dy;
+    background: Theme.bg;
+    clip: true;
+
+    // bagliori: quelli di oggi
+    if root.kind == 0: Rectangle {
+        x: root.width - 760px + root.dx;
+        y: -380px + root.dy;
+        width: 1100px;
+        height: 800px;
+        background: @radial-gradient(circle, Theme.base.with-alpha(0.5) 0%, transparent 46%);
+    }
+    if root.kind == 0: Rectangle {
+        x: -300px - root.dx * 0.6;
+        y: root.height - 380px - root.dy * 0.6;
+        width: 900px;
+        height: 700px;
+        background: @radial-gradient(circle, Theme.base.with-alpha(0.28) 0%, transparent 46%);
+    }
+
+    // aurora: tre macchie grandi di colori vicini a quello della sezione
+    if root.kind == 1: Rectangle {
+        x: root.width * 0.45 + root.dx;
+        y: -420px + root.dy;
+        width: 1200px;
+        height: 900px;
+        background: @radial-gradient(circle, Theme.base.with-alpha(0.8) 0%, transparent 52%);
+    }
+    if root.kind == 1: Rectangle {
+        x: -420px - root.dx * 0.7;
+        y: root.height * 0.25 + root.dy * 0.5;
+        width: 1000px;
+        height: 900px;
+        background: @radial-gradient(circle, Theme.base.brighter(0.6).with-alpha(0.4) 0%, transparent 50%);
+    }
+    if root.kind == 1: Rectangle {
+        x: root.width * 0.25 + root.dx * 0.4;
+        y: root.height - 360px - root.dy * 0.8;
+        width: 1100px;
+        height: 700px;
+        background: @radial-gradient(circle, Theme.base.darker(0.1).with-alpha(0.6) 0%, transparent 50%);
+    }
+
+    // scala della radio: tacche sottili come quelle del menu in basso, una lancetta e un bagliore
+    if root.kind == 2: Rectangle {
+        x: root.width - 700px + root.dx;
+        y: -360px + root.dy;
+        width: 1000px;
+        height: 760px;
+        background: @radial-gradient(circle, Theme.base.with-alpha(0.38) 0%, transparent 46%);
+    }
+    if root.kind == 2: Rectangle {
+        x: root.dx * 0.5;
+        y: root.height * 0.18 + root.dy * 0.5;
+        width: root.width;
+        height: 120px;
+        for i in 120: Rectangle {
+            x: i * 14px;
+            y: Math.mod(i, 10) == 0 ? 0px : (Math.mod(i, 5) == 0 ? 30px : 50px);
+            width: 1px;
+            height: Math.mod(i, 10) == 0 ? 120px : (Math.mod(i, 5) == 0 ? 60px : 30px);
+            background: Theme.ink.with-alpha(Math.mod(i, 10) == 0 ? 0.07 : 0.04);
+        }
+        Rectangle {
+            x: parent.width * 0.62 - root.dx * 0.8;
+            width: 2px;
+            height: 120px;
+            background: Theme.needle.with-alpha(0.35);
+        }
+    }
+
+    // onde: cerchi concentrici che partono dall'angolo in alto a destra (come un'antenna)
+    if root.kind == 3: Rectangle {
+        x: root.width - 760px + root.dx;
+        y: -380px + root.dy;
+        width: 1100px;
+        height: 800px;
+        background: @radial-gradient(circle, Theme.base.with-alpha(0.42) 0%, transparent 46%);
+    }
+    if root.kind == 3: Rectangle {
+        x: root.width - 140px + root.dx * 0.6;
+        y: -60px + root.dy * 0.6;
+        width: 0px;
+        height: 0px;
+        for i in 9: Rectangle {
+            property <length> s: 260px + i * 190px;
+            x: -self.s / 2;
+            y: -self.s / 2;
+            width: self.s;
+            height: self.s;
+            border-radius: self.s / 2;
+            border-width: 1px;
+            border-color: Theme.base.brighter(0.8).with-alpha(0.16 - i * 0.015);
+        }
+    }
+}
+
+// ───────── Finestra ─────────
+
+export component Bozza inherits Window {
+    title: "Sintonia: bozza di sfondi e animazioni";
+    preferred-width: 1320px;
+    preferred-height: 800px;
+    min-width: 1100px;
+    min-height: 700px;
+    background: Theme.bg;
+    default-font-family: "Bahnschrift";
+
+    in-out property <int> bg-kind: 0;
+    in-out property <int> motion: 0;
+    in-out property <int> border: 0;
+    property <int> section <=> Theme.page;
+
+    // movimento dello sfondo: 0 fermo, 1 respiro (lento, senza mouse), 2 attrazione, 3 repulsione
+    property <length> mx: area.has-hover ? area.mouse-x - root.width / 2 : 0px;
+    property <length> my: area.has-hover ? area.mouse-y - root.height / 2 : 0px;
+    property <length> tx: root.motion == 2 ? root.mx * 0.22 : (root.motion == 3 ? -root.mx * 0.16 : 0px);
+    property <length> ty: root.motion == 2 ? root.my * 0.22 : (root.motion == 3 ? -root.my * 0.16 : 0px);
+    // l'inseguimento è morbido: ogni spostamento del mouse riparte un'animazione breve
+    property <length> fx: root.tx;
+    property <length> fy: root.ty;
+    animate fx, fy { duration: 900ms; easing: ease-out; }
+    property <length> bx: root.motion == 1 ? 70px * Math.sin(animation-tick() / 9000ms * 360deg) : 0px;
+    property <length> by: root.motion == 1 ? 45px * Math.cos(animation-tick() / 13000ms * 360deg) : 0px;
+
+    area := TouchArea {
+        Backdrop {
+            kind: root.bg-kind;
+            dx: root.fx + root.bx;
+            dy: root.fy + root.by;
+        }
+
+        VerticalLayout {
+            padding: 34px;
+            padding-top: 22px;
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: "Bozza: sfondi e animazioni";
+                    color: Theme.ink;
+                    font-size: 24px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "Passa col mouse su anteprima, schede e pulsanti";
+                    color: Theme.dim;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+            }
+            GridLayout {
+                spacing: 10px;
+                Row {
+                    Text { text: "Sezione"; color: Theme.dim; font-size: 14px; vertical-alignment: center; width: 110px; }
+                    Tabs { options: ["Home", "Live", "Guida", "Film e serie", "Impostazioni"]; current <=> root.section; }
+                }
+                Row {
+                    Text { text: "Sfondo"; color: Theme.dim; font-size: 14px; vertical-alignment: center; }
+                    Tabs { options: ["A · Bagliori (oggi)", "B · Aurora", "C · Scala della radio", "D · Onde"]; current <=> root.bg-kind; }
+                }
+                Row {
+                    Text { text: "Movimento"; color: Theme.dim; font-size: 14px; vertical-alignment: center; }
+                    Tabs { options: ["1 · Fermo", "2 · Respiro lento", "3 · Attrazione", "4 · Repulsione"]; current <=> root.motion; }
+                }
+                Row {
+                    Text { text: "Bordi"; color: Theme.dim; font-size: 14px; vertical-alignment: center; }
+                    Tabs { options: ["a · Anello (oggi)", "b · Alone", "c · Giro completo", "d · Luce continua"]; current <=> root.border; }
+                }
+            }
+            Rectangle { height: 10px; }
+            HorizontalLayout {
+                spacing: 34px;
+                alignment: start;
+                height: 262px;
+                Fx {
+                    width: 466px;
+                    kind: root.border;
+                    // un finto fotogramma al posto del video
+                    Sq { r: 22px; fill: @linear-gradient(145deg, Theme.base.darker(0.1) 0%, #090a10 90%); }
+                    Sq { r: 22px; fill: @radial-gradient(circle, #ffffff1a 0%, transparent 70%); }
+                    Text {
+                        x: 18px;
+                        y: parent.height - self.height - 16px;
+                        text: "Anteprima del canale";
+                        color: Theme.ink;
+                        font-size: 16px;
+                        font-weight: 600;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+                    Text { text: "In onda ora"; color: Theme.dim; font-size: 14px; }
+                    Text { text: "Canale di prova"; color: Theme.ink; font-size: 36px; font-weight: 700; }
+                    Text { text: "Intrattenimento"; color: Theme.ink; font-size: 18px; }
+                    Rectangle { height: 10px; }
+                    HorizontalLayout {
+                        spacing: 14px;
+                        alignment: start;
+                        Fx {
+                            kind: root.border;
+                            r: 19px;
+                            width: 110px;
+                            height: 38px;
+                            Sq { r: 19px; fill: Theme.ink; }
+                            Text { text: "Guarda"; color: Theme.bg; font-size: 14px; font-weight: 600; }
+                        }
+                        Fx {
+                            kind: root.border;
+                            r: 19px;
+                            width: 38px;
+                            height: 38px;
+                            Sq { r: 19px; fill: #000000a0; }
+                            Icon { commands: Icons.pip; width: 17px; height: 17px; }
+                        }
+                        Fx {
+                            kind: root.border;
+                            r: 19px;
+                            width: 38px;
+                            height: 38px;
+                            Sq { r: 19px; fill: Theme.glass; }
+                            Icon { commands: Icons.star; width: 17px; height: 17px; }
+                        }
+                    }
+                }
+            }
+            Rectangle { height: 6px; }
+            Title { text: "Riprendi"; }
+            HorizontalLayout {
+                spacing: 14px;
+                alignment: start;
+                height: 110px;
+                for name[i] in ["Telegiornale", "La strada del nord", "Documentario: oceani", "Quiz serale"]: Fx {
+                    kind: root.border;
+                    width: 270px;
+                    Sq { r: 22px; fill: @linear-gradient(135deg, Theme.panel.brighter(0.25) 0%, Theme.panel 100%); }
+                    HorizontalLayout {
+                        padding: 12px;
+                        spacing: 14px;
+                        Rectangle {
+                            width: 72px;
+                            Sq { r: 12px; fill: Theme.cat(i).darker(0.2); }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            Text { text: name; color: Theme.ink; font-size: 15px; font-weight: 600; overflow: elide; }
+                            Text { text: "Ripreso da 12:40"; color: Theme.dim; font-size: 12px; }
+                        }
+                    }
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            Text {
+                text: "Nell'app vera lo sfondo resta fermo mentre guardi un video, e il movimento si può spegnere. «Respiro lento» e «Luce continua» ridisegnano sempre la finestra: consumano un po' di più degli altri.";
+                color: Theme.faint;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

@@ -11,8 +11,12 @@ mod awake;
 mod catalog;
 mod guide;
 mod images;
+mod keys;
+mod mediakeys;
+mod remote;
 mod settings;
 mod video;
+mod zoom;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -124,6 +128,35 @@ fn single_instance(data_dir: &Path) -> Option<Option<std::fs::File>> {
     }
 }
 
+/// Collega i tasti del volume (telecomandi, tastiere multimediali) al volume del player.
+fn install_volume_keys(weak: slint::Weak<MainWindow>, retries: u32) {
+    let delay = std::time::Duration::from_millis(if retries > 0 { 300 } else { 2000 });
+    slint::Timer::single_shot(delay, move || {
+        let Some(main) = weak.upgrade() else { return };
+        let handler_weak = weak.clone();
+        let installed = mediakeys::install(main.window(), move |key, repeat| {
+            let weak = handler_weak.clone();
+            // dopo il messaggio di Windows in corso
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                let Some(main) = weak.upgrade() else { return };
+                let video = main.global::<Video>();
+                match key {
+                    // tenendo premuto il muto non deve accendersi e spegnersi di continuo
+                    mediakeys::VolumeKey::Mute if !repeat => video.invoke_toggle_mute(),
+                    mediakeys::VolumeKey::Mute => {}
+                    _ => {
+                        let volume = video.get_volume() + mediakeys::step(key, repeat);
+                        video.invoke_set_volume(volume.clamp(0, 100));
+                    }
+                }
+            });
+        });
+        if !installed && retries > 0 {
+            install_volume_keys(weak, retries - 1);
+        }
+    });
+}
+
 /// Se la chiave è nuova, un archivio vecchio non sarebbe più leggibile: lo si mette da parte.
 fn set_aside_old_database(database: &Path) {
     if !database.exists() {
@@ -213,6 +246,7 @@ fn run() -> Result<(), AppError> {
     router.install_pip(&pip)?;
 
     let app = App::new(&main, &pip, service, Rc::clone(&router), Language::system());
+    remote::install(&main);
 
     // chiudere la finestra principale chiude l'app, anche con il mini player aperto
     main.window().on_close_requested(|| {
@@ -223,6 +257,9 @@ fn run() -> Result<(), AppError> {
     });
 
     main.show()?;
+    // i tasti del volume dei telecomandi: la finestra di Windows nasce con il ciclo degli eventi,
+    // quindi si collegano poco dopo (e si riprova una volta)
+    install_volume_keys(main.as_weak(), 1);
     slint::run_event_loop()?;
     app.shutdown();
     pip.hide()?;

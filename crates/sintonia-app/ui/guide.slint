@@ -2,7 +2,7 @@
 // La griglia disegna solo le righe visibili (i canali possono essere decine di migliaia) e ogni
 // riga solo i programmi del giorno scelto.
 
-import { Theme, Texts, Sq, Icon, Icons, IconBtn, Btn, EmptyState, CategoryItem } from "common.slint";
+import { Theme, Texts, Nav, Sq, Icon, Icons, IconBtn, Btn, EmptyState, CategoryItem } from "common.slint";
 
 // Un programma: inizio e durata in minuti dall'inizio del giorno mostrato
 export struct GuideBlock {
@@ -25,23 +25,57 @@ export struct GuideRow {
 // offset: giorni da oggi; weekday: 0 lunedì … 6 domenica; day: giorno del mese
 export struct DayItem { offset: int, weekday: int, day: int }
 
-// Pulsanti scorrevoli in orizzontale (categorie)
+// Pulsanti scorrevoli in orizzontale (categorie). ← → evidenziano, OK apre.
 component Chips inherits Rectangle {
     in property <[CategoryItem]> model;
     in property <int> current;
     in property <bool> searching;
     callback picked(int);
+    forward-focus: fs;
+    property <int> kc;
     height: 36px;
     clip: true;
-    Flickable {
+    function show(i: int) {
+        root.kc = max(0, min(root.model.length - 1, i));
+        // il pulsante evidenziato dentro la vista (le larghezze sono diverse: lo dice il pulsante)
+        root.reveal-tick += 1;
+    }
+    property <int> reveal-tick;
+    fs := FocusScope {
+        focus-on-click: false;
+        focus-gained => { root.show(root.searching ? 0 : root.current); }
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow) { root.show(root.kc - 1); return accept; }
+            if (event.text == Key.RightArrow) { root.show(root.kc + 1); return accept; }
+            if (event.text == Key.Return && root.model.length > 0) { root.picked(root.kc); return accept; }
+            reject
+        }
+    }
+    fl := Flickable {
         content-width: row.preferred-width;
         row := HorizontalLayout {
             spacing: 8px;
             alignment: start;
-            for c[i] in root.model: Rectangle {
+            for c[i] in root.model: chip := Rectangle {
                 property <bool> on: i == root.current && !root.searching;
+                property <int> tick: root.reveal-tick;
+                changed tick => {
+                    if (i != root.kc) {
+                        return;
+                    }
+                    if (self.x + fl.content-x < 0px) {
+                        fl.content-x = -self.x;
+                    } else if (self.x + self.width + fl.content-x > fl.width) {
+                        fl.content-x = fl.width - self.x - self.width;
+                    }
+                }
                 width: t.preferred-width + (c.locked ? 50px : 30px);
-                Sq { r: 18px; fill: parent.on ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
+                Sq {
+                    r: 18px;
+                    fill: parent.on ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass);
+                    stroke: Nav.tv && fs.has-focus && i == root.kc ? Theme.needle : transparent;
+                    stroke-width: 3px;
+                }
                 t := Text {
                     x: 15px;
                     text: Texts.category(c);
@@ -58,6 +92,50 @@ component Chips inherits Rectangle {
                 }
                 ta := TouchArea { clicked => { root.picked(i); } }
             }
+        }
+    }
+}
+
+// I giorni in alto. ← → evidenziano, OK sceglie.
+component Days inherits Rectangle {
+    in property <[DayItem]> model;
+    in property <int> current;
+    callback picked(int);
+    forward-focus: fs;
+    property <int> kc;
+    min-width: row.min-width;
+    preferred-width: row.preferred-width;
+    horizontal-stretch: 0;
+    fs := FocusScope {
+        focus-on-click: false;
+        focus-gained => { root.kc = max(0, root.current); }
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow && root.kc > 0) { root.kc -= 1; return accept; }
+            if (event.text == Key.RightArrow && root.kc < root.model.length - 1) { root.kc += 1; return accept; }
+            if (event.text == Key.Return && root.model.length > 0) { root.picked(root.kc); return accept; }
+            reject
+        }
+    }
+    row := HorizontalLayout {
+        spacing: 8px;
+        for d[i] in root.model: Rectangle {
+            property <bool> on: i == root.current;
+            width: dt.preferred-width + 32px;
+            Sq {
+                r: 18px;
+                fill: parent.on ? Theme.ink : (dta.has-hover ? #ffffff30 : Theme.glass);
+                stroke: Nav.tv && fs.has-focus && i == root.kc ? Theme.needle : transparent;
+                stroke-width: 3px;
+            }
+            dt := Text {
+                text: d.offset == -1 ? @tr("Yesterday")
+                    : (d.offset == 0 ? @tr("Today")
+                    : (d.offset == 1 ? @tr("Tomorrow") : Texts.weekday(d.weekday) + " " + d.day));
+                color: parent.on ? Theme.bg : Theme.ink;
+                font-size: 14px;
+                font-weight: parent.on ? 700 : 400;
+            }
+            dta := TouchArea { clicked => { root.picked(i); } }
         }
     }
 }
@@ -135,73 +213,66 @@ export component GuideScreen inherits Rectangle {
         act => { root.add-source(); }
     }
 
-    fs := FocusScope {
-        enabled: !root.no-source && root.state != 0;
-        key-pressed(event) => {
-            if (event.text == Key.UpArrow) { root.move(-1); return accept; }
-            if (event.text == Key.DownArrow) { root.move(1); return accept; }
-            if (event.text == Key.PageUp) { root.move(-8); return accept; }
-            if (event.text == Key.PageDown) { root.move(8); return accept; }
-            if (event.text == Key.LeftArrow) { root.scroll-by(-60); return accept; }
-            if (event.text == Key.RightArrow) { root.scroll-by(60); return accept; }
-            if (event.text == Key.Return && root.count > 0) { root.watch(root.cursor); return accept; }
-            reject
-        }
-        VerticalLayout {
-            visible: !root.no-source && root.state != 0;
-            padding-left: 44px;
-            padding-right: 44px;
-            padding-top: 8px;
-            spacing: 10px;
-            HorizontalLayout {
-                spacing: 8px;
-                height: 36px;
-                for d[i] in root.days: Rectangle {
-                    property <bool> on: i == root.day;
-                    width: dt.preferred-width + 32px;
-                    Sq { r: 18px; fill: parent.on ? Theme.ink : (dta.has-hover ? #ffffff30 : Theme.glass); }
-                    dt := Text {
-                        text: d.offset == -1 ? @tr("Yesterday")
-                            : (d.offset == 0 ? @tr("Today")
-                            : (d.offset == 1 ? @tr("Tomorrow") : Texts.weekday(d.weekday) + " " + d.day));
-                        color: parent.on ? Theme.bg : Theme.ink;
-                        font-size: 14px;
-                        font-weight: parent.on ? 700 : 400;
-                    }
-                    dta := TouchArea {
-                        clicked => {
-                            root.pick-day(i);
-                            fs.focus();
-                        }
-                    }
-                }
-                Rectangle { horizontal-stretch: 1; }
-                Text {
-                    text: root.state == 1 ? @tr("Updating the guide…")
-                        : (root.state == 3 ? @tr("Guide not updated: {}", root.error) : "");
-                    color: root.state == 3 ? Theme.live : Theme.dim;
-                    font-size: 13px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    max-width: 420px;
-                }
-                IconBtn {
-                    icon: Icons.refresh;
-                    size: 36px;
-                    clicked => { root.refresh(); }
-                }
-            }
-            Chips {
-                model: root.categories;
-                current: root.category;
-                searching: root.search != "";
+    VerticalLayout {
+        visible: !root.no-source && root.state != 0;
+        padding-left: 44px;
+        padding-right: 44px;
+        padding-top: 8px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            height: 36px;
+            Days {
+                model: root.days;
+                current: root.day;
                 picked(i) => {
-                    root.pick-category(i);
+                    root.pick-day(i);
                     fs.focus();
                 }
             }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: root.state == 1 ? @tr("Updating the guide…")
+                    : (root.state == 3 ? @tr("Guide not updated: {}", root.error) : "");
+                color: root.state == 3 ? Theme.live : Theme.dim;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
+                max-width: 420px;
+            }
+            IconBtn {
+                icon: Icons.refresh;
+                size: 36px;
+                clicked => { root.refresh(); }
+            }
+        }
+        Chips {
+            model: root.categories;
+            current: root.category;
+            searching: root.search != "";
+            picked(i) => {
+                root.pick-category(i);
+                fs.focus();
+            }
+        }
+        fs := FocusScope {
+            vertical-stretch: 1;
+            enabled: !root.no-source && root.state != 0;
+            key-pressed(event) => {
+                // telecomando: ↑ dalla prima riga va alle categorie
+                if (event.text == Key.UpArrow && Nav.tv && root.cursor == 0) { return reject; }
+                if (event.text == Key.UpArrow) { root.move(-1); return accept; }
+                if (event.text == Key.DownArrow) { root.move(1); return accept; }
+                if (event.text == Key.PageUp) { root.move(-8); return accept; }
+                if (event.text == Key.PageDown) { root.move(8); return accept; }
+                if (event.text == Key.LeftArrow) { root.scroll-by(-60); return accept; }
+                if (event.text == Key.RightArrow) { root.scroll-by(60); return accept; }
+                if (event.text == Key.Return && root.count > 0) { root.watch(root.cursor); return accept; }
+                reject
+            }
             area := Rectangle {
-                vertical-stretch: 1;
+                width: parent.width;
+                height: parent.height;
                 clip: true;
 
                 // orari in alto (scorrono con la griglia in orizzontale)
@@ -239,6 +310,8 @@ export component GuideScreen inherits Rectangle {
                         Sq {
                             r: 16px;
                             fill: nr.index == root.cursor ? #ffffff26 : (nta.has-hover ? #ffffff10 : transparent);
+                            stroke: Nav.tv && fs.has-focus && nr.index == root.cursor ? Theme.ink : transparent;
+                            stroke-width: 2px;
                         }
                         HorizontalLayout {
                             padding-left: 12px;

@@ -63,6 +63,18 @@ pub struct Settings {
     pub live_preview: bool,
     /// Avviso quando esce una versione nuova (il controllo lo fa il servizio).
     pub update_check: bool,
+    /// Si usa il telecomando (frecce, OK, Indietro) invece del mouse.
+    pub remote: bool,
+    /// Volume del player, da 0 a 100.
+    pub volume: u32,
+    /// Lo sfondo si sposta verso il mouse.
+    pub bg_motion: bool,
+    /// I tasti del volume (telecomando, tastiere multimediali) regolano Sintonia e non Windows.
+    pub media_volume: bool,
+    /// Il tasto di ogni azione, nell'ordine di [`crate::keys::ACTIONS`] ("" = nessuno): con il
+    /// mouse e la tastiera, e con il telecomando.
+    pub keys: Vec<String>,
+    pub remote_keys: Vec<String>,
     /// Ogni quante ore playlist e guida si aggiornano da sole (0 = mai; li legge il servizio).
     pub playlist_hours: u32,
     pub epg_hours: u32,
@@ -158,6 +170,12 @@ impl Settings {
             fullscreen_start: false,
             live_preview: true,
             update_check: true,
+            remote: false,
+            volume: 100,
+            bg_motion: true,
+            media_volume: true,
+            keys: crate::keys::defaults(false),
+            remote_keys: crate::keys::defaults(true),
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
             epg_hours: EPG_HOURS_DEFAULT,
             user_agent: None,
@@ -180,6 +198,7 @@ impl Settings {
         for (key, value) in pairs {
             settings.set(key, value);
         }
+        crate::keys::migrate_remote(&mut settings.remote_keys);
         settings
     }
 
@@ -201,6 +220,14 @@ impl Settings {
             "fullscreen_start" => self.fullscreen_start = flag,
             "live_preview" => self.live_preview = flag,
             "update_check" => self.update_check = flag,
+            "bg_motion" => self.bg_motion = flag,
+            "media_volume" => self.media_volume = flag,
+            "navigation" => self.remote = value == "remote",
+            "volume" => {
+                if let Ok(volume) = value.trim().parse::<u32>() {
+                    self.volume = volume.min(100);
+                }
+            }
             "playlist_hours" => {
                 if let Ok(hours) = value.trim().parse() {
                     self.playlist_hours = hours;
@@ -221,7 +248,15 @@ impl Settings {
             "last_channel" => self.last_channel = Some(value.to_owned()),
             "pip_width" => self.pip_width = value.parse().ok().filter(|w: &f32| w.is_finite()),
             _ => {
-                if let Some(id) = key.strip_prefix("locks.").and_then(|id| id.parse().ok()) {
+                if let Some(name) = key.strip_prefix("key.") {
+                    let (list, name) = match name.strip_prefix("remote.") {
+                        Some(name) => (&mut self.remote_keys, name),
+                        None => (&mut self.keys, name),
+                    };
+                    if let Some(i) = crate::keys::ACTIONS.iter().position(|(n, _)| *n == name) {
+                        list[i] = value.to_owned();
+                    }
+                } else if let Some(id) = key.strip_prefix("locks.").and_then(|id| id.parse().ok()) {
                     self.locks.insert(id, Locks::from_value(value));
                 } else if let Some(id) = key.strip_prefix("custom.").and_then(|id| id.parse().ok())
                 {
@@ -253,6 +288,41 @@ mod tests {
         assert_eq!(s.user_agent, None);
         assert_eq!(s.playlist_hours, PLAYLIST_HOURS_DEFAULT);
         assert!(!s.has_pin());
+        assert!(!s.remote);
+    }
+
+    #[test]
+    fn navigation_mode() {
+        let remote = [("navigation".to_owned(), "remote".to_owned())];
+        assert!(Settings::from_pairs(&remote, Language::Italian).remote);
+        let mouse = [("navigation".to_owned(), "mouse".to_owned())];
+        assert!(!Settings::from_pairs(&mouse, Language::Italian).remote);
+    }
+
+    #[test]
+    fn action_keys() {
+        let pairs = [
+            ("key.mute".to_owned(), "x".to_owned()),
+            ("key.remote.mute".to_owned(), "z".to_owned()),
+            ("key.sconosciuta".to_owned(), "y".to_owned()),
+        ];
+        let s = Settings::from_pairs(&pairs, Language::Italian);
+        assert_eq!(s.keys[2], "x");
+        assert_eq!(s.remote_keys[2], "z");
+        assert_eq!(s.remote_keys[1], "p");
+        assert_eq!(s.keys[0], "f");
+        assert_eq!(s.keys.len(), crate::keys::ACTIONS.len());
+    }
+
+    #[test]
+    fn volume() {
+        assert_eq!(Settings::defaults(Language::Italian).volume, 100);
+        let low = [("volume".to_owned(), "35".to_owned())];
+        assert_eq!(Settings::from_pairs(&low, Language::Italian).volume, 35);
+        let high = [("volume".to_owned(), "250".to_owned())];
+        assert_eq!(Settings::from_pairs(&high, Language::Italian).volume, 100);
+        let bad = [("volume".to_owned(), "forte".to_owned())];
+        assert_eq!(Settings::from_pairs(&bad, Language::Italian).volume, 100);
     }
 
     #[test]

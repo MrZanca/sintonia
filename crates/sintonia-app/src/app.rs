@@ -33,8 +33,8 @@ use crate::images;
 use crate::settings::{self, Language, Locks, Settings};
 use crate::video::VideoRouter;
 use crate::{
-    CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, MainWindow, PipWindow,
-    SourceItem, SourceStatus, Texts, TrackItem,
+    CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, Keys, MainWindow, Nav, PipWindow,
+    SourceItem, SourceStatus, Texts, TrackItem, Video,
 };
 
 /// Attesa prima di aprire il canale evidenziato nell'elenco Live (anteprima).
@@ -248,6 +248,9 @@ pub struct App {
     auto_fullscreen: Cell<bool>,
     /// Salva la dimensione del mini player poco dopo l'ultimo ridimensionamento.
     pip_save_timer: slint::Timer,
+    /// Il canale guardato prima di quello in onda (tasto «ultimo canale»).
+    previous_channel: Cell<Option<i64>>,
+    volume_save_timer: slint::Timer,
     pip_drag: Cell<Option<PipDrag>>,
 
     // guida
@@ -382,6 +385,8 @@ impl App {
             aspect: Cell::new(0),
             auto_fullscreen: Cell::new(false),
             pip_save_timer: slint::Timer::default(),
+            previous_channel: Cell::new(None),
+            volume_save_timer: slint::Timer::default(),
             pip_drag: Cell::new(None),
             now_schedule,
             now_loaded_at: Cell::new(0),
@@ -544,6 +549,8 @@ Una copia dell'archivio com'era è in:
     fn apply_settings(&self, settings: Settings) {
         self.apply_language(settings.language);
         self.router.set_reconnect(settings.reconnect);
+        self.router
+            .set_volume(i32::try_from(settings.volume).unwrap_or(100));
         if let Err(err) = self
             .router
             .player()
@@ -556,13 +563,73 @@ Una copia dell'archivio com'era è in:
             main.set_fullscreen_start(settings.fullscreen_start);
             main.set_live_preview(settings.live_preview);
             main.set_update_check(settings.update_check);
+            main.set_bg_motion(settings.bg_motion);
+            main.set_media_volume(settings.media_volume);
+            main.global::<Nav>().set_mode(i32::from(settings.remote));
             main.set_playlist_interval(interval_index(settings.playlist_hours));
             main.set_epg_interval(interval_index(settings.epg_hours));
             main.set_user_agent(settings.user_agent.clone().unwrap_or_default().into());
         }
+        crate::mediakeys::set_enabled(settings.media_volume);
         *self.settings.borrow_mut() = settings;
+        self.show_keys();
         self.show_custom_name();
         self.apply_locks();
+    }
+
+    /// I tasti delle azioni, per l'interfaccia (anche i nomi dipendono dalla lingua).
+    fn show_keys(&self) {
+        let Some(main) = self.main() else { return };
+        let settings = self.settings.borrow();
+        // quelli della modalità in uso
+        let keys = if settings.remote {
+            &settings.remote_keys
+        } else {
+            &settings.keys
+        };
+        let list = |f: &dyn Fn(&str) -> String| -> ModelRc<SharedString> {
+            let items: Vec<SharedString> = keys.iter().map(|k| f(k).into()).collect();
+            ModelRc::new(VecModel::from(items))
+        };
+        let global = main.global::<Keys>();
+        global.set_keys(list(&|k| k.to_owned()));
+        global.set_alt(list(&crate::keys::alternate));
+        global.set_labels(list(&|k| crate::keys::label(k, settings.language)));
+    }
+
+    /// Nuovo tasto per l'azione `index`, nella modalità in uso (Impostazioni › Navigazione).
+    fn set_action_key(&self, index: usize, key: &str) {
+        let remote = self.settings.borrow().remote;
+        let values = {
+            let mut settings = self.settings.borrow_mut();
+            let keys = if remote {
+                &mut settings.remote_keys
+            } else {
+                &mut settings.keys
+            };
+            let changed = crate::keys::assign(keys, index, key);
+            changed
+                .into_iter()
+                .map(|i| (i, keys[i].clone()))
+                .collect::<Vec<_>>()
+        };
+        for (i, value) in values {
+            if let Some(name) = crate::keys::setting_key(i, remote) {
+                self.save_setting(&name, &value);
+            }
+        }
+        self.show_keys();
+    }
+
+    /// I tasti della modalità in uso come all'inizio.
+    fn reset_action_keys(&self) {
+        let remote = self.settings.borrow().remote;
+        for (i, key) in crate::keys::defaults(remote).iter().enumerate() {
+            if let Some(name) = crate::keys::setting_key(i, remote) {
+                self.save_setting(&name, key);
+            }
+        }
+        self.show_keys();
     }
 
     fn apply_language(&self, language: Language) {
@@ -731,10 +798,17 @@ Una copia dell'archivio com'era è in:
         self.request_now();
         self.request_day();
 
-        // all'avvio riprende l'ultimo canale (l'anteprima della Home è «in onda»)
+        // all'avvio riprende l'ultimo canale (l'anteprima della Home è «in onda»); con il
+        // telecomando Sintonia è una TV: si accende sul canale (a schermo intero se in
+        // Riproduzione è acceso «Avvia a schermo intero», se no in finestra)
         if !self.started.replace(true) {
             if let Some(id) = current {
                 self.play_channel(id);
+                if self.settings.borrow().remote {
+                    if let Some(main) = self.main() {
+                        main.set_playing(true);
+                    }
+                }
             }
         }
     }
@@ -1453,6 +1527,13 @@ Una copia dell'archivio com'era è in:
     /// Chiede al servizio l'indirizzo del canale; si apre quando arriva (evento `Stream`).
     fn play_channel(&self, id: i64) {
         self.preview_timer.stop();
+        // per il tasto «ultimo canale»: quello che era in onda prima di questo
+        if let Some(Playable::Channel(before)) = self.now.borrow().as_ref().map(|n| n.item.clone())
+        {
+            if before != id {
+                self.previous_channel.set(Some(before));
+            }
+        }
         self.set_current(Some(id));
         let same = |item: &Playable| *item == Playable::Channel(id);
         let playing =
@@ -1945,6 +2026,8 @@ Una copia dell'archivio com'era è in:
         }));
         main.on_cursor_moved(with_app!(|app, row: i32| app.preview_later(row)));
         main.on_zap(with_app!(|app, delta: i32| app.zap(delta)));
+        main.on_tune(with_app!(|app, number: SharedString| app.tune(&number)));
+        main.on_last_channel(on(|app| app.last_channel()));
         main.on_pick_category(with_app!(|app, index: i32| {
             let index = row_index(index).unwrap_or(0);
             if app.channels.is_category_hidden(index) {
@@ -2132,7 +2215,27 @@ Una copia dell'archivio com'era è in:
             }
             app.load_tracks();
         }));
-        main.on_cycle_aspect(on(|app| app.cycle_aspect()));
+        main.on_set_aspect(with_app!(|app, aspect: i32| app.set_aspect(aspect)));
+        main.global::<Keys>()
+            .on_set_key(with_app!(|app, index: i32, key: SharedString| {
+                app.set_action_key(usize::try_from(index).unwrap_or(usize::MAX), &key);
+            }));
+        main.global::<Keys>()
+            .on_reset(on(|app| app.reset_action_keys()));
+        // «Indietro» su un altro tasto: lo stesso di Esc
+        {
+            let main_weak = main.as_weak();
+            main.global::<Keys>().on_back(move || {
+                if let Some(main) = main_weak.upgrade() {
+                    crate::remote::press_later(&main, slint::platform::Key::Escape);
+                }
+            });
+        }
+        main.global::<Video>()
+            .on_set_volume(with_app!(|app, volume: i32| {
+                app.router.set_volume(volume);
+                app.save_volume_later(volume);
+            }));
 
         // Guida
         main.on_guide_opened(on(|app| app.open_guide()));
@@ -2277,6 +2380,13 @@ Una copia dell'archivio com'era è in:
             app.router.set_reconnect(settings.reconnect);
             if key == "custom_name" {
                 app.show_custom_name();
+            }
+            // i tasti cambiano con la modalità
+            if key == "navigation" {
+                app.show_keys();
+            }
+            if key == "media_volume" {
+                crate::mediakeys::set_enabled(settings.media_volume);
             }
             if key == "user_agent" {
                 if let Err(err) = app
@@ -2624,6 +2734,36 @@ Una copia dell'archivio com'era è in:
             });
     }
 
+    /// Il canale con quel numero (tasti numerici, come sulla TV).
+    fn tune(&self, number: &str) {
+        let Ok(number) = number.trim().parse::<u32>() else {
+            return;
+        };
+        match self.channels.find(|c| c.number == number) {
+            Some(id) => {
+                self.play_channel(id);
+                if let (Some(main), Some(row)) = (self.main(), self.channels.row_of(id)) {
+                    main.set_cursor(count_i32(row));
+                }
+            }
+            None => log::info!("nessun canale con il numero {number}"),
+        }
+    }
+
+    /// Torna al canale guardato prima (tasto «ultimo canale»).
+    fn last_channel(&self) {
+        let Some(id) = self.previous_channel.get() else {
+            return;
+        };
+        self.play_channel(id);
+        if let Some(main) = self.main() {
+            if let Some(row) = self.channels.row_of(id) {
+                main.set_cursor(count_i32(row));
+            }
+            main.set_playing(true);
+        }
+    }
+
     fn zap(&self, delta: i32) {
         let count = self.channels.row_count();
         if count == 0 {
@@ -2810,6 +2950,20 @@ Una copia dell'archivio com'era è in:
         self.save_pip_width_later(width);
     }
 
+    /// Salva il volume poco dopo l'ultimo cambiamento (trascinando la barra cambia di continuo).
+    fn save_volume_later(self: &Rc<Self>, volume: i32) {
+        let weak = Rc::downgrade(self);
+        self.volume_save_timer.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_millis(600),
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    app.save_setting("volume", &volume.clamp(0, 100).to_string());
+                }
+            },
+        );
+    }
+
     /// Salva la larghezza del mini player poco dopo l'ultimo cambiamento.
     fn save_pip_width_later(self: &Rc<Self>, width: f32) {
         let weak = Rc::downgrade(self);
@@ -2981,8 +3135,9 @@ Una copia dell'archivio com'era è in:
         main.set_sub_tracks(ModelRc::new(VecModel::from(subs)));
     }
 
-    fn cycle_aspect(&self) {
-        let next = (self.aspect.get() + 1) % 4;
+    /// 0 automatico, 1 16:9, 2 4:3, 3 riempi lo schermo.
+    fn set_aspect(&self, aspect: i32) {
+        let next = aspect.clamp(0, 3);
         self.aspect.set(next);
         let (ratio, panscan) = match next {
             1 => ("16:9", "0"),
