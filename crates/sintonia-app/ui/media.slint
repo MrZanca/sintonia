@@ -35,7 +35,7 @@ component PosterCard inherits Rectangle {
             width: parent.width - 28px;
             text: root.p.title;
             color: #ffffffd0;
-            font-size: 17px;
+            font-size: 17px * Theme.text-scale;
             font-weight: 800;
             wrap: word-wrap;
         }
@@ -55,7 +55,7 @@ component PosterCard inherits Rectangle {
             rt := Text {
                 text: "★ " + root.p.rating;
                 color: Theme.ink;
-                font-size: 11px;
+                font-size: 11px * Theme.text-scale;
                 font-weight: 600;
             }
         }
@@ -64,7 +64,7 @@ component PosterCard inherits Rectangle {
             y: 10px;
             text: "★";
             color: Theme.needle;
-            font-size: 16px;
+            font-size: 16px * Theme.text-scale;
         }
         if root.p.progress > 0: Bar {
             x: 12px;
@@ -77,20 +77,20 @@ component PosterCard inherits Rectangle {
         ta := TouchArea { clicked => { root.clicked(); } }
     }
     Text {
-        y: root.poster-h + 8px;
+        y: root.poster-h + 8px * Theme.grow;
         width: parent.width;
         text: root.p.title;
         color: Theme.ink;
-        font-size: 13px;
+        font-size: 13px * Theme.text-scale;
         font-weight: 600;
         overflow: elide;
     }
     Text {
-        y: root.poster-h + 26px;
+        y: root.poster-h + 26px * Theme.grow;
         width: parent.width;
         text: root.p.meta;
         color: Theme.dim;
-        font-size: 11px;
+        font-size: 11px * Theme.text-scale;
         overflow: elide;
     }
 }
@@ -105,7 +105,7 @@ export component PosterGrid inherits Rectangle {
     property <length> pw: 150px;
     property <length> ph: 225px;
     property <length> gap: 18px;
-    property <length> cell-h: root.ph + 52px;
+    property <length> cell-h: root.ph + 52px * Theme.grow;
     out property <int> cols: max(1, floor((root.width + root.gap) / (root.pw + root.gap)));
     property <int> count: root.model.length;
     clip: true;
@@ -162,7 +162,7 @@ component Cover inherits Rectangle {
         width: parent.width - 40px;
         text: root.d.title;
         color: #ffffffd0;
-        font-size: 24px;
+        font-size: 24px * Theme.text-scale;
         font-weight: 800;
         wrap: word-wrap;
     }
@@ -178,7 +178,7 @@ component EpisodeRow inherits Rectangle {
     in property <EpisodeItem> e;
     in property <bool> active;
     callback clicked;
-    height: 58px;
+    height: 58px * Theme.grow;
     Sq {
         width: 100%;
         height: 100%;
@@ -197,7 +197,7 @@ component EpisodeRow inherits Rectangle {
             text: root.e.number;
             width: 34px;
             color: root.e.current ? Theme.needle : Theme.faint;
-            font-size: 22px;
+            font-size: 22px * Theme.text-scale;
             font-weight: 300;
             vertical-alignment: center;
         }
@@ -208,7 +208,7 @@ component EpisodeRow inherits Rectangle {
             Text {
                 text: root.e.title;
                 color: Theme.ink;
-                font-size: 15px;
+                font-size: 15px * Theme.text-scale;
                 font-weight: 600;
                 overflow: elide;
             }
@@ -225,7 +225,7 @@ component EpisodeRow inherits Rectangle {
         Text {
             text: root.e.duration;
             color: Theme.dim;
-            font-size: 13px;
+            font-size: 13px * Theme.text-scale;
             vertical-alignment: center;
         }
     }
@@ -240,7 +240,7 @@ component EpisodeList inherits Rectangle {
     in-out property <int> cursor;
     in property <bool> focused: true;
     callback play(int);
-    property <length> row-h: 64px;
+    property <length> row-h: 64px * Theme.grow;
     clip: true;
     public function ensure-visible() {
         if (root.cursor * root.row-h + fl.content-y < 0px) {
@@ -327,24 +327,24 @@ export component DetailScreen inherits Rectangle {
                 Text {
                     text: root.d.title;
                     color: Theme.ink;
-                    font-size: 34px;
+                    font-size: 34px * Theme.text-scale;
                     font-weight: 700;
                     wrap: word-wrap;
                 }
                 Text {
                     text: root.d.meta;
                     color: Theme.dim;
-                    font-size: 14px;
+                    font-size: 14px * Theme.text-scale;
                 }
                 if root.d.loading: Text {
                     text: @tr("Loading…");
                     color: Theme.faint;
-                    font-size: 14px;
+                    font-size: 14px * Theme.text-scale;
                 }
                 if root.d.plot != "": Text {
                     text: root.d.plot;
                     color: Theme.ink;
-                    font-size: 15px;
+                    font-size: 15px * Theme.text-scale;
                     wrap: word-wrap;
                     max-height: 120px;
                     overflow: elide;
@@ -352,7 +352,7 @@ export component DetailScreen inherits Rectangle {
                 if root.d.credits != "": Text {
                     text: root.d.credits;
                     color: Theme.faint;
-                    font-size: 13px;
+                    font-size: 13px * Theme.text-scale;
                     wrap: word-wrap;
                 }
                 Rectangle { height: 6px; }

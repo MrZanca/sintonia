@@ -34,7 +34,7 @@ use crate::settings::{self, Language, Locks, Settings};
 use crate::video::VideoRouter;
 use crate::{
     CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, Keys, MainWindow, Nav, PipWindow,
-    SourceItem, SourceStatus, Texts, TrackItem, Video,
+    SourceItem, SourceStatus, Texts, Theme, TrackItem, Video,
 };
 
 /// Attesa prima di aprire il canale evidenziato nell'elenco Live (anteprima).
@@ -564,6 +564,12 @@ Una copia dell'archivio com'era è in:
             main.set_live_preview(settings.live_preview);
             main.set_update_check(settings.update_check);
             main.set_bg_motion(settings.bg_motion);
+            main.global::<Theme>()
+                .set_text_scale(match settings.text_size {
+                    2 => 2.0,
+                    1 => 1.5,
+                    _ => 1.0,
+                });
             main.set_media_volume(settings.media_volume);
             main.global::<Nav>().set_mode(i32::from(settings.remote));
             main.set_playlist_interval(interval_index(settings.playlist_hours));

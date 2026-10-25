@@ -125,6 +125,10 @@ export struct DetailInfo {
 
 export global Theme {
     in-out property <int> page: 0;
+    // grandezza dei testi scelta nelle Impostazioni (1, 1,5 o 2); `grow` per righe e pulsanti,
+    // che crescono un po' meno dei testi
+    in-out property <float> text-scale: 1;
+    out property <float> grow: 1 + (root.text-scale - 1) * 0.85;
     out property <color> bg: #0e0f14;
     out property <color> panel: #1b1c26;
     out property <color> glass: #ffffff14;
@@ -442,7 +446,7 @@ export component Btn inherits Rectangle {
     out property <bool> focused: press.has-focus;
     callback clicked;
     forward-focus: press;
-    height: Nav.tv ? 44px : 38px;
+    height: (Nav.tv ? 44px : 38px) * Theme.grow;
     horizontal-stretch: 0;
     width: root.shown ? t.preferred-width + (root.compact ? 26px : 40px) : 0px;
     visible: root.shown;
@@ -455,7 +459,7 @@ export component Btn inherits Rectangle {
     t := Text {
         text: root.label;
         color: root.primary && !root.danger ? Theme.bg : Theme.ink;
-        font-size: Nav.tv ? 15px : 14px;
+        font-size: (Nav.tv ? 15px : 14px) * Theme.text-scale;
         font-weight: 600;
     }
     press := Press {
@@ -479,7 +483,7 @@ export component Tabs inherits Rectangle {
     forward-focus: fs;
     // la voce evidenziata con le frecce
     property <int> kc;
-    height: Nav.tv ? 42px : 36px;
+    height: (Nav.tv ? 42px : 36px) * Theme.grow;
     min-width: row.min-width;
     preferred-width: row.preferred-width;
     fs := FocusScope {
@@ -514,7 +518,7 @@ export component Tabs inherits Rectangle {
             t := Text {
                 text: o;
                 color: i == root.current ? Theme.bg : Theme.ink;
-                font-size: Nav.tv ? 15px : 14px;
+                font-size: (Nav.tv ? 15px : 14px) * Theme.text-scale;
                 font-weight: i == root.current ? 700 : 400;
             }
             if Nav.tv && fs.has-focus && i == root.kc: Sq {
@@ -547,12 +551,12 @@ export component NowNext inherits VerticalLayout {
     Text {
         text: root.label ? @tr("On now") + " · " + root.c.now-time : root.c.now-time;
         color: Theme.dim;
-        font-size: 12px;
+        font-size: 12px * Theme.text-scale;
     }
     Text {
         text: root.c.now-title;
         color: Theme.ink;
-        font-size: root.title-size;
+        font-size: root.title-size * Theme.text-scale;
         font-weight: 600;
         overflow: elide;
     }
@@ -574,7 +578,7 @@ export component NowNext inherits VerticalLayout {
     if root.c.next-title != "": Text {
         text: @tr("Next: {} {}", root.c.next-time, root.c.next-title);
         color: Theme.dim;
-        font-size: 12px;
+        font-size: 12px * Theme.text-scale;
         overflow: elide;
     }
 }
@@ -582,7 +586,7 @@ export component NowNext inherits VerticalLayout {
 // i titoli delle sezioni: tutti uguali, bianchi
 export component Title inherits Text {
     color: Theme.ink;
-    font-size: 18px;
+    font-size: 18px * Theme.text-scale;
     font-weight: 700;
 }
 
@@ -636,7 +640,7 @@ export component StatusPill inherits Rectangle {
     st := Text {
         text: Texts.status(Video.state, Video.attempt);
         color: Video.state == 4 ? Theme.live : Theme.ink;
-        font-size: root.small ? 13px : 15px;
+        font-size: (root.small ? 13px : 15px) * Theme.text-scale;
         font-weight: 600;
     }
 }
@@ -689,14 +693,14 @@ export component EmptyState inherits VerticalLayout {
     Text {
         text: root.title;
         color: Theme.ink;
-        font-size: 24px;
+        font-size: 24px * Theme.text-scale;
         font-weight: 700;
         horizontal-alignment: center;
     }
     Text {
         text: root.body;
         color: Theme.dim;
-        font-size: 15px;
+        font-size: 15px * Theme.text-scale;
         horizontal-alignment: center;
         wrap: word-wrap;
     }
@@ -717,7 +721,7 @@ export component CategoryList inherits Rectangle {
     callback picked(int);
     forward-focus: fs;
     clip: true;
-    property <length> row-h: Nav.tv ? 46px : 40px;
+    property <length> row-h: (Nav.tv ? 46px : 40px) * Theme.grow;
     // la riga evidenziata con le frecce
     property <int> kc;
     function show(i: int) {
@@ -761,7 +765,7 @@ export component CategoryList inherits Rectangle {
                 Text {
                     text: Texts.category(c);
                     color: cr.on ? Theme.ink : Theme.dim;
-                    font-size: Nav.tv ? 15px : 14px;
+                    font-size: (Nav.tv ? 15px : 14px) * Theme.text-scale;
                     font-weight: cr.on ? 700 : 400;
                     vertical-alignment: center;
                     overflow: elide;
@@ -779,7 +783,7 @@ export component CategoryList inherits Rectangle {
                 Text {
                     text: c.count;
                     color: cr.on ? Theme.ink : Theme.faint;
-                    font-size: 12px;
+                    font-size: 12px * Theme.text-scale;
                     vertical-alignment: center;
                 }
             }
@@ -811,7 +815,7 @@ export component ChoiceList inherits VerticalLayout {
         }
     }
     for l[i] in root.options: Rectangle {
-        height: root.details.length > i && root.details[i] != "" ? 84px : 72px;
+        height: (root.details.length > i && root.details[i] != "" ? 84px : 72px) * Theme.grow;
         max-width: 560px;
         Sq {
             r: 24px;
@@ -827,13 +831,13 @@ export component ChoiceList inherits VerticalLayout {
             Text {
                 text: l;
                 color: Theme.ink;
-                font-size: 20px;
+                font-size: 20px * Theme.text-scale;
                 font-weight: root.current == i ? 700 : 400;
             }
             if root.details.length > i && root.details[i] != "": Text {
                 text: root.details[i];
                 color: Theme.dim;
-                font-size: 13px;
+                font-size: 13px * Theme.text-scale;
                 overflow: elide;
             }
         }
@@ -841,7 +845,7 @@ export component ChoiceList inherits VerticalLayout {
             x: parent.width - self.width - 26px;
             text: root.current == i ? "●" : "";
             color: Theme.needle;
-            font-size: 18px;
+            font-size: 18px * Theme.text-scale;
         }
         TouchArea { clicked => { root.picked(i); } }
     }
