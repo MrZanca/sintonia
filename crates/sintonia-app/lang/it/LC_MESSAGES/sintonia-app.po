@@ -613,8 +613,8 @@ msgstr "Tasti del telecomando"
 msgid "Keys for mouse and keyboard"
 msgstr "Tasti di mouse e tastiera"
 
-msgid "Press Change, then the key. Back or Esc cancels. Arrows, OK, Back, Home, Play/Pause and the volume keys have a fixed job and can't be chosen."
-msgstr "Premi Cambia, poi il tasto. Indietro o Esc annulla. Frecce, OK, Indietro, Home, Play/Pausa e i tasti del volume hanno un compito fisso e non si possono scegliere."
+msgid "Press Change, then the key. Back or Esc cancels. Arrows, OK, Back, Play/Pause and the volume keys have a fixed job and can't be chosen."
+msgstr "Premi Cambia, poi il tasto. Indietro o Esc annulla. Frecce, OK, Indietro, Play/Pausa e i tasti del volume hanno un compito fisso e non si possono scegliere."
 
 msgid "Volume keys control Sintonia"
 msgstr "I tasti del volume regolano Sintonia"

@@ -34,7 +34,9 @@ pub fn remote_action(key: &WinitKey) -> Option<Action> {
     };
     match named {
         NamedKey::BrowserBack | NamedKey::GoBack => Some(Action::Press(Key::Escape)),
-        NamedKey::BrowserHome | NamedKey::GoHome => Some(Action::Home),
+        NamedKey::GoHome => Some(Action::Home),
+        // sui telecomandi «air mouse» (Esynic) è il tasto «e»: si può assegnare
+        NamedKey::BrowserHome => Some(Action::Press(Key::F23)),
         NamedKey::MediaPlayPause | NamedKey::MediaPlay | NamedKey::MediaPause => {
             Some(Action::Press(Key::Space))
         }
@@ -51,7 +53,6 @@ pub fn remote_action(key: &WinitKey) -> Option<Action> {
         NamedKey::LaunchMail => Some(Action::Press(Key::F20)),
         NamedKey::LaunchApplication1 => Some(Action::Press(Key::F21)),
         NamedKey::LaunchMediaPlayer => Some(Action::Press(Key::F22)),
-        NamedKey::Info => Some(Action::Press(Key::F23)),
         NamedKey::Guide => Some(Action::Press(Key::F24)),
         NamedKey::ChannelUp => Some(Action::Press(Key::PageUp)),
         NamedKey::ChannelDown => Some(Action::Press(Key::PageDown)),
@@ -243,8 +244,10 @@ mod tests {
     fn remote_keys() {
         let back = WinitKey::Named(NamedKey::BrowserBack);
         assert_eq!(remote_action(&back), Some(Action::Press(Key::Escape)));
-        let home = WinitKey::Named(NamedKey::BrowserHome);
+        let home = WinitKey::Named(NamedKey::GoHome);
         assert_eq!(remote_action(&home), Some(Action::Home));
+        let e = WinitKey::Named(NamedKey::BrowserHome);
+        assert_eq!(remote_action(&e), Some(Action::Press(Key::F23)));
         let play = WinitKey::Named(NamedKey::MediaPlayPause);
         assert_eq!(remote_action(&play), Some(Action::Press(Key::Space)));
         let fav = WinitKey::Named(NamedKey::BrowserFavorites);

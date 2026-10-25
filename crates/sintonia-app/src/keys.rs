@@ -36,9 +36,9 @@ const EXTRA_KEYS: [(Key, &str, &str); 12] = [
     (Key::F18, "Traccia prec.", "Prev. track"),
     (Key::F19, "Stop", "Stop"),
     (Key::F20, "Posta", "Mail"),
-    (Key::F21, "Tasto «e»", "«e» key"),
+    (Key::F21, "Home (telecomando)", "Home (remote)"),
     (Key::F22, "Lettore", "Media player"),
-    (Key::F23, "Info", "Info"),
+    (Key::F23, "Tasto «e»", "«e» key"),
     (Key::F24, "Guida TV", "TV guide"),
 ];
 
@@ -51,7 +51,8 @@ pub fn setting_key(index: usize, remote: bool) -> Option<String> {
 }
 
 /// I tasti di partenza. Con il telecomando (provati su un Esynic): lettore multimediale per lo
-/// schermo intero, posta per la Guida, «e» per indietro, cerca per la ricerca, traccia seguente e
+/// schermo intero, posta per la Guida, il tasto Home (manda «applicazione 1») per la Home, il
+/// tasto «e» (manda «home del browser») per indietro, cerca per la ricerca, traccia seguente e
 /// precedente per cambiare canale.
 pub fn defaults(remote: bool) -> Vec<String> {
     let mut keys: Vec<String> = ACTIONS.iter().map(|(_, key)| (*key).to_owned()).collect();
@@ -59,7 +60,8 @@ pub fn defaults(remote: bool) -> Vec<String> {
         let text = |k: Key| slint::SharedString::from(k).to_string();
         keys[0] = text(Key::F22);
         keys[6] = text(Key::F20);
-        keys[8] = text(Key::F21);
+        keys[7] = text(Key::F21);
+        keys[8] = text(Key::F23);
         keys[9] = text(Key::F14);
         keys[10] = text(Key::F17);
         keys[11] = text(Key::F18);
@@ -157,7 +159,7 @@ mod tests {
         assert_eq!(defaults(false)[8], "");
         assert_eq!(
             defaults(true)[8],
-            slint::SharedString::from(Key::F21).as_str()
+            slint::SharedString::from(Key::F23).as_str()
         );
         assert_eq!(setting_key(0, false).as_deref(), Some("key.fullscreen"));
         assert_eq!(setting_key(2, true).as_deref(), Some("key.remote.mute"));
