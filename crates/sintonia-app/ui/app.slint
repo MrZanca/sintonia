@@ -2,10 +2,10 @@
 // Le stringhe sono in inglese con @tr(); le traduzioni stanno in lang/<lingua>/LC_MESSAGES/sintonia-app.po.
 // I dati arrivano da Rust: qui non c'è nessun canale.
 
-import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo, NowNext } from "common.slint";
+import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Nav, Press, ChoiceList, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo, NowNext } from "common.slint";
 import { MediaScreen } from "media.slint";
 import { GuideScreen, GuideRow, DayItem } from "guide.slint";
-export { Video, Texts, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
+export { Video, Texts, Nav, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
 export { GuideRow, GuideBlock, DayItem } from "guide.slint";
 
 // ───────────── Barra in alto e fascia di lancio ─────────────
@@ -76,6 +76,8 @@ component TopBar inherits HorizontalLayout {
                     }
                 }
             }
+            // con il telecomando OK apre la pagina (la crocetta resta per il mouse)
+            Press { r: 20px; activate => { root.open-update(); } }
             // la zona del testo apre la pagina; la crocetta (sopra) la nasconde
             uta := TouchArea {
                 width: parent.width - 40px;
@@ -99,6 +101,9 @@ component TopBar inherits HorizontalLayout {
             x: 40px;
             width: parent.width - 54px;
             height: parent.height;
+            // raccoglie solo i tasti: il fuoco va alla casella
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
             key-pressed(event) => {
                 if (event.text == Key.Escape) {
                     root.search = "";
@@ -122,6 +127,19 @@ component TopBar inherits HorizontalLayout {
                 single-line: true;
                 edited => { root.search-edited(self.text); }
                 accepted => { root.search-done(); }
+                // ↓ passa all'elenco (la casella userebbe il tasto per andare in fondo al testo)
+                // con il telecomando, a casella vuota, ← → passano ai pulsanti vicini (l'ingranaggio)
+                key-pressed(event) => {
+                    if (event.text == Key.DownArrow) {
+                        root.search-done();
+                        return accept;
+                    }
+                    if (Nav.tv && self.text == "" && (event.text == Key.LeftArrow || event.text == Key.RightArrow)) {
+                        Nav.step(event.text == Key.RightArrow);
+                        return accept;
+                    }
+                    reject
+                }
             }
         }
         if root.search == "": Text {
@@ -145,6 +163,7 @@ component TopBar inherits HorizontalLayout {
             height: 40px;
             Sq { r: 20px; fill: fta.has-hover ? #ffffff30 : Theme.glass; }
             Icon { commands: Icons.shrink; width: 20px; height: 20px; }
+            Press { r: 20px; activate => { root.toggle-fullscreen(); } }
             fta := TouchArea { clicked => { root.toggle-fullscreen(); } }
         }
     }
@@ -155,15 +174,40 @@ component TopBar inherits HorizontalLayout {
             height: 40px;
             Sq { r: 20px; fill: root.page == 4 ? Theme.cat(4) : (gta.has-hover ? #ffffff30 : Theme.glass); }
             Icon { commands: Icons.gear; width: 22px; height: 22px; }
+            Press { r: 20px; activate => { root.page = 4; } }
             gta := TouchArea { clicked => { root.page = 4; } }
         }
     }
 }
 
+// Con il telecomando è il menu: ← → scelgono la voce, OK apre la pagina (o ci entra, se è già
+// aperta), ↑ entra nella pagina.
 component Dock inherits Rectangle {
     in-out property <int> current;
     in property <[string]> labels;
+    out property <bool> focused: fs.has-focus;
+    // cresce quando il fuoco deve tornare qui
+    in property <int> focus-tick;
+    // il fuoco va dentro la pagina aperta
+    callback enter();
+    forward-focus: fs;
+    changed focus-tick => { fs.focus(); }
+    property <int> kc;
     height: 88px;
+    fs := FocusScope {
+        focus-on-click: false;
+        focus-gained => { root.kc = min(root.current, root.labels.length - 1); }
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow) { root.kc = max(0, root.kc - 1); return accept; }
+            if (event.text == Key.RightArrow) { root.kc = min(root.labels.length - 1, root.kc + 1); return accept; }
+            if (event.text == Key.UpArrow) { root.enter(); return accept; }
+            if (event.text == Key.Return || event.text == " ") {
+                if (root.kc == root.current) { root.enter(); } else { root.current = root.kc; }
+                return accept;
+            }
+            reject
+        }
+    }
     property <length> dw: 640px;
     property <length> sw: root.dw / 4;
     Rectangle {
@@ -203,6 +247,8 @@ component Dock inherits Rectangle {
             Sq {
                 r: 19px;
                 fill: root.current == i ? Theme.cat(i) : (ta.has-hover ? #ffffff14 : transparent);
+                stroke: Nav.tv && fs.has-focus && i == root.kc ? Theme.ink : transparent;
+                stroke-width: 3px;
             }
             HorizontalLayout {
                 alignment: center;
@@ -234,6 +280,8 @@ component Dock inherits Rectangle {
 component ChannelLine inherits Rectangle {
     in property <ChannelItem> c;
     in property <bool> active;
+    // il bordo bianco solo se l'elenco ha il fuoco (con il telecomando l'anello è uno solo)
+    in property <bool> ring: true;
     in property <bool> playing;
     callback clicked;
     callback activated;
@@ -241,7 +289,7 @@ component ChannelLine inherits Rectangle {
     Sq {
         r: 16px;
         fill: root.active ? #ffffff26 : (ta.has-hover ? #ffffff10 : transparent);
-        stroke: root.active ? Theme.ink : transparent;
+        stroke: root.active && root.ring ? Theme.ink : transparent;
         stroke-width: 2px;
     }
     HorizontalLayout {
@@ -299,9 +347,10 @@ component ChannelList inherits Rectangle {
     in property <[ChannelItem]> model;
     in-out property <int> cursor;
     in property <int> playing-id: -1;
+    in property <bool> focused: true;
     callback clicked(int);
     callback activated(int);
-    property <length> row-h: 52px;
+    property <length> row-h: Nav.tv ? 60px : 52px;
     property <int> count: root.model.length;
     clip: true;
 
@@ -330,9 +379,11 @@ component ChannelList inherits Rectangle {
             x: 0px;
             y: self.index * root.row-h;
             width: fl.width;
+            height: root.row-h;
             visible: self.index < root.count;
             c: root.model[self.index];
             active: self.index == root.cursor;
+            ring: root.focused;
             playing: root.model[self.index].id == root.playing-id;
             clicked => { root.clicked(self.index); }
             activated => { root.activated(self.index); }
@@ -362,6 +413,8 @@ component Preview inherits Rectangle {
         y: 12px;
         size: 34px;
         icon: Video.muted ? Icons.muted : Icons.sound;
+        // con il telecomando da ← → si va dritti ai pulsanti sotto l'anteprima
+        tab-stop: false;
         clicked => { Video.toggle-mute(); }
     }
     if root.badge: Rectangle {
@@ -424,10 +477,33 @@ component HomeRow inherits Rectangle {
     in property <[HomeItem]> model;
     in property <length> card-w: 290px;
     in property <bool> resume;
+    out property <bool> focused: fs.has-focus;
     callback open(int);
+    forward-focus: fs;
     property <length> gap: 14px;
+    // la scheda evidenziata con le frecce
+    property <int> kc;
     clip: true;
-    Flickable {
+    function show(i: int) {
+        root.kc = max(0, min(root.model.length - 1, i));
+        let left = root.kc * (root.card-w + root.gap);
+        if (left + fl.content-x < 0px) {
+            fl.content-x = -left;
+        } else if (left + root.card-w + fl.content-x > fl.width) {
+            fl.content-x = fl.width - left - root.card-w;
+        }
+    }
+    fs := FocusScope {
+        focus-on-click: false;
+        focus-gained => { root.show(root.kc); }
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow) { root.show(root.kc - 1); return accept; }
+            if (event.text == Key.RightArrow) { root.show(root.kc + 1); return accept; }
+            if (event.text == Key.Return && root.model.length > 0) { root.open(root.kc); return accept; }
+            reject
+        }
+    }
+    fl := Flickable {
         content-width: root.model.length * (root.card-w + root.gap);
         for item[i] in root.model: Rectangle {
             x: i * (root.card-w + root.gap);
@@ -471,8 +547,62 @@ component HomeRow inherits Rectangle {
                     }
                 }
             }
-            Ring { on: ta.has-hover; }
+            Ring { on: ta.has-hover || (Nav.tv && fs.has-focus && i == root.kc); }
             ta := TouchArea { clicked => { root.open(i); } }
+        }
+    }
+}
+
+// Le categorie della Home, in fila (poche: un `for` basta)
+component HomeCats inherits Rectangle {
+    in property <[CategoryItem]> model;
+    out property <bool> focused: fs.has-focus;
+    callback open(int);
+    forward-focus: fs;
+    property <int> kc;
+    fs := FocusScope {
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow) { root.kc = max(0, root.kc - 1); return accept; }
+            if (event.text == Key.RightArrow) { root.kc = min(root.model.length - 1, root.kc + 1); return accept; }
+            if (event.text == Key.Return && root.model.length > 0) { root.open(root.kc); return accept; }
+            reject
+        }
+    }
+    HorizontalLayout {
+        spacing: 14px;
+        alignment: start;
+        for c[i] in root.model: Rectangle {
+            width: 200px;
+            Sq { r: 22px; fill: Theme.glass; }
+            VerticalLayout {
+                padding-left: 18px;
+                padding-right: 14px;
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: Texts.category(c);
+                    color: Theme.ink;
+                    font-size: 15px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Text {
+                    text: Texts.channels(c.count);
+                    color: Theme.dim;
+                    font-size: 12px;
+                }
+            }
+            if c.locked: Icon {
+                x: parent.width - self.width - 16px;
+                y: 14px;
+                commands: Icons.lock;
+                width: 16px;
+                height: 16px;
+                tint: Theme.dim;
+            }
+            Ring { on: fta.has-hover || (Nav.tv && fs.has-focus && i == root.kc); }
+            fta := TouchArea { clicked => { root.open(i); } }
         }
     }
 }
@@ -486,6 +616,8 @@ component HomeScreen inherits Rectangle {
     in property <int> top-offset: 2;
     in property <[HomeItem]> resume;
     in property <[HomeItem]> favorites;
+    // cresce quando il fuoco deve tornare qui (dal menu in basso o dalla ricerca)
+    in property <int> focus-tick;
     callback play();
     callback pip();
     // indice nella lista completa delle categorie (0 è «Tutti»)
@@ -493,6 +625,7 @@ component HomeScreen inherits Rectangle {
     callback open-resume(int);
     callback open-favorite(int);
     callback add-source();
+    property <bool> first-use: root.resume.length == 0 && root.favorites.length == 0;
 
     if root.no-source: EmptyState {
         icon: Icons.plus;
@@ -501,115 +634,129 @@ component HomeScreen inherits Rectangle {
         action: @tr("Add a source");
         act => { root.add-source(); }
     }
-    if !root.no-source: VerticalLayout {
-        padding-left: 44px;
-        padding-right: 44px;
-        padding-top: 6px;
-        spacing: 10px;
-        alignment: start;
-        HorizontalLayout {
-            spacing: 34px;
-            alignment: start;
-            height: 262px;
-            Rectangle {
-                width: 466px;
-                // sotto l'anteprima, così il suo pulsante muto riceve i clic
-                hta := TouchArea { clicked => { root.play(); } }
-                Preview { c: root.hero; }
+    // raccoglie le frecce che le righe non usano: ↑ ↓ passano da una riga all'altra
+    if !root.no-source: hk := FocusScope {
+        focus-on-tab-navigation: false;
+        focus-on-click: false;
+        property <int> tick: root.focus-tick;
+        init => { watch.focus(); }
+        changed tick => { watch.focus(); }
+        function first-row() -> bool {
+            if (rr.visible) {
+                rr.focus();
+                return true;
             }
-            VerticalLayout {
-                width: 440px;
-                alignment: center;
-                spacing: 6px;
-                Text {
-                    text: @tr("On now");
-                    color: Theme.dim;
-                    font-size: 14px;
-                }
-                Text {
-                    text: root.hero.name;
-                    color: Theme.ink;
-                    font-size: 36px;
-                    font-weight: 700;
-                    overflow: elide;
-                }
-                Text {
-                    text: root.hero.group;
-                    color: Theme.ink;
-                    font-size: 18px;
-                }
-                if root.hero.now-title != "": Rectangle { height: 4px; }
-                if root.hero.now-title != "": NowNext { c: root.hero; bar-width: 300px; label: false; }
-                Text {
-                    text: @tr("Channel {}", root.hero.num);
-                    color: Theme.dim;
-                    font-size: 13px;
-                }
-                Rectangle { height: 8px; }
-                HorizontalLayout {
-                    spacing: 10px;
-                    alignment: start;
-                    Btn { label: @tr("Watch"); primary: true; clicked => { root.play(); } }
-                    IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
+            if (fr.visible) {
+                fr.focus();
+                return true;
+            }
+            if (cr.visible) {
+                cr.focus();
+                return true;
+            }
+            return false;
+        }
+        key-pressed(event) => {
+            if (watch.focused || pip-btn.focused) {
+                if (event.text == Key.RightArrow) { pip-btn.focus(); return accept; }
+                if (event.text == Key.LeftArrow) { watch.focus(); return accept; }
+                if (event.text == Key.DownArrow) { return self.first-row() ? accept : reject; }
+            }
+            if (event.text == Key.UpArrow) {
+                if (rr.focused || cr.focused) { watch.focus(); return accept; }
+                if (fr.focused) {
+                    if (rr.visible) { rr.focus(); } else { watch.focus(); }
+                    return accept;
                 }
             }
+            if (event.text == Key.DownArrow && rr.focused && fr.visible) {
+                fr.focus();
+                return accept;
+            }
+            reject
         }
-        if root.resume.length > 0: Rectangle { height: 8px; }
-        if root.resume.length > 0: Title { text: @tr("Continue watching"); }
-        if root.resume.length > 0: HomeRow {
-            height: 120px;
-            model: root.resume;
-            resume: true;
-            open(i) => { root.open-resume(i); }
-        }
-        if root.favorites.length > 0: Rectangle { height: 6px; }
-        if root.favorites.length > 0: Title { text: @tr("Favorites"); }
-        if root.favorites.length > 0: HomeRow {
-            height: 96px;
-            card-w: 240px;
-            model: root.favorites;
-            open(i) => { root.open-favorite(i); }
-        }
-        // al primo uso, finché Riprendi e Preferiti sono vuoti, le categorie
-        if root.resume.length == 0 && root.favorites.length == 0: Rectangle { height: 12px; }
-        if root.resume.length == 0 && root.favorites.length == 0: Title { text: @tr("Categories"); }
-        if root.resume.length == 0 && root.favorites.length == 0: HorizontalLayout {
-            spacing: 14px;
+        VerticalLayout {
+            padding-left: 44px;
+            padding-right: 44px;
+            padding-top: 6px;
+            spacing: 10px;
             alignment: start;
-            height: 84px;
-            for c[i] in root.categories: Rectangle {
-                width: 200px;
-                Sq { r: 22px; fill: Theme.glass; }
+            HorizontalLayout {
+                spacing: 34px;
+                alignment: start;
+                height: 262px;
+                Rectangle {
+                    width: 466px;
+                    // sotto l'anteprima, così il suo pulsante muto riceve i clic
+                    hta := TouchArea { clicked => { root.play(); } }
+                    Preview { c: root.hero; }
+                }
                 VerticalLayout {
-                    padding-left: 18px;
-                    padding-right: 14px;
+                    width: 440px;
                     alignment: center;
-                    spacing: 2px;
+                    spacing: 6px;
                     Text {
-                        text: Texts.category(c);
+                        text: @tr("On now");
+                        color: Theme.dim;
+                        font-size: 14px;
+                    }
+                    Text {
+                        text: root.hero.name;
                         color: Theme.ink;
-                        font-size: 15px;
-                        font-weight: 600;
+                        font-size: 36px;
+                        font-weight: 700;
                         overflow: elide;
                     }
                     Text {
-                        text: Texts.channels(c.count);
+                        text: root.hero.group;
+                        color: Theme.ink;
+                        font-size: 18px;
+                    }
+                    if root.hero.now-title != "": Rectangle { height: 4px; }
+                    if root.hero.now-title != "": NowNext { c: root.hero; bar-width: 300px; label: false; }
+                    Text {
+                        text: @tr("Channel {}", root.hero.num);
                         color: Theme.dim;
-                        font-size: 12px;
+                        font-size: 13px;
+                    }
+                    Rectangle { height: 8px; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        watch := Btn { label: @tr("Watch"); primary: true; clicked => { root.play(); } }
+                        pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
                     }
                 }
-                if c.locked: Icon {
-                    x: parent.width - self.width - 16px;
-                    y: 14px;
-                    commands: Icons.lock;
-                    width: 16px;
-                    height: 16px;
-                    tint: Theme.dim;
-                }
-                Ring { on: fta.has-hover; }
-                // le categorie della Home sono quelle della lista completa dopo «Tutti», «Preferiti»
-                // e la categoria personalizzata
-                fta := TouchArea { clicked => { root.open-category(i + root.top-offset); } }
+            }
+            // le righe restano (nascoste e alte zero quando sono vuote) per poterle chiamare per nome
+            if root.resume.length > 0: Rectangle { height: 8px; }
+            if root.resume.length > 0: Title { text: @tr("Continue watching"); }
+            rr := HomeRow {
+                visible: root.resume.length > 0;
+                height: self.visible ? 120px : 0px;
+                model: root.resume;
+                resume: true;
+                open(i) => { root.open-resume(i); }
+            }
+            if root.favorites.length > 0: Rectangle { height: 6px; }
+            if root.favorites.length > 0: Title { text: @tr("Favorites"); }
+            fr := HomeRow {
+                visible: root.favorites.length > 0;
+                height: self.visible ? 96px : 0px;
+                card-w: 240px;
+                model: root.favorites;
+                open(i) => { root.open-favorite(i); }
+            }
+            // al primo uso, finché Riprendi e Preferiti sono vuoti, le categorie
+            if root.first-use: Rectangle { height: 12px; }
+            if root.first-use: Title { text: @tr("Categories"); }
+            // le categorie della Home sono quelle della lista completa dopo «Tutti», «Preferiti»
+            // e la categoria personalizzata
+            cr := HomeCats {
+                visible: root.first-use;
+                height: self.visible ? 84px : 0px;
+                model: root.categories;
+                open(i) => { root.open-category(i + root.top-offset); }
             }
         }
     }
@@ -624,6 +771,7 @@ component MarkBtn inherits Rectangle {
     // da acceso il simbolo è pieno (la stella)
     in property <bool> solid;
     callback clicked;
+    forward-focus: press;
     width: 38px;
     height: 38px;
     Sq { r: 19px; fill: root.on ? Theme.ink : (ta.has-hover ? #ffffff30 : Theme.glass); }
@@ -634,6 +782,7 @@ component MarkBtn inherits Rectangle {
         tint: root.on ? Theme.bg : Theme.ink;
         fill: root.on && root.solid ? Theme.bg : transparent;
     }
+    press := Press { r: 19px; activate => { root.clicked(); } }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
@@ -677,50 +826,53 @@ component LiveScreen inherits Rectangle {
         action: @tr("Add a source");
         act => { root.add-source(); }
     }
-    fs := FocusScope {
-        enabled: !root.no-source;
-        key-pressed(event) => {
-            if (event.text == Key.UpArrow) { root.move(-1); return accept; }
-            if (event.text == Key.DownArrow) { root.move(1); return accept; }
-            if (event.text == Key.PageUp) { root.move(-10); return accept; }
-            if (event.text == Key.PageDown) { root.move(10); return accept; }
-            if (event.text == Key.Return && root.channels.length > 0) { root.play(root.cursor); return accept; }
-            if ((event.text == "s" || event.text == "S") && root.channels.length > 0) { root.toggle-fav(root.cursor); return accept; }
-            reject
-        }
-        HorizontalLayout {
-            visible: !root.no-source;
-            padding-left: 44px;
-            padding-right: 44px;
-            padding-top: 8px;
-            spacing: 24px;
-            VerticalLayout {
-                width: 230px;
-                spacing: 10px;
-                Title { text: @tr("Categories"); }
-                CategoryList {
-                    vertical-stretch: 1;
-                    model: root.categories;
-                    current: root.category;
-                    searching: root.search != "";
-                    picked(i) => {
-                        root.pick-category(i);
-                        fs.focus();
-                    }
+    HorizontalLayout {
+        visible: !root.no-source;
+        padding-left: 44px;
+        padding-right: 44px;
+        padding-top: 8px;
+        spacing: 24px;
+        VerticalLayout {
+            width: 230px;
+            spacing: 10px;
+            Title { text: @tr("Categories"); }
+            CategoryList {
+                vertical-stretch: 1;
+                model: root.categories;
+                current: root.category;
+                searching: root.search != "";
+                picked(i) => {
+                    root.pick-category(i);
+                    fs.focus();
                 }
             }
-            VerticalLayout {
-                width: 440px;
-                spacing: 10px;
-                Title {
-                    text: root.search != "" ? @tr("Results for “{}”: {}", root.search, root.channels.length)
-                        : Texts.channels(root.channels.length);
+        }
+        VerticalLayout {
+            width: 440px;
+            spacing: 10px;
+            Title {
+                text: root.search != "" ? @tr("Results for “{}”: {}", root.search, root.channels.length)
+                    : Texts.channels(root.channels.length);
+            }
+            fs := FocusScope {
+                vertical-stretch: 1;
+                enabled: !root.no-source;
+                key-pressed(event) => {
+                    if (event.text == Key.UpArrow) { root.move(-1); return accept; }
+                    if (event.text == Key.DownArrow) { root.move(1); return accept; }
+                    if (event.text == Key.PageUp) { root.move(-10); return accept; }
+                    if (event.text == Key.PageDown) { root.move(10); return accept; }
+                    if (event.text == Key.Return && root.channels.length > 0) { root.play(root.cursor); return accept; }
+                    if ((event.text == "s" || event.text == "S") && root.channels.length > 0) { root.toggle-fav(root.cursor); return accept; }
+                    reject
                 }
                 list := ChannelList {
-                    vertical-stretch: 1;
+                    width: parent.width;
+                    height: parent.height;
                     model: root.channels;
                     cursor <=> root.cursor;
                     playing-id: root.playing-id;
+                    focused: !Nav.tv || fs.has-focus;
                     clicked(i) => {
                         root.cursor = i;
                         root.cursor-moved(i);
@@ -732,76 +884,76 @@ component LiveScreen inherits Rectangle {
                     }
                 }
             }
-            VerticalLayout {
-                horizontal-stretch: 1;
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            spacing: 6px;
+            if root.channels.length > 0: Preview {
+                height: 250px;
+                c: root.cur;
+                live-video: root.cur.id == root.playing-id;
+            }
+            if root.channels.length > 0: Rectangle { height: 10px; }
+            if root.channels.length > 0: Text {
+                text: root.cur.name;
+                color: Theme.ink;
+                font-size: 30px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+            if root.channels.length > 0: Text {
+                text: root.cur.group;
+                color: Theme.dim;
+                font-size: 15px;
+            }
+            if root.channels.length > 0 && root.cur.now-title != "": Rectangle { height: 6px; }
+            if root.channels.length > 0 && root.cur.now-title != "": NowNext {
+                c: root.cur;
+                bar-width: 320px;
+                title-size: 17px;
+            }
+            if root.cur.drm && root.channels.length > 0: Text {
+                text: @tr("This channel declares a DRM protection: it may not play.");
+                color: Theme.faint;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            if root.channels.length > 0: Rectangle { height: 12px; }
+            if root.channels.length > 0: HorizontalLayout {
+                spacing: 10px;
                 alignment: start;
-                spacing: 6px;
-                if root.channels.length > 0: Preview {
-                    height: 250px;
-                    c: root.cur;
-                    live-video: root.cur.id == root.playing-id;
+                Btn { label: @tr("Watch"); primary: true; clicked => { root.play(root.cursor); } }
+                IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(root.cursor); } }
+                MarkBtn {
+                    icon: Icons.star;
+                    solid: true;
+                    on: root.cur.fav;
+                    clicked => { root.toggle-fav(root.cursor); }
                 }
-                if root.channels.length > 0: Rectangle { height: 10px; }
-                if root.channels.length > 0: Text {
-                    text: root.cur.name;
-                    color: Theme.ink;
-                    font-size: 30px;
-                    font-weight: 700;
-                    wrap: word-wrap;
+                MarkBtn {
+                    icon: Icons.lock;
+                    on: root.cur.custom;
+                    clicked => { root.toggle-custom(root.cursor); }
                 }
-                if root.channels.length > 0: Text {
-                    text: root.cur.group;
-                    color: Theme.dim;
-                    font-size: 15px;
-                }
-                if root.channels.length > 0 && root.cur.now-title != "": Rectangle { height: 6px; }
-                if root.channels.length > 0 && root.cur.now-title != "": NowNext {
-                    c: root.cur;
-                    bar-width: 320px;
-                    title-size: 17px;
-                }
-                if root.cur.drm && root.channels.length > 0: Text {
-                    text: @tr("This channel declares a DRM protection: it may not play.");
-                    color: Theme.faint;
-                    font-size: 13px;
-                    wrap: word-wrap;
-                }
-                if root.channels.length > 0: Rectangle { height: 12px; }
-                if root.channels.length > 0: HorizontalLayout {
-                    spacing: 10px;
-                    alignment: start;
-                    Btn { label: @tr("Watch"); primary: true; clicked => { root.play(root.cursor); } }
-                    IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(root.cursor); } }
-                    MarkBtn {
-                        icon: Icons.star;
-                        solid: true;
-                        on: root.cur.fav;
-                        clicked => { root.toggle-fav(root.cursor); }
-                    }
-                    MarkBtn {
-                        icon: Icons.lock;
-                        on: root.cur.custom;
-                        clicked => { root.toggle-custom(root.cursor); }
-                    }
-                }
-                if root.channels.length == 0 && root.search != "": Text {
-                    text: @tr("No channels match your search.");
-                    color: Theme.dim;
-                    font-size: 15px;
-                }
-                // 2: la categoria personalizzata
-                if root.channels.length == 0 && root.search == "" && root.category == 2: Text {
-                    text: @tr("No channels here yet: choose a channel in another category and press the lock button.");
-                    color: Theme.dim;
-                    font-size: 15px;
-                    wrap: word-wrap;
-                }
-                if root.channels.length == 0 && root.search == "" && root.category == 1: Text {
-                    text: @tr("No favorite channels yet: choose a channel and press the star (or the S key).");
-                    color: Theme.dim;
-                    font-size: 15px;
-                    wrap: word-wrap;
-                }
+            }
+            if root.channels.length == 0 && root.search != "": Text {
+                text: @tr("No channels match your search.");
+                color: Theme.dim;
+                font-size: 15px;
+            }
+            // 2: la categoria personalizzata
+            if root.channels.length == 0 && root.search == "" && root.category == 2: Text {
+                text: @tr("No channels here yet: choose a channel in another category and press the lock button.");
+                color: Theme.dim;
+                font-size: 15px;
+                wrap: word-wrap;
+            }
+            if root.channels.length == 0 && root.search == "" && root.category == 1: Text {
+                text: @tr("No favorite channels yet: choose a channel and press the star (or the S key).");
+                color: Theme.dim;
+                font-size: 15px;
+                wrap: word-wrap;
             }
         }
     }
@@ -840,6 +992,14 @@ component Field inherits VerticalLayout {
             single-line: true;
             input-type: root.password ? InputType.password : InputType.text;
             edited => { root.edited(self.text); }
+            // con il telecomando ↑ ↓ passano al campo precedente o seguente
+            key-pressed(event) => {
+                if (Nav.tv && (event.text == Key.UpArrow || event.text == Key.DownArrow)) {
+                    Nav.step(event.text == Key.DownArrow);
+                    return accept;
+                }
+                reject
+            }
         }
         if root.value == "": Text {
             x: 18px;
@@ -853,13 +1013,15 @@ component Field inherits VerticalLayout {
 component SetRow inherits Rectangle {
     in property <string> label;
     in property <bool> active;
+    // con il telecomando: il menu ha il fuoco e questa è la voce aperta
+    in property <bool> focused;
     callback clicked;
     height: 52px;
     Sq {
         r: 18px;
         fill: root.active ? #ffffff26 : (ta.has-hover ? #ffffff10 : transparent);
-        stroke: root.active ? Theme.ink : transparent;
-        stroke-width: 2px;
+        stroke: root.focused || (root.active && !Nav.tv) ? Theme.ink : transparent;
+        stroke-width: root.focused ? 3px : 2px;
     }
     Text {
         x: 22px;
@@ -1066,6 +1228,8 @@ component SettingsScreen inherits Rectangle {
     in property <[CategoryItem]> lock-movies;
     in property <[CategoryItem]> lock-series;
     in-out property <string> custom-name;
+    // cresce quando il fuoco deve tornare qui (dal menu in basso o dalla ricerca)
+    in property <int> focus-tick;
     callback set-interval(int, int);
     callback pin-create(string, string);
     callback pin-remove();
@@ -1100,7 +1264,10 @@ component SettingsScreen inherits Rectangle {
     changed pin-set => {
         root.new-pin = "";
         root.new-pin-again = "";
+        // il pulsante che aveva il fuoco è sparito: il fuoco torna al menu delle sezioni
+        menu.focus();
     }
+    changed pin-unlocked => { menu.focus(); }
     changed form-reset => {
         root.epg = "";
         root.name = "";
@@ -1114,6 +1281,8 @@ component SettingsScreen inherits Rectangle {
     function location() -> string {
         return root.kind == 0 ? root.link : (root.kind == 1 ? root.picked-file : root.server);
     }
+    init => { menu.focus(); }
+    changed focus-tick => { menu.focus(); }
 
     HorizontalLayout {
         padding-left: 44px;
@@ -1124,9 +1293,30 @@ component SettingsScreen inherits Rectangle {
             width: 260px;
             alignment: start;
             spacing: 6px;
-            for s[i] in [@tr("Sources"), @tr("Language"), @tr("Playback"), @tr("Updates"), @tr("Parental control")]: SetRow {
+            // il menu delle sezioni: ↑ ↓ cambiano sezione, → (o OK) va al contenuto
+            menu := FocusScope {
+                height: 0px;
+                focus-on-click: false;
+                key-pressed(event) => {
+                    if (event.text == Key.UpArrow) {
+                        root.section = max(0, root.section - 1);
+                        return accept;
+                    }
+                    if (event.text == Key.DownArrow) {
+                        root.section = min(5, root.section + 1);
+                        return accept;
+                    }
+                    if (event.text == Key.Return) {
+                        Nav.step(true);
+                        return accept;
+                    }
+                    reject
+                }
+            }
+            for s[i] in [@tr("Sources"), @tr("Language"), @tr("Playback"), @tr("Updates"), @tr("Parental control"), @tr("Navigation")]: SetRow {
                 label: s;
                 active: root.section == i;
+                focused: Nav.tv && menu.has-focus && root.section == i;
                 clicked => { root.section = i; }
             }
         }
@@ -1241,30 +1431,10 @@ component SettingsScreen inherits Rectangle {
             alignment: start;
             spacing: 12px;
             Title { text: @tr("Interface language"); }
-            for l[i] in ["Italiano", "English"]: Rectangle {
-                height: 72px;
-                max-width: 520px;
-                Sq {
-                    r: 24px;
-                    fill: root.language == i ? #ffffff26 : Theme.glass;
-                    stroke: root.language == i ? Theme.ink : transparent;
-                    stroke-width: 2px;
-                }
-                Text {
-                    x: 26px;
-                    text: l;
-                    color: Theme.ink;
-                    font-size: 20px;
-                    font-weight: root.language == i ? 700 : 400;
-                    horizontal-alignment: left;
-                }
-                Text {
-                    x: parent.width - self.width - 26px;
-                    text: root.language == i ? "●" : "";
-                    color: Theme.needle;
-                    font-size: 18px;
-                }
-                TouchArea { clicked => { root.set-language(i); } }
+            ChoiceList {
+                options: ["Italiano", "English"];
+                current: root.language;
+                picked(i) => { root.set-language(i); }
             }
             Text {
                 text: @tr("Changes immediately, no restart needed.");
@@ -1427,8 +1597,19 @@ component SettingsScreen inherits Rectangle {
                     x: 0;
                     width: lock-fl.width;
                     spacing: 6px;
-                    for c[i] in root.lock-shown: Rectangle {
+                    for c[i] in root.lock-shown: lr := Rectangle {
                         height: 48px;
+                        property <bool> focused: tg.focused;
+                        changed focused => {
+                            if (!self.focused) {
+                                return;
+                            }
+                            if (self.y + lock-fl.content-y < 0px) {
+                                lock-fl.content-y = -self.y;
+                            } else if (self.y + self.height + lock-fl.content-y > lock-fl.height) {
+                                lock-fl.content-y = lock-fl.height - self.y - self.height;
+                            }
+                        }
                         Sq { r: 18px; fill: c.locked ? #ffffff1c : Theme.glass; }
                         HorizontalLayout {
                             padding-left: 18px;
@@ -1455,7 +1636,7 @@ component SettingsScreen inherits Rectangle {
                             }
                             VerticalLayout {
                                 alignment: center;
-                                Toggle {
+                                tg := Toggle {
                                     on: c.locked;
                                     toggled(v) => { root.toggle-lock(root.lock-kind, i, v); }
                                 }
@@ -1490,6 +1671,41 @@ component SettingsScreen inherits Rectangle {
                 }
             }
         }
+        // navigazione: mouse o telecomando
+        if root.section == 5: VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            spacing: 12px;
+            Title { text: @tr("How you move around Sintonia"); }
+            ChoiceList {
+                options: [@tr("Mouse and keyboard"), @tr("Remote control")];
+                details: [@tr("Click with the mouse. The keyboard works as before."), @tr("Arrows to move, OK to open, Back to go back. Bigger buttons.")];
+                current: Nav.mode;
+                picked(i) => {
+                    Nav.mode = i;
+                    root.setting-changed("navigation", i == 1 ? "remote" : "mouse");
+                }
+            }
+            Rectangle { height: 4px; }
+            Text {
+                text: @tr("With the remote control: the arrows move the white ring from one button or list to the next, OK opens what has the ring, Back goes back (from a page it goes to the menu at the bottom, from the menu to the Home).");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: @tr("In the player: ↑ ↓ change channel, OK opens the channel list, ← → reach the buttons. Movies and episodes: ← → skip 10 seconds, OK pauses, ↓ shows the buttons.");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: @tr("To type (an address, a search) you need the keyboard: the one on the back of the remote, if it has one, or the Windows on-screen keyboard.");
+                color: Theme.faint;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
     }
 }
 
@@ -1500,10 +1716,20 @@ component PinDialog inherits Rectangle {
     in property <int> reason;
     callback submit(string);
     callback cancel();
+    // cresce quando il fuoco deve tornare qui
+    in property <int> focus-tick;
     property <string> pin;
     changed error => {
         if (root.error) { root.pin = ""; }
     }
+    // tasti delle cifre sullo schermo (telecomando): 1-9, 0, cancella, conferma
+    property <[string]> keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "C", "OK"];
+    property <int> kc;
+    function grab() {
+        if (Nav.tv) { pad.focus(); } else { ti.focus(); }
+    }
+    init => { root.grab(); }
+    changed focus-tick => { root.grab(); }
     background: #000000c0;
     // i clic fuori dal riquadro non arrivano alle pagine sotto
     TouchArea { clicked => { root.cancel(); } }
@@ -1553,7 +1779,8 @@ component PinDialog inherits Rectangle {
                     horizontal-alignment: center;
                     single-line: true;
                     input-type: InputType.password;
-                    init => { self.focus(); }
+                    // con il telecomando si scrive con i tasti qui sotto
+                    enabled: !Nav.tv;
                     accepted => { root.submit(root.pin); }
                     key-pressed(event) => {
                         if (event.text == Key.Escape) {
@@ -1561,6 +1788,65 @@ component PinDialog inherits Rectangle {
                             return accept;
                         }
                         reject
+                    }
+                }
+            }
+            // il riquadro tiene tutti i tasti: con il telecomando non si esce per sbaglio
+            pad := FocusScope {
+                visible: Nav.tv;
+                height: Nav.tv ? 104px : 0px;
+                focus-on-click: false;
+                key-pressed(event) => {
+                    if (event.text == "0" || event.text == "1" || event.text == "2" || event.text == "3" || event.text == "4"
+                        || event.text == "5" || event.text == "6" || event.text == "7" || event.text == "8" || event.text == "9") {
+                        root.pin += event.text;
+                        return accept;
+                    }
+                    if (event.text == Key.LeftArrow) { root.kc = max(0, root.kc - 1); }
+                    if (event.text == Key.RightArrow) { root.kc = min(11, root.kc + 1); }
+                    if (event.text == Key.UpArrow && root.kc >= 6) { root.kc -= 6; }
+                    if (event.text == Key.DownArrow && root.kc < 6) { root.kc += 6; }
+                    if (event.text == Key.Backspace || event.text == Key.Delete) { root.pin = ""; }
+                    if (event.text == Key.Escape) { root.cancel(); }
+                    if (event.text == Key.Return || event.text == " ") {
+                        if (root.kc < 10) {
+                            root.pin += root.keys[root.kc];
+                        } else if (root.kc == 10) {
+                            root.pin = "";
+                        } else {
+                            root.submit(root.pin);
+                        }
+                    }
+                    accept
+                }
+                for k[i] in root.keys: Rectangle {
+                    x: Math.mod(i, 6) * 56px;
+                    y: floor(i / 6) * 56px;
+                    width: 48px;
+                    height: 48px;
+                    Sq {
+                        r: 16px;
+                        fill: i == 11 ? Theme.ink : (kta.has-hover ? #ffffff30 : Theme.glass);
+                        stroke: pad.has-focus && i == root.kc ? Theme.needle : transparent;
+                        stroke-width: 3px;
+                    }
+                    Text {
+                        text: k;
+                        color: i == 11 ? Theme.bg : Theme.ink;
+                        font-size: 18px;
+                        font-weight: 600;
+                    }
+                    kta := TouchArea {
+                        clicked => {
+                            root.kc = i;
+                            if (i < 10) {
+                                root.pin += k;
+                            } else if (i == 10) {
+                                root.pin = "";
+                            } else {
+                                root.submit(root.pin);
+                            }
+                        }
                     }
                 }
             }
@@ -1588,9 +1874,16 @@ component PinDialog inherits Rectangle {
 
 component TrackRow inherits Rectangle {
     in property <TrackItem> t;
+    // evidenziata con le frecce
+    in property <bool> active;
     callback clicked;
     height: 40px;
-    Sq { r: 14px; fill: root.t.selected ? #ffffff26 : (ta.has-hover ? #ffffff14 : transparent); }
+    Sq {
+        r: 14px;
+        fill: root.t.selected ? #ffffff26 : (ta.has-hover ? #ffffff14 : transparent);
+        stroke: root.active ? Theme.ink : transparent;
+        stroke-width: 2px;
+    }
     Text {
         x: 16px;
         text: root.t.label;
@@ -1621,6 +1914,9 @@ component PlayerScreen inherits Rectangle {
     // prossimo episodio: secondi al via (-1: nessuno) ed etichetta
     in property <int> next-countdown: -1;
     in property <string> next-label;
+    // cresce quando il fuoco deve tornare al video
+    in property <int> focus-tick;
+    changed focus-tick => { fs.focus(); }
     callback toggle-pause();
     callback seek(int);
     callback seek-to(float);
@@ -1653,7 +1949,7 @@ component PlayerScreen inherits Rectangle {
         running: false;
         triggered => {
             self.stop();
-            if (root.drawer || root.controls-hovered || root.paused) {
+            if (root.drawer || root.controls-hovered || root.controls-focused || root.paused) {
                 self.start();
             } else {
                 root.overlay = false;
@@ -1670,6 +1966,10 @@ component PlayerScreen inherits Rectangle {
         || audio-btn.hovered || sub-btn.hovered || aspect-btn.hovered || seek-ta.has-hover
         || rew-btn.hovered || pause-btn.hovered || fwd-btn.hovered || fs-btn.hovered
         || mute-btn.hovered;
+    // con il telecomando un pulsante ha il fuoco: le informazioni restano
+    property <bool> controls-focused: back-btn.focused || home-btn.focused || pip-btn.focused
+        || audio-btn.focused || sub-btn.focused || aspect-btn.focused || rew-btn.focused
+        || pause-btn.focused || fwd-btn.focused || fs-btn.focused || mute-btn.focused;
 
     function toggle-drawer() {
         root.drawer = !root.drawer;
@@ -1688,6 +1988,26 @@ component PlayerScreen inherits Rectangle {
 
     fs := FocusScope {
         key-pressed(event) => {
+            // telecomando: ↓ (film ed episodi) e ← → (canali) portano ai pulsanti
+            if (Nav.tv && !root.drawer) {
+                if (root.on-demand && (event.text == Key.DownArrow || event.text == Key.UpArrow)) {
+                    root.show-overlay();
+                    pause-btn.focus();
+                    return accept;
+                }
+                if (!root.on-demand && (event.text == Key.LeftArrow || event.text == Key.RightArrow)) {
+                    root.show-overlay();
+                    // il fuoco lo sposta Rust, al pulsante seguente o precedente
+                    return reject;
+                }
+            }
+            if (Nav.tv && root.drawer) {
+                if (event.text == Key.LeftArrow) {
+                    dcats.focus();
+                    return accept;
+                }
+                if (event.text == Key.RightArrow) { return accept; }
+            }
             if (root.on-demand) {
                 if (event.text == Key.LeftArrow) { root.seek(-10); root.show-overlay(); return accept; }
                 if (event.text == Key.RightArrow) { root.seek(10); root.show-overlay(); return accept; }
@@ -1773,305 +2093,363 @@ component PlayerScreen inherits Rectangle {
         double-clicked => { root.toggle-fullscreen(); }
     }
 
-    // in alto a sinistra: indietro e home (non cliccabili quando sono nascosti)
-    HorizontalLayout {
-        x: 36px;
-        y: 28px;
-        spacing: 10px;
-        opacity: root.overlay && !root.drawer ? 1 : 0;
-        visible: self.opacity > 0.01;
-        animate opacity { duration: 250ms; }
-        back-btn := IconBtn { icon: Icons.back; clicked => { root.back(); } }
-        home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
-    }
-
-    // in alto a destra: schermo intero (entra / esci)
-    fs-btn := IconBtn {
-        x: parent.width - self.width - 36px;
-        y: 28px;
-        icon: root.fullscreen ? Icons.shrink : Icons.expand;
-        opacity: root.overlay && !root.drawer ? 1 : 0;
-        visible: self.opacity > 0.01;
-        animate opacity { duration: 250ms; }
-        clicked => { root.toggle-fullscreen(); }
-    }
-
-    // barra in basso (più alta quando c'è la guida)
-    Rectangle {
-        y: parent.height - self.height;
-        height: !root.on-demand && root.c.now-title != "" ? 260px : 190px;
-        opacity: root.overlay ? 1 : 0;
-        visible: self.opacity > 0.01;
-        animate opacity { duration: 250ms; }
-        background: @linear-gradient(180deg, #00000000 0%, #000000b0 45%, #000000e0 100%);
-        // barra di avanzamento (film ed episodi), cliccabile per saltare
-        if root.on-demand: Rectangle {
-            x: 40px;
-            y: 54px;
-            width: parent.width - 80px;
-            height: 22px;
-            Rectangle {
-                y: (parent.height - self.height) / 2;
-                height: seek-ta.has-hover ? 6px : 4px;
-                Sq { r: 3px; fill: #ffffff33; }
-                Sq {
-                    x: 0px;
-                    width: root.duration > 0 ? max(6px, parent.width * root.position / root.duration) : 0px;
-                    height: parent.height;
-                    r: 3px;
-                    fill: Theme.needle;
-                }
+    // raccoglie i tasti dei comandi a video: Indietro e ↑ tornano al video, ← → passano da un
+    // pulsante all'altro
+    ctl := FocusScope {
+        focus-on-tab-navigation: false;
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.Escape || event.text == Key.UpArrow) {
+                fs.focus();
+                root.show-overlay();
+                return accept;
             }
+            if (event.text == Key.DownArrow) { return accept; }
+            reject
         }
-        seek-ta := TouchArea {
-            x: 40px;
-            y: 54px;
-            width: parent.width - 80px;
-            height: 22px;
-            enabled: root.on-demand && root.duration > 0;
-            mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
-            clicked => { root.seek-to(self.mouse-x / self.width); }
-        }
+
+        // in alto a sinistra: indietro e home (non cliccabili quando sono nascosti)
         HorizontalLayout {
-            padding: 40px;
-            padding-bottom: 30px;
-            spacing: 24px;
-            alignment: stretch;
-            if !root.on-demand: Text {
-                text: root.c.num;
-                color: Theme.ink;
-                font-size: 56px;
-                font-weight: 200;
-                vertical-alignment: bottom;
+            x: 36px;
+            y: 28px;
+            spacing: 10px;
+            opacity: root.overlay && !root.drawer ? 1 : 0;
+            visible: self.opacity > 0.01 || (root.overlay && !root.drawer);
+            animate opacity { duration: 250ms; }
+            back-btn := IconBtn { icon: Icons.back; clicked => { root.back(); } }
+            home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
+        }
+
+        // in alto a destra: schermo intero (entra / esci)
+        fs-btn := IconBtn {
+            x: parent.width - self.width - 36px;
+            y: 28px;
+            icon: root.fullscreen ? Icons.shrink : Icons.expand;
+            opacity: root.overlay && !root.drawer ? 1 : 0;
+            visible: self.opacity > 0.01 || (root.overlay && !root.drawer);
+            animate opacity { duration: 250ms; }
+            clicked => { root.toggle-fullscreen(); }
+        }
+
+        // barra in basso (più alta quando c'è la guida)
+        Rectangle {
+            y: parent.height - self.height;
+            height: !root.on-demand && root.c.now-title != "" ? 260px : 190px;
+            opacity: root.overlay ? 1 : 0;
+            visible: self.opacity > 0.01 || root.overlay;
+            animate opacity { duration: 250ms; }
+            background: @linear-gradient(180deg, #00000000 0%, #000000b0 45%, #000000e0 100%);
+            // barra di avanzamento (film ed episodi), cliccabile per saltare
+            if root.on-demand: Rectangle {
+                x: 40px;
+                y: 54px;
+                width: parent.width - 80px;
+                height: 22px;
+                Rectangle {
+                    y: (parent.height - self.height) / 2;
+                    height: seek-ta.has-hover ? 6px : 4px;
+                    Sq { r: 3px; fill: #ffffff33; }
+                    Sq {
+                        x: 0px;
+                        width: root.duration > 0 ? max(6px, parent.width * root.position / root.duration) : 0px;
+                        height: parent.height;
+                        r: 3px;
+                        fill: Theme.needle;
+                    }
+                }
             }
-            VerticalLayout {
-                alignment: end;
-                spacing: 4px;
-                horizontal-stretch: 1;
-                Text {
-                    text: root.on-demand
-                        ? Texts.clock(root.position) + (root.duration > 0 ? " / " + Texts.clock(root.duration) : "")
-                        : "● " + @tr("On air");
-                    color: root.on-demand ? Theme.dim : Theme.live;
-                    font-size: 13px;
-                    font-weight: 600;
-                }
-                Text {
-                    text: root.c.name;
+            seek-ta := TouchArea {
+                x: 40px;
+                y: 54px;
+                width: parent.width - 80px;
+                height: 22px;
+                enabled: root.on-demand && root.duration > 0;
+                mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+                clicked => { root.seek-to(self.mouse-x / self.width); }
+            }
+            HorizontalLayout {
+                padding: 40px;
+                padding-bottom: 30px;
+                spacing: 24px;
+                alignment: stretch;
+                if !root.on-demand: Text {
+                    text: root.c.num;
                     color: Theme.ink;
-                    font-size: 22px;
-                    font-weight: 600;
-                    overflow: elide;
+                    font-size: 56px;
+                    font-weight: 200;
+                    vertical-alignment: bottom;
                 }
-                if root.on-demand || root.c.now-title == "": Text {
-                    text: root.c.group;
+                VerticalLayout {
+                    alignment: end;
+                    spacing: 4px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: root.on-demand
+                            ? Texts.clock(root.position) + (root.duration > 0 ? " / " + Texts.clock(root.duration) : "")
+                            : "● " + @tr("On air");
+                        color: root.on-demand ? Theme.dim : Theme.live;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    Text {
+                        text: root.c.name;
+                        color: Theme.ink;
+                        font-size: 22px;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    if root.on-demand || root.c.now-title == "": Text {
+                        text: root.c.group;
+                        color: Theme.dim;
+                        font-size: 13px;
+                    }
+                    if !root.on-demand && root.c.now-title != "": NowNext {
+                        c: root.c;
+                        bar-width: 360px;
+                        title-size: 15px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    HorizontalLayout {
+                        spacing: 10px;
+                        rew-btn := IconBtn {
+                            visible: root.on-demand;
+                            width: root.on-demand ? 38px : 0px;
+                            icon: Icons.rewind;
+                            size: 38px;
+                            clicked => { root.seek(-10); }
+                        }
+                        pause-btn := IconBtn {
+                            visible: root.on-demand;
+                            width: root.on-demand ? 38px : 0px;
+                            icon: root.paused ? Icons.play : Icons.pause;
+                            size: 38px;
+                            clicked => { root.toggle-pause(); }
+                        }
+                        fwd-btn := IconBtn {
+                            visible: root.on-demand;
+                            width: root.on-demand ? 38px : 0px;
+                            icon: Icons.forward;
+                            size: 38px;
+                            clicked => { root.seek(10); }
+                        }
+                        mute-btn := IconBtn {
+                            icon: Video.muted ? Icons.muted : Icons.sound;
+                            size: 38px;
+                            clicked => { Video.toggle-mute(); }
+                        }
+                        pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
+                        audio-btn := Btn {
+                            label: @tr("Audio");
+                            clicked => {
+                                root.load-tracks();
+                                audio-popup.show();
+                            }
+                        }
+                        sub-btn := Btn {
+                            label: @tr("Subtitles");
+                            clicked => {
+                                root.load-tracks();
+                                sub-popup.show();
+                            }
+                        }
+                        aspect-btn := Btn {
+                            label: root.aspect == 1 ? "16:9" : (root.aspect == 2 ? "4:3" : (root.aspect == 3 ? @tr("Fill") : @tr("Auto")));
+                            clicked => { root.cycle-aspect(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // prossimo episodio, con il conto alla rovescia
+        if root.next-countdown >= 0: Rectangle {
+            x: parent.width - self.width - 40px;
+            y: parent.height - self.height - 200px;
+            width: 360px;
+            height: 150px;
+            Sq { r: 26px; fill: #14151cf0; stroke: #ffffff22; stroke-width: 1px; }
+            VerticalLayout {
+                padding: 20px;
+                spacing: 6px;
+                Text {
+                    text: @tr("Next episode");
                     color: Theme.dim;
                     font-size: 13px;
                 }
-                if !root.on-demand && root.c.now-title != "": NowNext {
-                    c: root.c;
-                    bar-width: 360px;
-                    title-size: 15px;
+                Text {
+                    text: root.next-label;
+                    color: Theme.ink;
+                    font-size: 17px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Text {
+                    text: @tr("Starts in {} s", root.next-countdown);
+                    color: Theme.needle;
+                    font-size: 13px;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Btn { label: @tr("Watch now"); primary: true; clicked => { root.play-next(); } }
+                    Btn { label: @tr("Cancel"); clicked => { root.cancel-next(); } }
+                }
+            }
+        }
+
+        audio-popup := PopupWindow {
+            x: root.width - 470px;
+            y: root.height - 110px - self.height;
+            width: 300px;
+            height: max(1, root.audio-tracks.length) * 44px + 56px;
+            Sq { r: 22px; fill: #14151cf4; stroke: #ffffff22; stroke-width: 1px; }
+            apk := FocusScope {
+                property <int> kc;
+                init => { self.focus(); }
+                // nei popup i tasti non arrivano alla finestra: si segnala qui che il fuoco c'è
+                capture-key-pressed(event) => {
+                    Nav.key-seen = true;
+                    reject
+                }
+                key-pressed(event) => {
+                    if (event.text == Key.UpArrow) { self.kc = max(0, self.kc - 1); return accept; }
+                    if (event.text == Key.DownArrow) { self.kc = min(root.audio-tracks.length - 1, self.kc + 1); return accept; }
+                    if (event.text == Key.Return || event.text == " ") {
+                        if (root.audio-tracks.length > 0) { root.select-audio(root.audio-tracks[self.kc].id); }
+                        audio-popup.close();
+                        return accept;
+                    }
+                    reject
                 }
             }
             VerticalLayout {
-                alignment: end;
+                padding: 10px;
+                spacing: 4px;
+                Text {
+                    text: @tr("Audio");
+                    color: Theme.dim;
+                    font-size: 13px;
+                    height: 28px;
+                    vertical-alignment: center;
+                }
+                if root.audio-tracks.length == 0: Text {
+                    text: @tr("Only one audio track");
+                    color: Theme.faint;
+                    font-size: 14px;
+                    height: 40px;
+                    vertical-alignment: center;
+                }
+                for t[i] in root.audio-tracks: TrackRow {
+                    t: t;
+                    active: Nav.tv && apk.has-focus && i == apk.kc;
+                    clicked => { root.select-audio(t.id); }
+                }
+            }
+        }
+        sub-popup := PopupWindow {
+            x: root.width - 370px;
+            y: root.height - 110px - self.height;
+            width: 300px;
+            height: (root.sub-tracks.length + 1) * 44px + 56px;
+            Sq { r: 22px; fill: #14151cf4; stroke: #ffffff22; stroke-width: 1px; }
+            // 0 è «No», poi le tracce
+            spk := FocusScope {
+                property <int> kc;
+                init => { self.focus(); }
+                capture-key-pressed(event) => {
+                    Nav.key-seen = true;
+                    reject
+                }
+                key-pressed(event) => {
+                    if (event.text == Key.UpArrow) { self.kc = max(0, self.kc - 1); return accept; }
+                    if (event.text == Key.DownArrow) { self.kc = min(root.sub-tracks.length, self.kc + 1); return accept; }
+                    if (event.text == Key.Return || event.text == " ") {
+                        root.select-sub(self.kc == 0 ? -1 : root.sub-tracks[self.kc - 1].id);
+                        sub-popup.close();
+                        return accept;
+                    }
+                    reject
+                }
+            }
+            VerticalLayout {
+                padding: 10px;
+                spacing: 4px;
+                Text {
+                    text: @tr("Subtitles");
+                    color: Theme.dim;
+                    font-size: 13px;
+                    height: 28px;
+                    vertical-alignment: center;
+                }
+                TrackRow {
+                    t: { id: -1, label: @tr("Off"), selected: !(root.sub-tracks.length > 0 && root.any-sub-selected) };
+                    active: Nav.tv && spk.has-focus && spk.kc == 0;
+                    clicked => { root.select-sub(-1); }
+                }
+                for t[i] in root.sub-tracks: TrackRow {
+                    t: t;
+                    active: Nav.tv && spk.has-focus && spk.kc == i + 1;
+                    clicked => { root.select-sub(t.id); }
+                }
+            }
+        }
+
+        // l'elenco canali che scorre da sinistra, con le categorie
+        Rectangle {
+            x: root.drawer ? 16px : -self.width - 30px;
+            y: 16px;
+            width: 760px;
+            height: parent.height - 32px;
+            animate x { duration: 240ms; easing: ease-out; }
+            Sq {
+                r: 36px;
+                fill: #14151cf4;
+                stroke: #ffffff22;
+                stroke-width: 1px;
+            }
+            TouchArea { }
+            VerticalLayout {
+                padding-top: 26px;
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 12px;
+                Title { text: @tr("Channels"); }
                 HorizontalLayout {
-                    spacing: 10px;
-                    rew-btn := IconBtn {
-                        visible: root.on-demand;
-                        width: root.on-demand ? 38px : 0px;
-                        icon: Icons.rewind;
-                        size: 38px;
-                        clicked => { root.seek(-10); }
-                    }
-                    pause-btn := IconBtn {
-                        visible: root.on-demand;
-                        width: root.on-demand ? 38px : 0px;
-                        icon: root.paused ? Icons.play : Icons.pause;
-                        size: 38px;
-                        clicked => { root.toggle-pause(); }
-                    }
-                    fwd-btn := IconBtn {
-                        visible: root.on-demand;
-                        width: root.on-demand ? 38px : 0px;
-                        icon: Icons.forward;
-                        size: 38px;
-                        clicked => { root.seek(10); }
-                    }
-                    mute-btn := IconBtn {
-                        icon: Video.muted ? Icons.muted : Icons.sound;
-                        size: 38px;
-                        clicked => { Video.toggle-mute(); }
-                    }
-                    pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
-                    audio-btn := Btn {
-                        label: @tr("Audio");
-                        clicked => {
-                            root.load-tracks();
-                            audio-popup.show();
+                    spacing: 14px;
+                    vertical-stretch: 1;
+                    dcats := CategoryList {
+                        width: 220px;
+                        model: root.categories;
+                        current: root.category;
+                        searching: root.search != "";
+                        picked(i) => {
+                            root.pick-category(i);
+                            fs.focus();
                         }
                     }
-                    sub-btn := Btn {
-                        label: @tr("Subtitles");
-                        clicked => {
-                            root.load-tracks();
-                            sub-popup.show();
+                    dl := ChannelList {
+                        horizontal-stretch: 1;
+                        model: root.channels;
+                        cursor <=> root.cursor;
+                        playing-id: root.c.id;
+                        focused: !Nav.tv || fs.has-focus;
+                        clicked(i) => {
+                            root.cursor = i;
+                            root.play(i);
+                            fs.focus();
                         }
-                    }
-                    aspect-btn := Btn {
-                        label: root.aspect == 1 ? "16:9" : (root.aspect == 2 ? "4:3" : (root.aspect == 3 ? @tr("Fill") : @tr("Auto")));
-                        clicked => { root.cycle-aspect(); }
+                        activated(i) => { root.play(i); }
                     }
                 }
-            }
-        }
-    }
-
-    // prossimo episodio, con il conto alla rovescia
-    if root.next-countdown >= 0: Rectangle {
-        x: parent.width - self.width - 40px;
-        y: parent.height - self.height - 200px;
-        width: 360px;
-        height: 150px;
-        Sq { r: 26px; fill: #14151cf0; stroke: #ffffff22; stroke-width: 1px; }
-        VerticalLayout {
-            padding: 20px;
-            spacing: 6px;
-            Text {
-                text: @tr("Next episode");
-                color: Theme.dim;
-                font-size: 13px;
-            }
-            Text {
-                text: root.next-label;
-                color: Theme.ink;
-                font-size: 17px;
-                font-weight: 600;
-                overflow: elide;
-            }
-            Text {
-                text: @tr("Starts in {} s", root.next-countdown);
-                color: Theme.needle;
-                font-size: 13px;
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                alignment: start;
-                Btn { label: @tr("Watch now"); primary: true; clicked => { root.play-next(); } }
-                Btn { label: @tr("Cancel"); clicked => { root.cancel-next(); } }
-            }
-        }
-    }
-
-    audio-popup := PopupWindow {
-        x: root.width - 470px;
-        y: root.height - 110px - self.height;
-        width: 300px;
-        height: max(1, root.audio-tracks.length) * 44px + 56px;
-        Sq { r: 22px; fill: #14151cf4; stroke: #ffffff22; stroke-width: 1px; }
-        VerticalLayout {
-            padding: 10px;
-            spacing: 4px;
-            Text {
-                text: @tr("Audio");
-                color: Theme.dim;
-                font-size: 13px;
-                height: 28px;
-                vertical-alignment: center;
-            }
-            if root.audio-tracks.length == 0: Text {
-                text: @tr("Only one audio track");
-                color: Theme.faint;
-                font-size: 14px;
-                height: 40px;
-                vertical-alignment: center;
-            }
-            for t in root.audio-tracks: TrackRow {
-                t: t;
-                clicked => { root.select-audio(t.id); }
-            }
-        }
-    }
-    sub-popup := PopupWindow {
-        x: root.width - 370px;
-        y: root.height - 110px - self.height;
-        width: 300px;
-        height: (root.sub-tracks.length + 1) * 44px + 56px;
-        Sq { r: 22px; fill: #14151cf4; stroke: #ffffff22; stroke-width: 1px; }
-        VerticalLayout {
-            padding: 10px;
-            spacing: 4px;
-            Text {
-                text: @tr("Subtitles");
-                color: Theme.dim;
-                font-size: 13px;
-                height: 28px;
-                vertical-alignment: center;
-            }
-            TrackRow {
-                t: { id: -1, label: @tr("Off"), selected: !(root.sub-tracks.length > 0 && root.any-sub-selected) };
-                clicked => { root.select-sub(-1); }
-            }
-            for t in root.sub-tracks: TrackRow {
-                t: t;
-                clicked => { root.select-sub(t.id); }
-            }
-        }
-    }
-
-    // l'elenco canali che scorre da sinistra, con le categorie
-    Rectangle {
-        x: root.drawer ? 16px : -self.width - 30px;
-        y: 16px;
-        width: 760px;
-        height: parent.height - 32px;
-        animate x { duration: 240ms; easing: ease-out; }
-        Sq {
-            r: 36px;
-            fill: #14151cf4;
-            stroke: #ffffff22;
-            stroke-width: 1px;
-        }
-        TouchArea { }
-        VerticalLayout {
-            padding-top: 26px;
-            padding-left: 14px;
-            padding-right: 14px;
-            spacing: 12px;
-            Title { text: @tr("Channels"); }
-            HorizontalLayout {
-                spacing: 14px;
-                vertical-stretch: 1;
-                CategoryList {
-                    width: 220px;
-                    model: root.categories;
-                    current: root.category;
-                    searching: root.search != "";
-                    picked(i) => {
-                        root.pick-category(i);
-                        fs.focus();
-                    }
+                Text {
+                    text: @tr("↑ ↓ browse   ·   Enter watch   ·   Esc close");
+                    color: Theme.faint;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    height: 44px;
                 }
-                dl := ChannelList {
-                    horizontal-stretch: 1;
-                    model: root.channels;
-                    cursor <=> root.cursor;
-                    playing-id: root.c.id;
-                    clicked(i) => {
-                        root.cursor = i;
-                        root.play(i);
-                        fs.focus();
-                    }
-                    activated(i) => { root.play(i); }
-                }
-            }
-            Text {
-                text: @tr("↑ ↓ browse   ·   Enter watch   ·   Esc close");
-                color: Theme.faint;
-                font-size: 12px;
-                horizontal-alignment: center;
-                height: 44px;
             }
         }
     }
@@ -2348,6 +2726,11 @@ export component MainWindow inherits Window {
     in property <int> next-countdown: -1;
     in property <string> next-label;
     property <int> live-focus-tick;
+    property <int> home-focus-tick;
+    property <int> settings-focus-tick;
+    property <int> player-focus-tick;
+    property <int> dock-focus-tick;
+    property <int> pin-focus-tick;
 
     // c'è un riquadro video sullo schermo (Home, Live o player)
     out property <bool> video-visible: root.playing || (root.page <= 1 && !root.no-source);
@@ -2404,6 +2787,11 @@ export component MainWindow inherits Window {
     in property <int> reveal-tick;
     callback page-changed(int);
 
+    // tasto Home del telecomando
+    public function go-home() {
+        root.playing = false;
+        root.page = 0;
+    }
     // apre il player sul canale in onda
     public function watch-current() {
         if (root.has-current) {
@@ -2415,245 +2803,304 @@ export component MainWindow inherits Window {
         root.settings-section = 0;
         root.page = 4;
     }
-
-    // il bagliore di sfondo prende il colore della sezione
-    if !root.playing: Rectangle {
-        x: root.width - 760px;
-        y: -380px;
-        width: 1100px;
-        height: 800px;
-        background: @radial-gradient(circle, Theme.base.with-alpha(0.5) 0%, transparent 46%);
+    // il fuoco va all'elemento principale della pagina aperta
+    function enter-page() {
+        root.home-focus-tick += 1;
+        root.live-focus-tick += 1;
+        root.guide-focus-tick += 1;
+        root.media-focus-tick += 1;
+        root.settings-focus-tick += 1;
     }
-    if !root.playing: Rectangle {
-        x: -300px;
-        y: root.height - 380px;
-        width: 900px;
-        height: 700px;
-        background: @radial-gradient(circle, Theme.base.with-alpha(0.28) 0%, transparent 46%);
+    // Rust: con il telecomando un tasto non è arrivato a nessun elemento (il fuoco si era perso,
+    // per esempio sul pulsante di una riga appena tolta). Il fuoco torna in un posto sicuro:
+    // il PIN, il video o il menu in basso.
+    public function recover-focus() {
+        if (root.pin-prompt) {
+            root.pin-focus-tick += 1;
+        } else if (root.playing) {
+            root.player-focus-tick += 1;
+        } else {
+            root.dock-focus-tick += 1;
+        }
     }
 
-    if !root.playing: VerticalLayout {
-        TopBar {
-            page <=> root.page;
-            clock: root.clock;
-            search <=> root.search;
-            fullscreen: root.fullscreen;
-            update-version: root.update-version;
-            open-update => { root.open-update(); }
-            dismiss-update => { root.dismiss-update(); }
+    // Telecomando: le frecce che nessun elemento usa spostano il fuoco al seguente (→ ↓) o al
+    // precedente (← ↑). Raccoglie solo i tasti: non prende mai il fuoco.
+    nav := FocusScope {
+        focus-on-tab-navigation: false;
+        focus-on-click: false;
+        capture-key-pressed(event) => {
+            Nav.key-seen = true;
+            reject
+        }
+        key-pressed(event) => {
+            if (!Nav.tv) { return reject; }
+            if (event.text == Key.LeftArrow || event.text == Key.UpArrow) {
+                Nav.step(false);
+                return accept;
+            }
+            if (event.text == Key.RightArrow || event.text == Key.DownArrow) {
+                Nav.step(true);
+                return accept;
+            }
+            reject
+        }
+
+        // il bagliore di sfondo prende il colore della sezione
+        if !root.playing: Rectangle {
+            x: root.width - 760px;
+            y: -380px;
+            width: 1100px;
+            height: 800px;
+            background: @radial-gradient(circle, Theme.base.with-alpha(0.5) 0%, transparent 46%);
+        }
+        if !root.playing: Rectangle {
+            x: -300px;
+            y: root.height - 380px;
+            width: 900px;
+            height: 700px;
+            background: @radial-gradient(circle, Theme.base.with-alpha(0.28) 0%, transparent 46%);
+        }
+
+        // Indietro (con il telecomando): da una pagina al menu in basso, dal menu alla Home
+        if !root.playing: FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (!Nav.tv || event.text != Key.Escape) { return reject; }
+                if (!dock.focused) {
+                    dock.focus();
+                } else if (root.page != 0) {
+                    root.page = 0;
+                }
+                accept
+            }
+            VerticalLayout {
+                TopBar {
+                    page <=> root.page;
+                    clock: root.clock;
+                    search <=> root.search;
+                    fullscreen: root.fullscreen;
+                    update-version: root.update-version;
+                    open-update => { root.open-update(); }
+                    dismiss-update => { root.dismiss-update(); }
+                    toggle-fullscreen => { root.toggle-fullscreen(); }
+                    search-edited(text) => {
+                        root.search-edited(text);
+                        // la ricerca vale per la pagina in cui si è (Guida, Film e serie), altrimenti Live
+                        if (text != "" && root.page != 2 && root.page != 3) { root.page = 1; }
+                    }
+                    search-done => { root.enter-page(); }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    clip: true;
+                    if root.page == 0: HomeScreen {
+                        hero: root.current;
+                        has-hero: root.has-current;
+                        no-source: root.no-source;
+                        categories: root.top-categories;
+                        top-offset: root.top-offset;
+                        resume: root.resume;
+                        favorites: root.home-favorites;
+                        focus-tick: root.home-focus-tick;
+                        play => { root.watch-current(); }
+                        pip => { root.request-pip(-1); }
+                        open-category(i) => {
+                            root.pick-category(i);
+                            root.page = 1;
+                        }
+                        open-resume(i) => { root.open-resume(i); }
+                        open-favorite(i) => { root.open-favorite(i); }
+                        add-source => { root.open-settings-sources(); }
+                    }
+                    if root.page == 1: LiveScreen {
+                        focus-tick: root.live-focus-tick;
+                        reveal-tick: root.reveal-tick;
+                        channels: root.channels;
+                        categories: root.categories;
+                        category: root.category;
+                        search: root.search;
+                        cursor <=> root.cursor;
+                        playing-id: root.has-current ? root.current.id : -1;
+                        no-source: root.no-source;
+                        play(i) => {
+                            root.close-pip();
+                            root.play-index(i);
+                            root.playing = true;
+                        }
+                        pip(i) => { root.request-pip(i); }
+                        pick-category(i) => { root.pick-category(i); }
+                        cursor-moved(i) => { root.cursor-moved(i); }
+                        toggle-fav(i) => { root.toggle-fav-channel(i); }
+                        toggle-custom(i) => { root.toggle-custom-channel(i); }
+                        add-source => { root.open-settings-sources(); }
+                    }
+                    if root.page == 2: GuideScreen {
+                        rows: root.guide-rows;
+                        categories: root.categories;
+                        category: root.category;
+                        search: root.search;
+                        days: root.guide-days;
+                        day: root.guide-day;
+                        now-min: root.guide-now-min;
+                        state: root.guide-state;
+                        error: root.guide-error;
+                        no-source: root.no-source;
+                        cursor <=> root.guide-cursor;
+                        focus-tick: root.guide-focus-tick;
+                        scroll-tick: root.guide-scroll-tick;
+                        pick-day(i) => { root.guide-pick-day(i); }
+                        pick-category(i) => { root.pick-category(i); }
+                        watch(i) => {
+                            root.close-pip();
+                            root.guide-watch(i);
+                            root.playing = true;
+                        }
+                        refresh => { root.guide-refresh(); }
+                        add-source => { root.open-settings-sources(); }
+                    }
+                    if root.page == 3: MediaScreen {
+                        available: root.media-available;
+                        mode: root.media-mode;
+                        items: root.media-items;
+                        categories: root.media-categories;
+                        category: root.media-category;
+                        search: root.search;
+                        cursor <=> root.media-cursor;
+                        detail: root.media-detail;
+                        info: root.media-info;
+                        seasons: root.media-seasons;
+                        season <=> root.media-season;
+                        episodes: root.media-episodes;
+                        episode-cursor <=> root.media-episode-cursor;
+                        focus-tick: root.media-focus-tick;
+                        reveal-tick: root.reveal-tick;
+                        pick-mode(m) => { root.media-pick-mode(m); }
+                        pick-category(i) => { root.media-pick-category(i); }
+                        open(i) => { root.media-open(i); }
+                        back => { root.media-back(); }
+                        play(from-start) => {
+                            root.close-pip();
+                            root.media-play(from-start);
+                            root.playing = true;
+                        }
+                        resume-series => {
+                            root.close-pip();
+                            root.media-resume-series();
+                            root.playing = true;
+                        }
+                        play-episode(i) => {
+                            root.close-pip();
+                            root.media-play-episode(i);
+                            root.playing = true;
+                        }
+                        toggle-fav => { root.media-toggle-fav(); }
+                        pick-season(i) => { root.media-pick-season(i); }
+                        add-source => { root.open-settings-sources(); }
+                    }
+                    if root.page == 4: SettingsScreen {
+                        section <=> root.settings-section;
+                        focus-tick: root.settings-focus-tick;
+                        sources: root.sources;
+                        working: root.working;
+                        status: root.source-status;
+                        language: root.language;
+                        reconnect <=> root.reconnect;
+                        fullscreen-start <=> root.fullscreen-start;
+                        live-preview <=> root.live-preview;
+                        update-check <=> root.update-check;
+                        user-agent <=> root.user-agent;
+                        playlist-interval: root.playlist-interval;
+                        epg-interval: root.epg-interval;
+                        pin-set: root.pin-set;
+                        pin-unlocked: root.pin-unlocked;
+                        pin-message: root.pin-message;
+                        lock-live: root.lock-live;
+                        lock-movies: root.lock-movies;
+                        lock-series: root.lock-series;
+                        custom-name <=> root.custom-name;
+                        set-interval(k, i) => { root.set-interval(k, i); }
+                        pin-create(a, b) => { root.pin-create(a, b); }
+                        pin-remove => { root.pin-remove(); }
+                        pin-lock-now => { root.pin-lock-now(); }
+                        pin-unlock => { root.pin-unlock(); }
+                        toggle-lock(k, i, v) => { root.toggle-lock(k, i, v); }
+                        picked-file <=> root.picked-file;
+                        form-reset: root.form-reset;
+                        verify(k, n, l, u, p, a, g) => { root.verify-source(k, n, l, u, p, a, g); }
+                        save(k, n, l, u, p, a, g) => { root.save-source(k, n, l, u, p, a, g); }
+                        pick-file => { root.pick-file(); }
+                        activate-source(id) => { root.activate-source(id); }
+                        refresh-source(id) => { root.refresh-source(id); }
+                        delete-source(id) => { root.delete-source(id); }
+                        set-source-epg(id, url) => { root.set-source-epg(id, url); }
+                        set-language(i) => { root.set-language(i); }
+                        setting-changed(k, v) => { root.setting-changed(k, v); }
+                    }
+                }
+                dock := Dock {
+                    current <=> root.page;
+                    labels: [@tr("Home"), @tr("Live"), @tr("Guide"), @tr("Movies & series")];
+                    focus-tick: root.dock-focus-tick;
+                    enter => { root.enter-page(); }
+                }
+            }
+        }
+
+        if root.playing: PlayerScreen {
+            channels: root.channels;
+            categories: root.categories;
+            category: root.category;
+            search: root.search;
+            c: root.current;
+            cursor <=> root.cursor;
+            audio-tracks: root.audio-tracks;
+            sub-tracks: root.sub-tracks;
+            any-sub-selected: root.any-sub-selected;
+            aspect: root.aspect;
+            on-demand: root.on-demand;
+            position: root.position;
+            duration: root.duration;
+            paused: root.paused;
+            next-countdown: root.next-countdown;
+            next-label: root.next-label;
+            focus-tick: root.player-focus-tick;
+            // la pagina sotto il player non cambia mentre si guarda: chiudendolo si torna lì
+            back => {
+                root.playing = false;
+            }
+            home => {
+                root.playing = false;
+                root.page = 0;
+            }
+            pip => {
+                root.request-pip(-1);
+                root.playing = false;
+            }
+            toggle-pause => { root.toggle-pause(); }
+            seek(s) => { root.seek(s); }
+            seek-to(f) => { root.seek-to(f); }
+            play-next => { root.play-next(); }
+            cancel-next => { root.cancel-next(); }
             toggle-fullscreen => { root.toggle-fullscreen(); }
-            search-edited(text) => {
-                root.search-edited(text);
-                // la ricerca vale per la pagina in cui si è (Guida, Film e serie), altrimenti Live
-                if (text != "" && root.page != 2 && root.page != 3) { root.page = 1; }
-            }
-            search-done => {
-                root.live-focus-tick += 1;
-                root.media-focus-tick += 1;
-                root.guide-focus-tick += 1;
-            }
+            fullscreen: root.fullscreen;
+            zap(d) => { root.zap(d); }
+            play(i) => { root.play-index(i); }
+            pick-category(i) => { root.pick-category(i); }
+            load-tracks => { root.load-tracks(); }
+            select-audio(id) => { root.select-audio(id); }
+            select-sub(id) => { root.select-sub(id); }
+            cycle-aspect => { root.cycle-aspect(); }
+            cursor-hidden(h) => { root.cursor-hidden(h); }
         }
-        Rectangle {
-            vertical-stretch: 1;
-            clip: true;
-            if root.page == 0: HomeScreen {
-                hero: root.current;
-                has-hero: root.has-current;
-                no-source: root.no-source;
-                categories: root.top-categories;
-                top-offset: root.top-offset;
-                resume: root.resume;
-                favorites: root.home-favorites;
-                play => { root.watch-current(); }
-                pip => { root.request-pip(-1); }
-                open-category(i) => {
-                    root.pick-category(i);
-                    root.page = 1;
-                }
-                open-resume(i) => { root.open-resume(i); }
-                open-favorite(i) => { root.open-favorite(i); }
-                add-source => { root.open-settings-sources(); }
-            }
-            if root.page == 1: LiveScreen {
-                focus-tick: root.live-focus-tick;
-                reveal-tick: root.reveal-tick;
-                channels: root.channels;
-                categories: root.categories;
-                category: root.category;
-                search: root.search;
-                cursor <=> root.cursor;
-                playing-id: root.has-current ? root.current.id : -1;
-                no-source: root.no-source;
-                play(i) => {
-                    root.close-pip();
-                    root.play-index(i);
-                    root.playing = true;
-                }
-                pip(i) => { root.request-pip(i); }
-                pick-category(i) => { root.pick-category(i); }
-                cursor-moved(i) => { root.cursor-moved(i); }
-                toggle-fav(i) => { root.toggle-fav-channel(i); }
-                toggle-custom(i) => { root.toggle-custom-channel(i); }
-                add-source => { root.open-settings-sources(); }
-            }
-            if root.page == 2: GuideScreen {
-                rows: root.guide-rows;
-                categories: root.categories;
-                category: root.category;
-                search: root.search;
-                days: root.guide-days;
-                day: root.guide-day;
-                now-min: root.guide-now-min;
-                state: root.guide-state;
-                error: root.guide-error;
-                no-source: root.no-source;
-                cursor <=> root.guide-cursor;
-                focus-tick: root.guide-focus-tick;
-                scroll-tick: root.guide-scroll-tick;
-                pick-day(i) => { root.guide-pick-day(i); }
-                pick-category(i) => { root.pick-category(i); }
-                watch(i) => {
-                    root.close-pip();
-                    root.guide-watch(i);
-                    root.playing = true;
-                }
-                refresh => { root.guide-refresh(); }
-                add-source => { root.open-settings-sources(); }
-            }
-            if root.page == 3: MediaScreen {
-                available: root.media-available;
-                mode: root.media-mode;
-                items: root.media-items;
-                categories: root.media-categories;
-                category: root.media-category;
-                search: root.search;
-                cursor <=> root.media-cursor;
-                detail: root.media-detail;
-                info: root.media-info;
-                seasons: root.media-seasons;
-                season <=> root.media-season;
-                episodes: root.media-episodes;
-                episode-cursor <=> root.media-episode-cursor;
-                focus-tick: root.media-focus-tick;
-                reveal-tick: root.reveal-tick;
-                pick-mode(m) => { root.media-pick-mode(m); }
-                pick-category(i) => { root.media-pick-category(i); }
-                open(i) => { root.media-open(i); }
-                back => { root.media-back(); }
-                play(from-start) => {
-                    root.close-pip();
-                    root.media-play(from-start);
-                    root.playing = true;
-                }
-                resume-series => {
-                    root.close-pip();
-                    root.media-resume-series();
-                    root.playing = true;
-                }
-                play-episode(i) => {
-                    root.close-pip();
-                    root.media-play-episode(i);
-                    root.playing = true;
-                }
-                toggle-fav => { root.media-toggle-fav(); }
-                pick-season(i) => { root.media-pick-season(i); }
-                add-source => { root.open-settings-sources(); }
-            }
-            if root.page == 4: SettingsScreen {
-                section <=> root.settings-section;
-                sources: root.sources;
-                working: root.working;
-                status: root.source-status;
-                language: root.language;
-                reconnect <=> root.reconnect;
-                fullscreen-start <=> root.fullscreen-start;
-                live-preview <=> root.live-preview;
-                update-check <=> root.update-check;
-                user-agent <=> root.user-agent;
-                playlist-interval: root.playlist-interval;
-                epg-interval: root.epg-interval;
-                pin-set: root.pin-set;
-                pin-unlocked: root.pin-unlocked;
-                pin-message: root.pin-message;
-                lock-live: root.lock-live;
-                lock-movies: root.lock-movies;
-                lock-series: root.lock-series;
-                custom-name <=> root.custom-name;
-                set-interval(k, i) => { root.set-interval(k, i); }
-                pin-create(a, b) => { root.pin-create(a, b); }
-                pin-remove => { root.pin-remove(); }
-                pin-lock-now => { root.pin-lock-now(); }
-                pin-unlock => { root.pin-unlock(); }
-                toggle-lock(k, i, v) => { root.toggle-lock(k, i, v); }
-                picked-file <=> root.picked-file;
-                form-reset: root.form-reset;
-                verify(k, n, l, u, p, a, g) => { root.verify-source(k, n, l, u, p, a, g); }
-                save(k, n, l, u, p, a, g) => { root.save-source(k, n, l, u, p, a, g); }
-                pick-file => { root.pick-file(); }
-                activate-source(id) => { root.activate-source(id); }
-                refresh-source(id) => { root.refresh-source(id); }
-                delete-source(id) => { root.delete-source(id); }
-                set-source-epg(id, url) => { root.set-source-epg(id, url); }
-                set-language(i) => { root.set-language(i); }
-                setting-changed(k, v) => { root.setting-changed(k, v); }
-            }
-        }
-        Dock {
-            current <=> root.page;
-            labels: [@tr("Home"), @tr("Live"), @tr("Guide"), @tr("Movies & series")];
-        }
-    }
 
-    if root.playing: PlayerScreen {
-        channels: root.channels;
-        categories: root.categories;
-        category: root.category;
-        search: root.search;
-        c: root.current;
-        cursor <=> root.cursor;
-        audio-tracks: root.audio-tracks;
-        sub-tracks: root.sub-tracks;
-        any-sub-selected: root.any-sub-selected;
-        aspect: root.aspect;
-        on-demand: root.on-demand;
-        position: root.position;
-        duration: root.duration;
-        paused: root.paused;
-        next-countdown: root.next-countdown;
-        next-label: root.next-label;
-        // la pagina sotto il player non cambia mentre si guarda: chiudendolo si torna lì
-        back => {
-            root.playing = false;
+        if root.pin-prompt: PinDialog {
+            error: root.pin-error;
+            reason: root.pin-reason;
+            focus-tick: root.pin-focus-tick;
+            submit(p) => { root.pin-submit(p); }
+            cancel => { root.pin-cancel(); }
         }
-        home => {
-            root.playing = false;
-            root.page = 0;
-        }
-        pip => {
-            root.request-pip(-1);
-            root.playing = false;
-        }
-        toggle-pause => { root.toggle-pause(); }
-        seek(s) => { root.seek(s); }
-        seek-to(f) => { root.seek-to(f); }
-        play-next => { root.play-next(); }
-        cancel-next => { root.cancel-next(); }
-        toggle-fullscreen => { root.toggle-fullscreen(); }
-        fullscreen: root.fullscreen;
-        zap(d) => { root.zap(d); }
-        play(i) => { root.play-index(i); }
-        pick-category(i) => { root.pick-category(i); }
-        load-tracks => { root.load-tracks(); }
-        select-audio(id) => { root.select-audio(id); }
-        select-sub(id) => { root.select-sub(id); }
-        cycle-aspect => { root.cycle-aspect(); }
-        cursor-hidden(h) => { root.cursor-hidden(h); }
-    }
-
-    if root.pin-prompt: PinDialog {
-        error: root.pin-error;
-        reason: root.pin-reason;
-        submit(p) => { root.pin-submit(p); }
-        cancel => { root.pin-cancel(); }
     }
 }

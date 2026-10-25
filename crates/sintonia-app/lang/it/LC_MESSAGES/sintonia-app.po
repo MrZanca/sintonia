@@ -536,3 +536,30 @@ msgstr "Mettici i canali che vuoi con il pulsante con il lucchetto sotto il cana
 
 msgid "Put the channels you want in it with the lock button under the channel, in Live. Set a PIN to lock it."
 msgstr "Mettici i canali che vuoi con il pulsante con il lucchetto sotto il canale, in Live. Imposta un PIN per bloccarla."
+
+msgid "Navigation"
+msgstr "Navigazione"
+
+msgid "How you move around Sintonia"
+msgstr "Come ti muovi in Sintonia"
+
+msgid "Mouse and keyboard"
+msgstr "Mouse e tastiera"
+
+msgid "Remote control"
+msgstr "Telecomando"
+
+msgid "Click with the mouse. The keyboard works as before."
+msgstr "Si clicca con il mouse. La tastiera funziona come sempre."
+
+msgid "Arrows to move, OK to open, Back to go back. Bigger buttons."
+msgstr "Frecce per spostarti, OK per aprire, Indietro per tornare. Pulsanti più grandi."
+
+msgid "With the remote control: the arrows move the white ring from one button or list to the next, OK opens what has the ring, Back goes back (from a page it goes to the menu at the bottom, from the menu to the Home)."
+msgstr "Con il telecomando: le frecce spostano l'anello bianco da un pulsante o da un elenco all'altro, OK apre quello che ha l'anello, Indietro torna indietro (da una pagina va al menu in basso, dal menu alla Home)."
+
+msgid "In the player: ↑ ↓ change channel, OK opens the channel list, ← → reach the buttons. Movies and episodes: ← → skip 10 seconds, OK pauses, ↓ shows the buttons."
+msgstr "Nel player: ↑ ↓ cambiano canale, OK apre l'elenco dei canali, ← → portano ai pulsanti. Film ed episodi: ← → saltano di 10 secondi, OK mette in pausa, ↓ mostra i pulsanti."
+
+msgid "To type (an address, a search) you need the keyboard: the one on the back of the remote, if it has one, or the Windows on-screen keyboard."
+msgstr "Per scrivere (un indirizzo, una ricerca) serve la tastiera: quella sul retro del telecomando, se ce l'ha, o la tastiera su schermo di Windows."

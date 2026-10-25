@@ -2,7 +2,7 @@
 // Le immagini delle locandine arrivano da Rust già ritagliate a super-ellisse (angoli trasparenti),
 // perché Slint non ritaglia un'immagine con un percorso.
 
-import { PosterItem, CategoryItem, EpisodeItem, DetailInfo, Theme, Texts, Sq, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, EmptyState, CategoryList } from "common.slint";
+import { PosterItem, CategoryItem, EpisodeItem, DetailInfo, Theme, Texts, Nav, Sq, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, EmptyState, CategoryList } from "common.slint";
 
 // Barra di avanzamento sottile
 component Bar inherits Rectangle {
@@ -99,6 +99,8 @@ component PosterCard inherits Rectangle {
 export component PosterGrid inherits Rectangle {
     in property <[PosterItem]> model;
     in-out property <int> cursor;
+    // l'anello sulla locandina del cursore solo se la griglia ha il fuoco
+    in property <bool> focused: true;
     callback open(int);
     property <length> pw: 150px;
     property <length> ph: 225px;
@@ -139,7 +141,7 @@ export component PosterGrid inherits Rectangle {
             height: root.cell-h;
             poster-h: root.ph;
             p: root.model[self.index];
-            active: self.index == root.cursor;
+            active: self.index == root.cursor && root.focused;
             clicked => {
                 root.cursor = self.index;
                 root.open(self.index);
@@ -236,6 +238,7 @@ component EpisodeRow inherits Rectangle {
 component EpisodeList inherits Rectangle {
     in property <[EpisodeItem]> model;
     in-out property <int> cursor;
+    in property <bool> focused: true;
     callback play(int);
     property <length> row-h: 64px;
     clip: true;
@@ -257,7 +260,7 @@ component EpisodeList inherits Rectangle {
             y: i * root.row-h;
             width: fl.width;
             e: e;
-            active: i == root.cursor;
+            active: i == root.cursor && root.focused;
             clicked => {
                 root.cursor = i;
                 root.play(i);
@@ -287,116 +290,124 @@ export component DetailScreen inherits Rectangle {
         root.cursor = max(0, min(root.episodes.length - 1, root.cursor + delta));
         ep-list.ensure-visible();
     }
-    init => { fs.focus(); }
+    // serie: gli episodi; film: il pulsante per guardarlo
+    init => {
+        if (root.series) { fs.focus(); } else { play-btn.focus(); }
+    }
     changed reveal-tick => { ep-list.center(); }
 
-    fs := FocusScope {
+    // Indietro (Esc) da qualunque punto della scheda
+    dk := FocusScope {
+        focus-on-tab-navigation: false;
+        focus-on-click: false;
         key-pressed(event) => {
             if (event.text == Key.Escape || event.text == Key.Backspace) { root.back(); return accept; }
-            if (root.series && event.text == Key.UpArrow) { root.move(-1); return accept; }
-            if (root.series && event.text == Key.DownArrow) { root.move(1); return accept; }
-            if (event.text == Key.Return) {
-                if (root.series) { root.play-episode(root.cursor); } else { root.play(false); }
-                return accept;
-            }
             reject
         }
-    }
-
-    HorizontalLayout {
-        padding-left: 44px;
-        padding-right: 44px;
-        padding-top: 8px;
-        padding-bottom: 12px;
-        spacing: 36px;
-        VerticalLayout {
-            alignment: start;
-            spacing: 16px;
-            HorizontalLayout {
+        HorizontalLayout {
+            padding-left: 44px;
+            padding-right: 44px;
+            padding-top: 8px;
+            padding-bottom: 12px;
+            spacing: 36px;
+            VerticalLayout {
                 alignment: start;
-                IconBtn { icon: Icons.back; size: 40px; clicked => { root.back(); } }
+                spacing: 16px;
+                HorizontalLayout {
+                    alignment: start;
+                    IconBtn { icon: Icons.back; size: 40px; clicked => { root.back(); } }
+                }
+                Cover { d: root.d; }
             }
-            Cover { d: root.d; }
-        }
-        VerticalLayout {
-            horizontal-stretch: 1;
-            alignment: start;
-            spacing: 10px;
-            Rectangle { height: 52px; }
-            Text {
-                text: root.d.title;
-                color: Theme.ink;
-                font-size: 34px;
-                font-weight: 700;
-                wrap: word-wrap;
-            }
-            Text {
-                text: root.d.meta;
-                color: Theme.dim;
-                font-size: 14px;
-            }
-            if root.d.loading: Text {
-                text: @tr("Loading…");
-                color: Theme.faint;
-                font-size: 14px;
-            }
-            if root.d.plot != "": Text {
-                text: root.d.plot;
-                color: Theme.ink;
-                font-size: 15px;
-                wrap: word-wrap;
-                max-height: 120px;
-                overflow: elide;
-            }
-            if root.d.credits != "": Text {
-                text: root.d.credits;
-                color: Theme.faint;
-                font-size: 13px;
-                wrap: word-wrap;
-            }
-            Rectangle { height: 6px; }
-            HorizontalLayout {
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: start;
                 spacing: 10px;
-                alignment: start;
-                if !root.series && root.d.resume-secs > 0: Btn {
-                    label: @tr("Resume from {}", Texts.clock(root.d.resume-secs));
-                    primary: true;
-                    clicked => { root.play(false); }
+                Rectangle { height: 52px; }
+                Text {
+                    text: root.d.title;
+                    color: Theme.ink;
+                    font-size: 34px;
+                    font-weight: 700;
+                    wrap: word-wrap;
                 }
-                if !root.series && root.d.resume-secs > 0: Btn {
-                    label: @tr("From the start");
-                    clicked => { root.play(true); }
+                Text {
+                    text: root.d.meta;
+                    color: Theme.dim;
+                    font-size: 14px;
                 }
-                if !root.series && root.d.resume-secs == 0: Btn {
-                    label: @tr("Watch");
-                    primary: true;
-                    clicked => { root.play(false); }
+                if root.d.loading: Text {
+                    text: @tr("Loading…");
+                    color: Theme.faint;
+                    font-size: 14px;
                 }
-                if root.series && root.d.resume-label != "": Btn {
-                    label: @tr("Resume {}", root.d.resume-label);
-                    primary: true;
-                    clicked => { root.resume-series(); }
+                if root.d.plot != "": Text {
+                    text: root.d.plot;
+                    color: Theme.ink;
+                    font-size: 15px;
+                    wrap: word-wrap;
+                    max-height: 120px;
+                    overflow: elide;
                 }
-                Btn {
-                    label: root.d.fav ? "★ " + @tr("In favorites") : "☆ " + @tr("Add to favorites");
-                    clicked => { root.toggle-fav(); }
+                if root.d.credits != "": Text {
+                    text: root.d.credits;
+                    color: Theme.faint;
+                    font-size: 13px;
+                    wrap: word-wrap;
                 }
-            }
-            if root.series: Rectangle { height: 8px; }
-            if root.series && root.seasons.length > 1: Tabs {
-                options: root.seasons;
-                current: root.season;
-                clicked(i) => { root.pick-season(i); }
-            }
-            ep-list := EpisodeList {
-                visible: root.series;
-                vertical-stretch: 1;
-                // tutta l'altezza che serve (lo spazio libero lo limita: poi si scorre)
-                min-height: root.series ? 200px : 0px;
-                preferred-height: root.series ? root.episodes.length * 64px : 0px;
-                model: root.episodes;
-                cursor <=> root.cursor;
-                play(i) => { root.play-episode(i); }
+                Rectangle { height: 6px; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    // un solo pulsante principale (con un nome, per dargli il fuoco)
+                    play-btn := Btn {
+                        shown: !root.series || root.d.resume-label != "";
+                        label: root.series ? @tr("Resume {}", root.d.resume-label)
+                            : (root.d.resume-secs > 0 ? @tr("Resume from {}", Texts.clock(root.d.resume-secs)) : @tr("Watch"));
+                        primary: true;
+                        clicked => {
+                            if (root.series) { root.resume-series(); } else { root.play(false); }
+                        }
+                    }
+                    if !root.series && root.d.resume-secs > 0: Btn {
+                        label: @tr("From the start");
+                        clicked => { root.play(true); }
+                    }
+                    Btn {
+                        label: root.d.fav ? "★ " + @tr("In favorites") : "☆ " + @tr("Add to favorites");
+                        clicked => { root.toggle-fav(); }
+                    }
+                }
+                if root.series: Rectangle { height: 8px; }
+                if root.series && root.seasons.length > 1: Tabs {
+                    options: root.seasons;
+                    current: root.season;
+                    clicked(i) => { root.pick-season(i); }
+                }
+                fs := FocusScope {
+                    visible: root.series;
+                    enabled: root.series;
+                    vertical-stretch: 1;
+                    // tutta l'altezza che serve (lo spazio libero lo limita: poi si scorre)
+                    min-height: root.series ? 200px : 0px;
+                    preferred-height: root.series ? root.episodes.length * 64px : 0px;
+                    key-pressed(event) => {
+                        // telecomando: ↑ dal primo episodio va alle stagioni e ai pulsanti
+                        if (event.text == Key.UpArrow && Nav.tv && root.cursor == 0) { return reject; }
+                        if (event.text == Key.UpArrow) { root.move(-1); return accept; }
+                        if (event.text == Key.DownArrow) { root.move(1); return accept; }
+                        if (event.text == Key.Return && root.episodes.length > 0) { root.play-episode(root.cursor); return accept; }
+                        reject
+                    }
+                    ep-list := EpisodeList {
+                        width: parent.width;
+                        height: parent.height;
+                        model: root.episodes;
+                        cursor <=> root.cursor;
+                        focused: !Nav.tv || fs.has-focus;
+                        play(i) => { root.play-episode(i); }
+                    }
+                }
             }
         }
     }
@@ -455,54 +466,60 @@ export component MediaScreen inherits Rectangle {
         action: @tr("Add an account");
         act => { root.add-source(); }
     }
-    fs := FocusScope {
-        enabled: root.available && root.detail == 0;
-        key-pressed(event) => {
-            if (event.text == Key.LeftArrow) { root.move(-1); return accept; }
-            if (event.text == Key.RightArrow) { root.move(1); return accept; }
-            if (event.text == Key.UpArrow) { root.move(-grid.cols); return accept; }
-            if (event.text == Key.DownArrow) { root.move(grid.cols); return accept; }
-            if (event.text == Key.Return && root.items.length > 0) { root.open(root.cursor); return accept; }
-            reject
-        }
-        HorizontalLayout {
-            visible: root.available && root.detail == 0;
-            padding-left: 44px;
-            padding-right: 44px;
-            padding-top: 8px;
-            spacing: 24px;
-            VerticalLayout {
-                width: 230px;
-                spacing: 10px;
-                Tabs {
-                    options: [@tr("Movies"), @tr("Series")];
-                    current: root.mode;
-                    clicked(i) => { root.pick-mode(i); }
-                }
-                CategoryList {
-                    vertical-stretch: 1;
-                    model: root.categories;
-                    current: root.category;
-                    searching: root.search != "";
-                    picked(i) => {
-                        root.pick-category(i);
-                        fs.focus();
-                    }
+    HorizontalLayout {
+        visible: root.available && root.detail == 0;
+        padding-left: 44px;
+        padding-right: 44px;
+        padding-top: 8px;
+        spacing: 24px;
+        VerticalLayout {
+            width: 230px;
+            spacing: 10px;
+            Tabs {
+                options: [@tr("Movies"), @tr("Series")];
+                current: root.mode;
+                clicked(i) => { root.pick-mode(i); }
+            }
+            CategoryList {
+                vertical-stretch: 1;
+                model: root.categories;
+                current: root.category;
+                searching: root.search != "";
+                picked(i) => {
+                    root.pick-category(i);
+                    fs.focus();
                 }
             }
-            VerticalLayout {
-                horizontal-stretch: 1;
-                spacing: 10px;
-                Title {
-                    text: root.search != ""
-                        ? @tr("Results for “{}”: {}", root.search, root.items.length)
-                        : (root.mode == 0 ? @tr("{n} movie" | "{n} movies" % root.items.length)
-                            : @tr("{n} series" | "{n} series" % root.items.length));
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 10px;
+            Title {
+                text: root.search != ""
+                    ? @tr("Results for “{}”: {}", root.search, root.items.length)
+                    : (root.mode == 0 ? @tr("{n} movie" | "{n} movies" % root.items.length)
+                        : @tr("{n} series" | "{n} series" % root.items.length));
+            }
+            fs := FocusScope {
+                vertical-stretch: 1;
+                enabled: root.available && root.detail == 0;
+                key-pressed(event) => {
+                    // telecomando: dalla prima colonna (←) o dalla prima riga (↑) si va alle categorie
+                    if (Nav.tv && event.text == Key.LeftArrow && Math.mod(root.cursor, grid.cols) == 0) { return reject; }
+                    if (Nav.tv && event.text == Key.UpArrow && root.cursor < grid.cols) { return reject; }
+                    if (event.text == Key.LeftArrow) { root.move(-1); return accept; }
+                    if (event.text == Key.RightArrow) { root.move(1); return accept; }
+                    if (event.text == Key.UpArrow) { root.move(-grid.cols); return accept; }
+                    if (event.text == Key.DownArrow) { root.move(grid.cols); return accept; }
+                    if (event.text == Key.Return && root.items.length > 0) { root.open(root.cursor); return accept; }
+                    reject
                 }
                 grid := PosterGrid {
-                    vertical-stretch: 1;
+                    width: parent.width;
+                    height: parent.height;
                     model: root.items;
                     cursor <=> root.cursor;
+                    focused: !Nav.tv || fs.has-focus;
                     open(i) => {
                         fs.focus();
                         root.open(i);

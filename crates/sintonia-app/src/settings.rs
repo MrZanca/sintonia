@@ -63,6 +63,8 @@ pub struct Settings {
     pub live_preview: bool,
     /// Avviso quando esce una versione nuova (il controllo lo fa il servizio).
     pub update_check: bool,
+    /// Si usa il telecomando (frecce, OK, Indietro) invece del mouse.
+    pub remote: bool,
     /// Ogni quante ore playlist e guida si aggiornano da sole (0 = mai; li legge il servizio).
     pub playlist_hours: u32,
     pub epg_hours: u32,
@@ -158,6 +160,7 @@ impl Settings {
             fullscreen_start: false,
             live_preview: true,
             update_check: true,
+            remote: false,
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
             epg_hours: EPG_HOURS_DEFAULT,
             user_agent: None,
@@ -201,6 +204,7 @@ impl Settings {
             "fullscreen_start" => self.fullscreen_start = flag,
             "live_preview" => self.live_preview = flag,
             "update_check" => self.update_check = flag,
+            "navigation" => self.remote = value == "remote",
             "playlist_hours" => {
                 if let Ok(hours) = value.trim().parse() {
                     self.playlist_hours = hours;
@@ -253,6 +257,15 @@ mod tests {
         assert_eq!(s.user_agent, None);
         assert_eq!(s.playlist_hours, PLAYLIST_HOURS_DEFAULT);
         assert!(!s.has_pin());
+        assert!(!s.remote);
+    }
+
+    #[test]
+    fn navigation_mode() {
+        let remote = [("navigation".to_owned(), "remote".to_owned())];
+        assert!(Settings::from_pairs(&remote, Language::Italian).remote);
+        let mouse = [("navigation".to_owned(), "mouse".to_owned())];
+        assert!(!Settings::from_pairs(&mouse, Language::Italian).remote);
     }
 
     #[test]

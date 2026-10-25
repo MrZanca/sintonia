@@ -33,7 +33,7 @@ use crate::images;
 use crate::settings::{self, Language, Locks, Settings};
 use crate::video::VideoRouter;
 use crate::{
-    CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, MainWindow, PipWindow,
+    CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, MainWindow, Nav, PipWindow,
     SourceItem, SourceStatus, Texts, TrackItem,
 };
 
@@ -556,6 +556,7 @@ Una copia dell'archivio com'era è in:
             main.set_fullscreen_start(settings.fullscreen_start);
             main.set_live_preview(settings.live_preview);
             main.set_update_check(settings.update_check);
+            main.global::<Nav>().set_mode(i32::from(settings.remote));
             main.set_playlist_interval(interval_index(settings.playlist_hours));
             main.set_epg_interval(interval_index(settings.epg_hours));
             main.set_user_agent(settings.user_agent.clone().unwrap_or_default().into());

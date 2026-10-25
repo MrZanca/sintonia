@@ -11,6 +11,7 @@ mod awake;
 mod catalog;
 mod guide;
 mod images;
+mod remote;
 mod settings;
 mod video;
 
@@ -213,6 +214,7 @@ fn run() -> Result<(), AppError> {
     router.install_pip(&pip)?;
 
     let app = App::new(&main, &pip, service, Rc::clone(&router), Language::system());
+    remote::install(&main);
 
     // chiudere la finestra principale chiude l'app, anche con il mini player aperto
     main.window().on_close_requested(|| {
