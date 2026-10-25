@@ -1,10 +1,11 @@
-//! Tasti del volume (e muto) dei telecomandi e delle tastiere multimediali.
+//! Tasti del volume (e muto) e altri tasti speciali dei telecomandi e delle tastiere multimediali.
 //!
-//! Windows li prende per sé e cambia il volume generale, anche se la finestra in primo piano è
-//! Sintonia. Mentre la finestra principale è attiva (e l'impostazione è accesa) Sintonia li
-//! registra come tasti di scelta rapida (`RegisterHotKey`): così arrivano solo a Sintonia, come
-//! `WM_HOTKEY`, e regolano il volume del player. Quando la finestra perde il fuoco li restituisce
-//! e tornano a regolare Windows.
+//! Windows li prende per sé (cambia il volume generale, apre la posta, il browser, comanda gli
+//! altri lettori), anche se la finestra in primo piano è Sintonia. Mentre la finestra principale è
+//! attiva Sintonia li registra come tasti di scelta rapida (`RegisterHotKey`): così arrivano solo a
+//! Sintonia, come `WM_HOTKEY`. I tasti del volume regolano il player (se l'impostazione è accesa);
+//! gli altri fanno quello che dice `remote.rs`. Quando la finestra perde il fuoco Sintonia li
+//! restituisce e tornano a Windows.
 //! Alcuni dispositivi mandano invece un `WM_APPCOMMAND` alla finestra: anche quello si prende qui.
 
 use std::cell::{Cell, RefCell};
@@ -36,10 +37,13 @@ pub fn set_focused(focused: bool) {
 
 /// Chi riceve i tasti: il tasto e se è la ripetizione di un tasto tenuto premuto.
 type Handler = Box<dyn Fn(VolumeKey, bool)>;
+/// Chi riceve gli altri tasti speciali (il tasto virtuale di Windows).
+type OtherHandler = Box<dyn Fn(u32)>;
 
 thread_local! {
     /// Chi riceve i tasti (sul thread dell'interfaccia, lo stesso della finestra).
     static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
+    static OTHER: RefCell<Option<OtherHandler>> = const { RefCell::new(None) };
     static FOCUSED: Cell<bool> = const { Cell::new(false) };
     /// L'ultimo tasto arrivato e quando: per riconoscere le ripetizioni.
     static LAST: Cell<Option<(VolumeKey, Instant)>> = const { Cell::new(None) };
@@ -94,6 +98,25 @@ fn deliver(key: VolumeKey, repeat: bool) -> bool {
     })
 }
 
+/// Chi riceve gli altri tasti speciali (da chiamare sul thread dell'interfaccia).
+pub fn set_other_handler(handler: impl Fn(u32) + 'static) {
+    OTHER.with(|h| *h.borrow_mut() = Some(Box::new(handler)));
+}
+
+/// Gli altri tasti speciali che si prendono a Windows: avanti e indietro del browser, aggiorna,
+/// cerca, preferiti, home, traccia seguente e precedente, stop, play/pausa, posta, lettore
+/// multimediale, applicazione 1 (il tasto «e» di molti telecomandi).
+pub const OTHER_KEYS: [u32; 13] = [
+    0xA6, 0xA7, 0xA8, 0xAA, 0xAB, 0xAC, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6,
+];
+
+fn deliver_other(vk: u32) -> bool {
+    OTHER.with(|h| match h.try_borrow() {
+        Ok(handler) => handler.as_ref().map(|f| f(vk)).is_some(),
+        Err(_) => false,
+    })
+}
+
 /// Un tasto del volume arrivato alla finestra come tasto normale (quando non era registrato):
 /// lo si passa comunque a Sintonia. `true` se è stato preso.
 pub fn from_window(key: VolumeKey, repeat: bool) -> bool {
@@ -102,7 +125,8 @@ pub fn from_window(key: VolumeKey, repeat: bool) -> bool {
 
 #[cfg(windows)]
 fn update(focused: bool) {
-    imp::register(focused && ENABLED.load(Ordering::Relaxed));
+    imp::register_volume(focused && ENABLED.load(Ordering::Relaxed));
+    imp::register_other(focused);
 }
 
 #[cfg(not(windows))]
@@ -113,13 +137,18 @@ mod imp {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::time::Instant;
 
-    use super::{command, deliver, is_repeat, volume_key, volume_vk, ENABLED, LAST};
+    use super::{
+        command, deliver, deliver_other, is_repeat, volume_key, volume_vk, ENABLED, LAST,
+        OTHER_KEYS,
+    };
 
     const GWLP_WNDPROC: i32 = -4;
     const WM_APPCOMMAND: u32 = 0x0319;
     const WM_HOTKEY: u32 = 0x0312;
-    /// I tasti registrati: id (1, 2, 3) e tasto virtuale.
+    /// I tasti del volume registrati: id (1, 2, 3) e tasto virtuale.
     const HOTKEYS: [(i32, u32); 3] = [(1, 0xAF), (2, 0xAE), (3, 0xAD)];
+    /// Gli altri tasti hanno id da 100 in su (100 + posizione in `OTHER_KEYS`).
+    const OTHER_BASE: i32 = 100;
 
     #[link(name = "user32")]
     extern "system" {
@@ -139,9 +168,31 @@ mod imp {
     static WINDOW: AtomicIsize = AtomicIsize::new(0);
     static PREVIOUS: AtomicIsize = AtomicIsize::new(0);
     static REGISTERED: AtomicBool = AtomicBool::new(false);
+    static OTHER_REGISTERED: AtomicBool = AtomicBool::new(false);
+
+    /// Prende (`true`) o restituisce gli altri tasti speciali.
+    pub fn register_other(on: bool) {
+        let hwnd = WINDOW.load(Ordering::Relaxed);
+        if hwnd == 0 || OTHER_REGISTERED.load(Ordering::Relaxed) == on {
+            return;
+        }
+        for (i, vk) in (0..).zip(OTHER_KEYS) {
+            let id = OTHER_BASE + i;
+            if on {
+                // SAFETY: come per i tasti del volume, con id che sono solo nostri.
+                if unsafe { RegisterHotKey(hwnd, id, 0, vk) } == 0 {
+                    log::debug!("tasto speciale {vk:#x} già preso da un altro programma");
+                }
+            } else {
+                // SAFETY: si toglie la registrazione fatta sopra (se non c'era, non fa niente).
+                unsafe { UnregisterHotKey(hwnd, id) };
+            }
+        }
+        OTHER_REGISTERED.store(on, Ordering::Relaxed);
+    }
 
     /// Prende (`true`) o restituisce i tasti del volume.
-    pub fn register(on: bool) {
+    pub fn register_volume(on: bool) {
         let hwnd = WINDOW.load(Ordering::Relaxed);
         if hwnd == 0 || REGISTERED.load(Ordering::Relaxed) == on {
             return;
@@ -185,6 +236,15 @@ mod imp {
                 .map(|(_, vk)| *vk);
             if let Some(key) = vk.and_then(volume_vk) {
                 take(key);
+                return 0;
+            }
+            let other =
+                usize::try_from(i64::try_from(wparam).unwrap_or(-1) - i64::from(OTHER_BASE))
+                    .ok()
+                    .and_then(|i| OTHER_KEYS.get(i));
+            if let Some(vk) = other {
+                log::debug!("tasto speciale {vk:#x}");
+                deliver_other(*vk);
                 return 0;
             }
         }

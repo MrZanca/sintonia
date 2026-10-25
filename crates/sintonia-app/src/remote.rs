@@ -59,6 +59,49 @@ pub fn remote_action(key: &WinitKey) -> Option<Action> {
     }
 }
 
+/// Il tasto di winit che corrisponde a un tasto virtuale di Windows (quelli di
+/// [`crate::mediakeys::OTHER_KEYS`], che arrivano come `WM_HOTKEY`).
+pub fn vk_named(vk: u32) -> Option<NamedKey> {
+    Some(match vk {
+        0xA6 => NamedKey::BrowserBack,
+        0xA7 => NamedKey::BrowserForward,
+        0xA8 => NamedKey::BrowserRefresh,
+        0xAA => NamedKey::BrowserSearch,
+        0xAB => NamedKey::BrowserFavorites,
+        0xAC => NamedKey::BrowserHome,
+        0xB0 => NamedKey::MediaTrackNext,
+        0xB1 => NamedKey::MediaTrackPrevious,
+        0xB2 => NamedKey::MediaStop,
+        0xB3 => NamedKey::MediaPlayPause,
+        0xB4 => NamedKey::LaunchMail,
+        0xB5 => NamedKey::LaunchMediaPlayer,
+        0xB6 => NamedKey::LaunchApplication1,
+        _ => return None,
+    })
+}
+
+/// Esegue il tasto speciale `key` (premuto): restituisce `false` se non è un tasto speciale.
+fn run_special(main: &MainWindow, key: &WinitKey) -> bool {
+    let Some(action) = remote_action(key) else {
+        return false;
+    };
+    // mentre le Impostazioni aspettano un tasto, Home, Play/Pausa e OK del telecomando non fanno
+    // niente (Indietro sì: annulla); gli altri diventano tasti assegnabili
+    let fixed = matches!(
+        action,
+        Action::Home | Action::Press(Key::Space) | Action::Press(Key::Return)
+    );
+    if fixed && main.global::<Keys>().get_capturing() {
+        return true;
+    }
+    log::debug!("telecomando: {key:?} → {action:?}");
+    later(main, move |main| match action {
+        Action::Press(key) => press(main, key),
+        Action::Home => main.invoke_go_home(),
+    });
+    true
+}
+
 /// Come si chiama un tasto (Impostazioni › Navigazione, «Ultimo tasto premuto»): la lettera, il
 /// nome del tasto speciale, o il codice se Windows non sa che tasto sia.
 pub fn key_name(
@@ -113,6 +156,17 @@ fn later(main: &MainWindow, f: impl FnOnce(&MainWindow) + 'static) {
 }
 
 pub fn install(main: &MainWindow) {
+    // gli stessi tasti quando arrivano come WM_HOTKEY (presi a Windows, vedi mediakeys.rs)
+    let weak = main.as_weak();
+    crate::mediakeys::set_other_handler(move |vk| {
+        let (Some(main), Some(named)) = (weak.upgrade(), vk_named(vk)) else {
+            return;
+        };
+        let key = WinitKey::Named(named);
+        main.global::<Keys>().set_last(format!("{named:?}").into());
+        run_special(&main, &key);
+    });
+
     let weak = main.as_weak();
     main.global::<Nav>().on_step(move |forward| {
         if let Some(main) = weak.upgrade() {
@@ -160,22 +214,9 @@ pub fn install(main: &MainWindow) {
                 return EventResult::PreventDefault;
             }
         }
-        if let Some(action) = remote_action(&event.logical_key) {
-            // mentre le Impostazioni aspettano un tasto, Home, Play/Pausa e OK del telecomando
-            // non fanno niente (Indietro sì: annulla); gli altri diventano tasti assegnabili
-            let fixed = matches!(
-                action,
-                Action::Home | Action::Press(Key::Space) | Action::Press(Key::Return)
-            );
-            if fixed && main.global::<Keys>().get_capturing() {
-                return EventResult::PreventDefault;
-            }
+        if remote_action(&event.logical_key).is_some() {
             if event.state.is_pressed() {
-                log::debug!("telecomando: {:?} → {action:?}", event.logical_key);
-                later(&main, move |main| match action {
-                    Action::Press(key) => press(main, key),
-                    Action::Home => main.invoke_go_home(),
-                });
+                run_special(&main, &event.logical_key);
             }
             return EventResult::PreventDefault;
         }
@@ -211,6 +252,21 @@ mod tests {
         // le frecce e le lettere le gestisce già Slint
         assert_eq!(remote_action(&WinitKey::Named(NamedKey::ArrowUp)), None);
         assert_eq!(remote_action(&WinitKey::Character("a".into())), None);
+    }
+
+    #[test]
+    fn windows_virtual_keys() {
+        assert_eq!(vk_named(0xB4), Some(NamedKey::LaunchMail));
+        assert_eq!(vk_named(0xB6), Some(NamedKey::LaunchApplication1));
+        assert_eq!(vk_named(0xAF), None);
+        // ogni tasto preso a Windows ha qualcosa da fare in Sintonia
+        for vk in crate::mediakeys::OTHER_KEYS {
+            let named = vk_named(vk).expect("tasto senza nome");
+            assert!(
+                remote_action(&WinitKey::Named(named)).is_some(),
+                "{named:?}"
+            );
+        }
     }
 
     #[test]
