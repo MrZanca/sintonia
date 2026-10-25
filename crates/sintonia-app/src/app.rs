@@ -248,6 +248,8 @@ pub struct App {
     auto_fullscreen: Cell<bool>,
     /// Salva la dimensione del mini player poco dopo l'ultimo ridimensionamento.
     pip_save_timer: slint::Timer,
+    /// Il canale guardato prima di quello in onda (tasto «ultimo canale»).
+    previous_channel: Cell<Option<i64>>,
     volume_save_timer: slint::Timer,
     pip_drag: Cell<Option<PipDrag>>,
 
@@ -383,6 +385,7 @@ impl App {
             aspect: Cell::new(0),
             auto_fullscreen: Cell::new(false),
             pip_save_timer: slint::Timer::default(),
+            previous_channel: Cell::new(None),
             volume_save_timer: slint::Timer::default(),
             pip_drag: Cell::new(None),
             now_schedule,
@@ -795,10 +798,17 @@ Una copia dell'archivio com'era è in:
         self.request_now();
         self.request_day();
 
-        // all'avvio riprende l'ultimo canale (l'anteprima della Home è «in onda»)
+        // all'avvio riprende l'ultimo canale (l'anteprima della Home è «in onda»); con il
+        // telecomando Sintonia è una TV: si accende a schermo intero sul canale
         if !self.started.replace(true) {
             if let Some(id) = current {
                 self.play_channel(id);
+                if self.settings.borrow().remote {
+                    if let Some(main) = self.main() {
+                        self.set_fullscreen(true);
+                        main.set_playing(true);
+                    }
+                }
             }
         }
     }
@@ -1517,6 +1527,13 @@ Una copia dell'archivio com'era è in:
     /// Chiede al servizio l'indirizzo del canale; si apre quando arriva (evento `Stream`).
     fn play_channel(&self, id: i64) {
         self.preview_timer.stop();
+        // per il tasto «ultimo canale»: quello che era in onda prima di questo
+        if let Some(Playable::Channel(before)) = self.now.borrow().as_ref().map(|n| n.item.clone())
+        {
+            if before != id {
+                self.previous_channel.set(Some(before));
+            }
+        }
         self.set_current(Some(id));
         let same = |item: &Playable| *item == Playable::Channel(id);
         let playing =
@@ -2009,6 +2026,8 @@ Una copia dell'archivio com'era è in:
         }));
         main.on_cursor_moved(with_app!(|app, row: i32| app.preview_later(row)));
         main.on_zap(with_app!(|app, delta: i32| app.zap(delta)));
+        main.on_tune(with_app!(|app, number: SharedString| app.tune(&number)));
+        main.on_last_channel(on(|app| app.last_channel()));
         main.on_pick_category(with_app!(|app, index: i32| {
             let index = row_index(index).unwrap_or(0);
             if app.channels.is_category_hidden(index) {
@@ -2713,6 +2732,36 @@ Una copia dell'archivio com'era è in:
                     app.play_channel(id);
                 }
             });
+    }
+
+    /// Il canale con quel numero (tasti numerici, come sulla TV).
+    fn tune(&self, number: &str) {
+        let Ok(number) = number.trim().parse::<u32>() else {
+            return;
+        };
+        match self.channels.find(|c| c.number == number) {
+            Some(id) => {
+                self.play_channel(id);
+                if let (Some(main), Some(row)) = (self.main(), self.channels.row_of(id)) {
+                    main.set_cursor(count_i32(row));
+                }
+            }
+            None => log::info!("nessun canale con il numero {number}"),
+        }
+    }
+
+    /// Torna al canale guardato prima (tasto «ultimo canale»).
+    fn last_channel(&self) {
+        let Some(id) = self.previous_channel.get() else {
+            return;
+        };
+        self.play_channel(id);
+        if let Some(main) = self.main() {
+            if let Some(row) = self.channels.row_of(id) {
+                main.set_cursor(count_i32(row));
+            }
+            main.set_playing(true);
+        }
     }
 
     fn zap(&self, delta: i32) {

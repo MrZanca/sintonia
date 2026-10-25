@@ -1994,7 +1994,7 @@ component SettingsScreen inherits Rectangle {
                             x: 0;
                             width: keys-fl.width;
                             spacing: 6px;
-                            for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home"), @tr("Back"), @tr("Search"), @tr("Next channel"), @tr("Previous channel"), @tr("Open the Settings")]: kr := Rectangle {
+                            for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home"), @tr("Back"), @tr("Search"), @tr("Next channel"), @tr("Previous channel"), @tr("Open the Settings"), @tr("Last channel watched")]: kr := Rectangle {
                                 height: 44px;
                                 // con le frecce la riga del pulsante attivo resta in vista
                                 property <bool> focused: cb.focused;
@@ -2285,6 +2285,7 @@ component PlayerScreen inherits Rectangle {
     callback toggle-fullscreen();
     in property <bool> fullscreen;
     callback zap(int);
+    callback tune(string);
     callback play(int);
     callback pick-category(int);
     callback load-tracks();
@@ -2293,6 +2294,20 @@ component PlayerScreen inherits Rectangle {
     callback set-aspect(int);
     property <bool> overlay: true;
     property <bool> drawer: false;
+    // il numero del canale che si sta digitando
+    property <string> digits;
+    tune-timer := Timer {
+        interval: 1500ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.digits != "") {
+                root.tune(root.digits);
+                root.digits = "";
+                root.show-overlay();
+            }
+        }
+    }
     // i nomi delle proporzioni, nell'ordine di `aspect`
     property <[string]> aspect-names: [@tr("Auto"), "16:9", "4:3", @tr("Fill the screen")];
     // il puntatore sparisce insieme alle informazioni (Rust lo nasconde anche col mouse fermo)
@@ -2391,7 +2406,18 @@ component PlayerScreen inherits Rectangle {
                 return accept;
             }
             if (event.text == Key.Escape) {
-                if (root.drawer) { root.drawer = false; } else { root.back(); }
+                // con il telecomando il video è la TV: Indietro chiude solo l'elenco
+                if (root.drawer) { root.drawer = false; } else if (!Nav.tv) { root.back(); }
+                return accept;
+            }
+            // telecomando, canali: i numeri scelgono il canale, come sulla TV
+            if (Nav.tv && !root.on-demand && !root.drawer
+                && (event.text == "0" || event.text == "1" || event.text == "2" || event.text == "3" || event.text == "4"
+                    || event.text == "5" || event.text == "6" || event.text == "7" || event.text == "8" || event.text == "9")) {
+                if (root.digits.character-count < 5) { root.digits += event.text; }
+                // `restart()` vale solo con il timer avviato: stop + start lo riparte da zero
+                tune-timer.stop();
+                tune-timer.start();
                 return accept;
             }
             if (Keys.is(1, event.text)) {
@@ -2624,7 +2650,22 @@ component PlayerScreen inherits Rectangle {
             }
         }
 
-        // prossimo episodio, con il conto alla rovescia
+        // il numero del canale che si sta digitando (telecomando)
+    if root.digits != "": Rectangle {
+        x: parent.width - self.width - 40px;
+        y: 30px;
+        width: dt.preferred-width + 48px;
+        height: 84px;
+        Sq { r: 24px; fill: #000000c0; }
+        dt := Text {
+            text: root.digits;
+            color: Theme.ink;
+            font-size: 56px;
+            font-weight: 300;
+        }
+    }
+
+    // prossimo episodio, con il conto alla rovescia
         if root.next-countdown >= 0: Rectangle {
             x: parent.width - self.width - 40px;
             y: parent.height - self.height - 200px;
@@ -3144,6 +3185,9 @@ export component MainWindow inherits Window {
     callback play-index(int);
     callback cursor-moved(int);
     callback zap(int);
+    // telecomando: il canale con quel numero, e quello guardato prima
+    callback tune(string);
+    callback last-channel();
     callback pick-category(int);
     callback search-edited(string);
     callback request-pip(int);
@@ -3298,6 +3342,10 @@ export component MainWindow inherits Window {
                 root.search-focus-tick += 1;
                 return accept;
             }
+            if (Keys.is(13, event.text)) {
+                root.last-channel();
+                return accept;
+            }
             if (Keys.is(12, event.text)) {
                 root.playing = false;
                 root.page = 4;
@@ -3335,8 +3383,11 @@ export component MainWindow inherits Window {
                 focus-on-click: false;
                 key-pressed(event) => {
                     if (!Nav.tv || event.text != Key.Escape) { return reject; }
+                    // come una TV: da una pagina al menu in basso, dal menu al video
                     if (!dock.focused) {
                         dock.focus();
+                    } else if (root.has-current) {
+                        root.watch-current();
                     } else if (root.page != 0) {
                         root.page = 0;
                     }
@@ -3557,6 +3608,7 @@ export component MainWindow inherits Window {
             toggle-fullscreen => { root.toggle-fullscreen(); }
             fullscreen: root.fullscreen;
             zap(d) => { root.zap(d); }
+            tune(n) => { root.tune(n); }
             play(i) => { root.play-index(i); }
             pick-category(i) => { root.pick-category(i); }
             load-tracks => { root.load-tracks(); }

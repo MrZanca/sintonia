@@ -639,3 +639,6 @@ msgstr "Canale precedente"
 
 msgid "Open the Settings"
 msgstr "Apri le Impostazioni"
+
+msgid "Last channel watched"
+msgstr "Ultimo canale guardato"
