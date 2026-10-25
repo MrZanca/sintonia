@@ -124,6 +124,10 @@ pub fn install(main: &MainWindow) {
 
     let weak = main.as_weak();
     main.window().on_winit_window_event(move |_, event| {
+        // i tasti del volume si prendono solo mentre la finestra è attiva (vedi mediakeys.rs)
+        if let WinitEvent::Focused(focused) = event {
+            crate::mediakeys::set_focused(*focused);
+        }
         let WinitEvent::KeyboardInput { event, .. } = event else {
             return EventResult::Propagate;
         };

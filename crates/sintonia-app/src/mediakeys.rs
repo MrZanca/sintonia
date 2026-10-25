@@ -1,13 +1,15 @@
 //! Tasti del volume (e muto) dei telecomandi e delle tastiere multimediali.
 //!
-//! Questi tasti Windows li prende per sé e cambia il volume generale, prima che arrivino alla
-//! finestra. Con Sintonia in primo piano (e l'impostazione accesa) li si intercetta prima di
-//! Windows con un aggancio alla tastiera (`WH_KEYBOARD_LL`) e regolano invece il volume del player;
-//! con un'altra finestra in primo piano passano a Windows come sempre.
-//! Alcuni dispositivi mandano invece un `WM_APPCOMMAND` alla finestra: anche quello si ferma qui.
+//! Windows li prende per sé e cambia il volume generale, anche se la finestra in primo piano è
+//! Sintonia. Mentre la finestra principale è attiva (e l'impostazione è accesa) Sintonia li
+//! registra come tasti di scelta rapida (`RegisterHotKey`): così arrivano solo a Sintonia, come
+//! `WM_HOTKEY`, e regolano il volume del player. Quando la finestra perde il fuoco li restituisce
+//! e tornano a regolare Windows.
+//! Alcuni dispositivi mandano invece un `WM_APPCOMMAND` alla finestra: anche quello si prende qui.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 /// Cosa chiede il tasto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,16 +22,27 @@ pub enum VolumeKey {
 /// I tasti del volume vanno a Sintonia (se no a Windows, come prima).
 static ENABLED: AtomicBool = AtomicBool::new(true);
 
+/// Accende o spegne la presa dei tasti del volume (Impostazioni › Navigazione).
 pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
+    FOCUSED.with(|f| update(f.get()));
+}
+
+/// La finestra principale ha preso o perso il fuoco.
+pub fn set_focused(focused: bool) {
+    FOCUSED.with(|f| f.set(focused));
+    update(focused);
 }
 
 /// Chi riceve i tasti: il tasto e se è la ripetizione di un tasto tenuto premuto.
 type Handler = Box<dyn Fn(VolumeKey, bool)>;
 
 thread_local! {
-    /// Chi riceve i tasti (sul thread dell'interfaccia, lo stesso della finestra e dell'aggancio).
+    /// Chi riceve i tasti (sul thread dell'interfaccia, lo stesso della finestra).
     static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
+    static FOCUSED: Cell<bool> = const { Cell::new(false) };
+    /// L'ultimo tasto arrivato e quando: per riconoscere le ripetizioni.
+    static LAST: Cell<Option<(VolumeKey, Instant)>> = const { Cell::new(None) };
 }
 
 /// Il comando di un `WM_APPCOMMAND` (la parte alta di `lParam` senza i bit del dispositivo).
@@ -68,6 +81,11 @@ pub fn step(key: VolumeKey, repeat: bool) -> i32 {
     }
 }
 
+/// Un tasto è la ripetizione del precedente se è lo stesso e arriva entro poco.
+pub fn is_repeat(previous: Option<(VolumeKey, Instant)>, key: VolumeKey, now: Instant) -> bool {
+    previous.is_some_and(|(k, at)| k == key && now.duration_since(at) < Duration::from_millis(250))
+}
+
 /// Passa il tasto a Sintonia; `false` se nessuno lo riceve.
 fn deliver(key: VolumeKey, repeat: bool) -> bool {
     HANDLER.with(|h| match h.try_borrow() {
@@ -76,33 +94,32 @@ fn deliver(key: VolumeKey, repeat: bool) -> bool {
     })
 }
 
-/// Un tasto del volume arrivato alla finestra come tasto normale (quando l'aggancio non l'ha
-/// fermato prima): lo si passa comunque a Sintonia. `true` se è stato preso.
+/// Un tasto del volume arrivato alla finestra come tasto normale (quando non era registrato):
+/// lo si passa comunque a Sintonia. `true` se è stato preso.
 pub fn from_window(key: VolumeKey, repeat: bool) -> bool {
     ENABLED.load(Ordering::Relaxed) && deliver(key, repeat)
 }
 
 #[cfg(windows)]
+fn update(focused: bool) {
+    imp::register(focused && ENABLED.load(Ordering::Relaxed));
+}
+
+#[cfg(not(windows))]
+fn update(_focused: bool) {}
+
+#[cfg(windows)]
 mod imp {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+    use std::time::Instant;
 
-    use super::{command, deliver, volume_key, volume_vk, ENABLED};
+    use super::{command, deliver, is_repeat, volume_key, volume_vk, ENABLED, LAST};
 
     const GWLP_WNDPROC: i32 = -4;
-    const WH_KEYBOARD_LL: i32 = 13;
     const WM_APPCOMMAND: u32 = 0x0319;
-    const WM_KEYDOWN: usize = 0x0100;
-    const WM_SYSKEYDOWN: usize = 0x0104;
-
-    /// `KBDLLHOOKSTRUCT`
-    #[repr(C)]
-    struct KeyboardHook {
-        vk_code: u32,
-        scan_code: u32,
-        flags: u32,
-        time: u32,
-        extra_info: usize,
-    }
+    const WM_HOTKEY: u32 = 0x0312;
+    /// I tasti registrati: id (1, 2, 3) e tasto virtuale.
+    const HOTKEYS: [(i32, u32); 3] = [(1, 0xAF), (2, 0xAE), (3, 0xAD)];
 
     #[link(name = "user32")]
     extern "system" {
@@ -114,95 +131,66 @@ mod imp {
             wparam: usize,
             lparam: isize,
         ) -> isize;
-        fn SetWindowsHookExW(id: i32, proc_: isize, module: isize, thread: u32) -> isize;
-        fn CallNextHookEx(hook: isize, code: i32, wparam: usize, lparam: isize) -> isize;
-        fn GetForegroundWindow() -> isize;
-        fn GetWindowThreadProcessId(hwnd: isize, process: *mut u32) -> u32;
-        fn GetMessageW(msg: *mut Msg, hwnd: isize, min: u32, max: u32) -> i32;
-    }
-
-    /// `MSG`
-    #[repr(C)]
-    struct Msg {
-        hwnd: isize,
-        message: u32,
-        wparam: usize,
-        lparam: isize,
-        time: u32,
-        pt: [i32; 2],
-        private: u32,
-    }
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetModuleHandleW(name: *const u16) -> isize;
+        fn RegisterHotKey(hwnd: isize, id: i32, modifiers: u32, vk: u32) -> i32;
+        fn UnregisterHotKey(hwnd: isize, id: i32) -> i32;
     }
 
     /// La finestra principale e la sua procedura originale.
     static WINDOW: AtomicIsize = AtomicIsize::new(0);
     static PREVIOUS: AtomicIsize = AtomicIsize::new(0);
-    /// Un tasto del volume è già giù: le pressioni successive sono ripetizioni.
-    static HELD: [AtomicBool; 3] = [
-        AtomicBool::new(false),
-        AtomicBool::new(false),
-        AtomicBool::new(false),
-    ];
+    static REGISTERED: AtomicBool = AtomicBool::new(false);
 
-    /// La finestra appartiene a questo processo.
-    fn is_ours(hwnd: isize) -> bool {
-        if hwnd == 0 {
-            return false;
+    /// Prende (`true`) o restituisce i tasti del volume.
+    pub fn register(on: bool) {
+        let hwnd = WINDOW.load(Ordering::Relaxed);
+        if hwnd == 0 || REGISTERED.load(Ordering::Relaxed) == on {
+            return;
         }
-        let mut pid = 0u32;
-        // SAFETY: `pid` è una variabile locale valida in cui Windows scrive l'id del processo.
-        unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
-        pid == std::process::id()
-    }
-
-    extern "system" fn keyboard_hook(code: i32, wparam: usize, lparam: isize) -> isize {
-        // code < 0: va solo passato avanti; lParam punta a un KBDLLHOOKSTRUCT valido
-        if code >= 0 && lparam != 0 && ENABLED.load(Ordering::Relaxed) {
-            // SAFETY: per WH_KEYBOARD_LL con code >= 0 Windows passa in lParam un puntatore a un
-            // KBDLLHOOKSTRUCT valido per la durata della chiamata; lo si legge soltanto.
-            let info = unsafe { &*(lparam as *const KeyboardHook) };
-            let ours = WINDOW.load(Ordering::Relaxed);
-            // SAFETY: nessun argomento; restituisce solo un handle.
-            let foreground = unsafe { GetForegroundWindow() };
-            if let Some(key) = volume_vk(info.vk_code) {
-                log::debug!(
-                    "aggancio: {key:?} messaggio {wparam:#x}, finestra in primo piano {foreground:#x}, la nostra {ours:#x}"
-                );
-                // in primo piano c'è una finestra di Sintonia (l'handle in primo piano non è
-                // sempre quello che winit dà per la finestra principale: si guarda il processo)
-                if ours != 0 && is_ours(foreground) {
-                    let held = &HELD[(info.vk_code - 0xAD) as usize];
-                    if wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN {
-                        let repeat = held.swap(true, Ordering::Relaxed);
-                        // l'aggancio gira in un suo thread: il volume lo cambia il thread
-                        // dell'interfaccia
-                        let sent = slint::invoke_from_event_loop(move || {
-                            deliver(key, repeat);
-                        });
-                        if sent.is_ok() {
-                            return 1;
-                        }
-                    } else {
-                        held.store(false, Ordering::Relaxed);
-                        // anche il rilascio non deve arrivare a Windows
-                        return 1;
-                    }
+        for (id, vk) in HOTKEYS {
+            if on {
+                // SAFETY: `hwnd` è la finestra principale, viva per tutta l'app; si registra un
+                // tasto senza modificatori con un id che è solo nostro.
+                let ok = unsafe { RegisterHotKey(hwnd, id, 0, vk) };
+                if ok == 0 {
+                    log::warn!("tasto del volume {vk:#x} già preso da un altro programma");
                 }
+            } else {
+                // SAFETY: si toglie la registrazione fatta sopra (se non c'era, non fa niente).
+                unsafe { UnregisterHotKey(hwnd, id) };
             }
         }
-        // SAFETY: si passa l'evento al prossimo aggancio con gli stessi parametri ricevuti.
-        unsafe { CallNextHookEx(0, code, wparam, lparam) }
+        REGISTERED.store(on, Ordering::Relaxed);
+        log::debug!(
+            "tasti del volume {}",
+            if on { "presi" } else { "restituiti" }
+        );
+    }
+
+    fn take(key: super::VolumeKey) -> bool {
+        let now = Instant::now();
+        let repeat = LAST.with(|l| {
+            let repeat = is_repeat(l.get(), key, now);
+            l.set(Some((key, now)));
+            repeat
+        });
+        log::debug!("tasto del volume {key:?} (ripetuto: {repeat})");
+        deliver(key, repeat)
     }
 
     extern "system" fn window_proc(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize {
+        if msg == WM_HOTKEY {
+            let vk = HOTKEYS
+                .iter()
+                .find(|(id, _)| usize::try_from(*id).is_ok_and(|id| id == wparam))
+                .map(|(_, vk)| *vk);
+            if let Some(key) = vk.and_then(volume_vk) {
+                take(key);
+                return 0;
+            }
+        }
         if msg == WM_APPCOMMAND && ENABLED.load(Ordering::Relaxed) {
             if let Some(key) = volume_key(command(lparam)) {
-                log::debug!("WM_APPCOMMAND del volume {key:?}");
-                if deliver(key, false) {
+                if take(key) {
                     // TRUE: comando eseguito, la shell non cambia il volume di Windows
                     return 1;
                 }
@@ -217,49 +205,16 @@ mod imp {
         if WINDOW.load(Ordering::Relaxed) != 0 {
             return true;
         }
-        WINDOW.store(hwnd, Ordering::Relaxed);
-        // l'aggancio sta in un thread tutto suo, con il suo ciclo dei messaggi: se il thread
-        // dell'interfaccia è occupato (per esempio a disegnare il video) Windows non lo toglie
-        let started = std::thread::Builder::new()
-            .name("tasti del volume".into())
-            .spawn(|| {
-                // SAFETY: GetModuleHandleW(NULL) restituisce il modulo dell'eseguibile;
-                // `keyboard_hook` ha la firma di una HOOKPROC e l'aggancio vive quanto il thread.
-                let hook = unsafe {
-                    SetWindowsHookExW(
-                        WH_KEYBOARD_LL,
-                        keyboard_hook as *const () as usize as isize,
-                        GetModuleHandleW(std::ptr::null()),
-                        0,
-                    )
-                };
-                if hook == 0 {
-                    log::warn!("aggancio alla tastiera non riuscito");
-                    return;
-                }
-                log::debug!("aggancio alla tastiera attivo");
-                let mut msg = Msg {
-                    hwnd: 0,
-                    message: 0,
-                    wparam: 0,
-                    lparam: 0,
-                    time: 0,
-                    pt: [0, 0],
-                    private: 0,
-                };
-                // SAFETY: `msg` è una struttura MSG valida in cui Windows scrive; il ciclo serve
-                // solo a far arrivare gli eventi all'aggancio.
-                while unsafe { GetMessageW(&mut msg, 0, 0, 0) } > 0 {}
-            })
-            .is_ok();
         let ours = window_proc as *const () as usize as isize;
         // SAFETY: `hwnd` è la finestra principale, viva per tutta l'app e creata da questo thread;
         // `window_proc` ha la firma di una WNDPROC e richiama sempre la procedura precedente.
         let previous = unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, ours) };
-        if previous != 0 {
-            PREVIOUS.store(previous, Ordering::Relaxed);
+        if previous == 0 {
+            return false;
         }
-        started || previous != 0
+        PREVIOUS.store(previous, Ordering::Relaxed);
+        WINDOW.store(hwnd, Ordering::Relaxed);
+        true
     }
 }
 
@@ -277,6 +232,9 @@ pub fn install(window: &slint::Window, handler: impl Fn(VolumeKey, bool) + 'stat
     let installed = hwnd.flatten().is_some_and(imp::install);
     if installed {
         log::debug!("tasti del volume collegati");
+        // la finestra potrebbe essere già attiva
+        let focused = window.with_winit_window(|w| w.has_focus()).unwrap_or(false);
+        set_focused(focused);
     } else {
         log::warn!("tasti del volume non collegati: restano a Windows");
     }
@@ -313,5 +271,20 @@ mod tests {
         assert_eq!(step(VolumeKey::Up, false), 5);
         assert_eq!(step(VolumeKey::Down, true), -2);
         assert_eq!(step(VolumeKey::Mute, false), 0);
+    }
+
+    #[test]
+    fn repeats() {
+        let t = Instant::now();
+        let later = t + Duration::from_millis(100);
+        let much_later = t + Duration::from_millis(900);
+        assert!(!is_repeat(None, VolumeKey::Up, t));
+        assert!(is_repeat(Some((VolumeKey::Up, t)), VolumeKey::Up, later));
+        assert!(!is_repeat(Some((VolumeKey::Up, t)), VolumeKey::Down, later));
+        assert!(!is_repeat(
+            Some((VolumeKey::Up, t)),
+            VolumeKey::Up,
+            much_later
+        ));
     }
 }
