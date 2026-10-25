@@ -69,8 +69,10 @@ pub struct Settings {
     pub volume: u32,
     /// Lo sfondo si sposta verso il mouse.
     pub bg_motion: bool,
-    /// Il tasto di ogni azione, nell'ordine di [`crate::keys::ACTIONS`] ("" = nessuno).
+    /// Il tasto di ogni azione, nell'ordine di [`crate::keys::ACTIONS`] ("" = nessuno): con il
+    /// mouse e la tastiera, e con il telecomando.
     pub keys: Vec<String>,
+    pub remote_keys: Vec<String>,
     /// Ogni quante ore playlist e guida si aggiornano da sole (0 = mai; li legge il servizio).
     pub playlist_hours: u32,
     pub epg_hours: u32,
@@ -170,6 +172,7 @@ impl Settings {
             volume: 100,
             bg_motion: true,
             keys: crate::keys::defaults(),
+            remote_keys: crate::keys::defaults(),
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
             epg_hours: EPG_HOURS_DEFAULT,
             user_agent: None,
@@ -241,8 +244,12 @@ impl Settings {
             "pip_width" => self.pip_width = value.parse().ok().filter(|w: &f32| w.is_finite()),
             _ => {
                 if let Some(name) = key.strip_prefix("key.") {
+                    let (list, name) = match name.strip_prefix("remote.") {
+                        Some(name) => (&mut self.remote_keys, name),
+                        None => (&mut self.keys, name),
+                    };
                     if let Some(i) = crate::keys::ACTIONS.iter().position(|(n, _)| *n == name) {
-                        self.keys[i] = value.to_owned();
+                        list[i] = value.to_owned();
                     }
                 } else if let Some(id) = key.strip_prefix("locks.").and_then(|id| id.parse().ok()) {
                     self.locks.insert(id, Locks::from_value(value));
@@ -291,10 +298,13 @@ mod tests {
     fn action_keys() {
         let pairs = [
             ("key.mute".to_owned(), "x".to_owned()),
+            ("key.remote.mute".to_owned(), "z".to_owned()),
             ("key.sconosciuta".to_owned(), "y".to_owned()),
         ];
         let s = Settings::from_pairs(&pairs, Language::Italian);
         assert_eq!(s.keys[2], "x");
+        assert_eq!(s.remote_keys[2], "z");
+        assert_eq!(s.remote_keys[0], "f");
         assert_eq!(s.keys[0], "f");
         assert_eq!(s.keys.len(), crate::keys::ACTIONS.len());
     }

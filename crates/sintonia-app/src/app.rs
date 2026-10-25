@@ -576,8 +576,14 @@ Una copia dell'archivio com'era è in:
     fn show_keys(&self) {
         let Some(main) = self.main() else { return };
         let settings = self.settings.borrow();
+        // quelli della modalità in uso
+        let keys = if settings.remote {
+            &settings.remote_keys
+        } else {
+            &settings.keys
+        };
         let list = |f: &dyn Fn(&str) -> String| -> ModelRc<SharedString> {
-            let items: Vec<SharedString> = settings.keys.iter().map(|k| f(k).into()).collect();
+            let items: Vec<SharedString> = keys.iter().map(|k| f(k).into()).collect();
             ModelRc::new(VecModel::from(items))
         };
         let global = main.global::<Keys>();
@@ -586,22 +592,35 @@ Una copia dell'archivio com'era è in:
         global.set_labels(list(&|k| crate::keys::label(k, settings.language)));
     }
 
-    /// Nuovo tasto per l'azione `index` (da Impostazioni › Tasti).
+    /// Nuovo tasto per l'azione `index`, nella modalità in uso (Impostazioni › Navigazione).
     fn set_action_key(&self, index: usize, key: &str) {
-        let changed = crate::keys::assign(&mut self.settings.borrow_mut().keys, index, key);
-        for i in changed {
-            let value = self.settings.borrow().keys[i].clone();
-            if let Some(name) = crate::keys::setting_key(i) {
+        let remote = self.settings.borrow().remote;
+        let values = {
+            let mut settings = self.settings.borrow_mut();
+            let keys = if remote {
+                &mut settings.remote_keys
+            } else {
+                &mut settings.keys
+            };
+            let changed = crate::keys::assign(keys, index, key);
+            changed
+                .into_iter()
+                .map(|i| (i, keys[i].clone()))
+                .collect::<Vec<_>>()
+        };
+        for (i, value) in values {
+            if let Some(name) = crate::keys::setting_key(i, remote) {
                 self.save_setting(&name, &value);
             }
         }
         self.show_keys();
     }
 
-    /// Tutti i tasti come all'inizio.
+    /// I tasti della modalità in uso come all'inizio.
     fn reset_action_keys(&self) {
+        let remote = self.settings.borrow().remote;
         for (i, key) in crate::keys::defaults().iter().enumerate() {
-            if let Some(name) = crate::keys::setting_key(i) {
+            if let Some(name) = crate::keys::setting_key(i, remote) {
                 self.save_setting(&name, key);
             }
         }
@@ -2331,6 +2350,10 @@ Una copia dell'archivio com'era è in:
             app.router.set_reconnect(settings.reconnect);
             if key == "custom_name" {
                 app.show_custom_name();
+            }
+            // i tasti cambiano con la modalità
+            if key == "navigation" {
+                app.show_keys();
             }
             if key == "user_agent" {
                 if let Err(err) = app

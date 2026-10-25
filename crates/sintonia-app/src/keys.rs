@@ -21,9 +21,12 @@ pub const ACTIONS: [(&str, &str); 8] = [
     ("home", "h"),
 ];
 
-/// Chiave dell'impostazione dell'azione `index`.
-pub fn setting_key(index: usize) -> Option<String> {
-    ACTIONS.get(index).map(|(name, _)| format!("key.{name}"))
+/// Chiave dell'impostazione dell'azione `index`: mouse e tastiera e telecomando hanno tasti propri.
+pub fn setting_key(index: usize, remote: bool) -> Option<String> {
+    let mode = if remote { "remote." } else { "" };
+    ACTIONS
+        .get(index)
+        .map(|(name, _)| format!("key.{mode}{name}"))
 }
 
 /// I tasti di partenza.
@@ -136,8 +139,9 @@ mod tests {
     #[test]
     fn defaults_and_names() {
         assert_eq!(defaults().len(), ACTIONS.len());
-        assert_eq!(setting_key(0).as_deref(), Some("key.fullscreen"));
-        assert_eq!(setting_key(99), None);
+        assert_eq!(setting_key(0, false).as_deref(), Some("key.fullscreen"));
+        assert_eq!(setting_key(2, true).as_deref(), Some("key.remote.mute"));
+        assert_eq!(setting_key(99, false), None);
         assert_eq!(alternate("f"), "F");
         assert_eq!(alternate("+"), "");
     }

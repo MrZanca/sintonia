@@ -541,11 +541,11 @@ msgstr "Mouse e tastiera"
 msgid "Remote control"
 msgstr "Telecomando"
 
-msgid "Click with the mouse. The keyboard works as before."
-msgstr "Si clicca con il mouse. La tastiera funziona come sempre."
+msgid "Click with the mouse."
+msgstr "Si clicca con il mouse."
 
-msgid "Arrows to move, OK to open, Back to go back. Bigger buttons."
-msgstr "Frecce per spostarti, OK per aprire, Indietro per tornare. Pulsanti più grandi."
+msgid "Arrows, OK and Back. Bigger buttons."
+msgstr "Frecce, OK e Indietro. Pulsanti più grandi."
 
 msgid "With the remote control: the arrows move the white ring from one button or list to the next, OK opens what has the ring, Back goes back (from a page it goes to the menu at the bottom, from the menu to the Home)."
 msgstr "Con il telecomando: le frecce spostano l'anello bianco da un pulsante o da un elenco all'altro, OK apre quello che ha l'anello, Indietro torna indietro (da una pagina va al menu in basso, dal menu alla Home)."
@@ -566,11 +566,7 @@ msgstr "Riempi lo schermo"
 msgid "No favorite channels yet: choose a channel and press the star."
 msgstr "Ancora nessun canale preferito: scegli un canale e premi la stella."
 
-msgid "Keys"
-msgstr "Tasti"
 
-msgid "Choose the key for each action: press Change, then the key on the keyboard or on the remote control. Esc cancels. The arrows, OK and Back can't be changed."
-msgstr "Scegli il tasto di ogni azione: premi Cambia, poi il tasto sulla tastiera o sul telecomando. Esc annulla. Le frecce, OK e Indietro non si cambiano."
 
 msgid "Full screen"
 msgstr "Schermo intero"
@@ -610,3 +606,12 @@ msgstr "Lo sfondo segue il mouse"
 
 msgid "It stays still while you watch a video."
 msgstr "Resta fermo mentre guardi un video."
+
+msgid "Keys for the remote control"
+msgstr "Tasti del telecomando"
+
+msgid "Keys for mouse and keyboard"
+msgstr "Tasti di mouse e tastiera"
+
+msgid "Press Change, then the key. Esc cancels. The arrows, OK and Back can't be changed."
+msgstr "Premi Cambia, poi il tasto. Esc annulla. Le frecce, OK e Indietro non si cambiano."
