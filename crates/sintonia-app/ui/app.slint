@@ -2,10 +2,10 @@
 // Le stringhe sono in inglese con @tr(); le traduzioni stanno in lang/<lingua>/LC_MESSAGES/sintonia-app.po.
 // I dati arrivano da Rust: qui non c'è nessun canale.
 
-import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Nav, Press, ChoiceList, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo, NowNext } from "common.slint";
+import { ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, Theme, Video, Texts, Nav, Keys, Press, ChoiceList, Sq, VideoView, Icon, Icons, IconBtn, Btn, Tabs, Title, Ring, Toggle, StatusPill, Logo, EmptyState, CategoryList, HomeItem, PosterItem, EpisodeItem, DetailInfo, NowNext } from "common.slint";
 import { MediaScreen } from "media.slint";
 import { GuideScreen, GuideRow, DayItem } from "guide.slint";
-export { Video, Texts, Nav, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
+export { Video, Texts, Nav, Keys, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
 export { GuideRow, GuideBlock, DayItem } from "guide.slint";
 
 // ───────────── Barra in alto e fascia di lancio ─────────────
@@ -956,7 +956,7 @@ component LiveScreen inherits Rectangle {
                     if (event.text == Key.PageUp) { root.move(-10); return accept; }
                     if (event.text == Key.PageDown) { root.move(10); return accept; }
                     if (event.text == Key.Return && root.channels.length > 0) { root.play(root.cursor); return accept; }
-                    if ((event.text == "s" || event.text == "S") && root.channels.length > 0) { root.toggle-fav(root.cursor); return accept; }
+                    if (Keys.is(5, event.text) && root.channels.length > 0) { root.toggle-fav(root.cursor); return accept; }
                     reject
                 }
                 list := ChannelList {
@@ -1043,7 +1043,7 @@ component LiveScreen inherits Rectangle {
                 wrap: word-wrap;
             }
             if root.channels.length == 0 && root.search == "" && root.category == 1: Text {
-                text: @tr("No favorite channels yet: choose a channel and press the star (or the S key).");
+                text: @tr("No favorite channels yet: choose a channel and press the star.");
                 color: Theme.dim;
                 font-size: 15px;
                 wrap: word-wrap;
@@ -1355,6 +1355,8 @@ component SettingsScreen inherits Rectangle {
     property <string> new-pin;
     property <string> new-pin-again;
     property <int> lock-kind: 0;
+    // Tasti: l'azione che aspetta il suo tasto (-1 nessuna)
+    property <int> capturing: -1;
     property <[CategoryItem]> lock-shown: root.lock-kind == 1 ? root.lock-movies : (root.lock-kind == 2 ? root.lock-series : root.lock-live);
     changed pin-set => {
         root.new-pin = "";
@@ -1400,7 +1402,7 @@ component SettingsScreen inherits Rectangle {
                         return accept;
                     }
                     if (event.text == Key.DownArrow) {
-                        root.section = min(5, root.section + 1);
+                        root.section = min(6, root.section + 1);
                         return accept;
                     }
                     if (event.text == Key.Return) {
@@ -1410,7 +1412,7 @@ component SettingsScreen inherits Rectangle {
                     reject
                 }
             }
-            for s[i] in [@tr("Sources"), @tr("Language"), @tr("Playback"), @tr("Updates"), @tr("Parental control"), @tr("Navigation")]: SetRow {
+            for s[i] in [@tr("Sources"), @tr("Language"), @tr("Playback"), @tr("Updates"), @tr("Parental control"), @tr("Navigation"), @tr("Keys")]: SetRow {
                 label: s;
                 active: root.section == i;
                 focused: Nav.tv && menu.has-focus && root.section == i;
@@ -1759,6 +1761,91 @@ component SettingsScreen inherits Rectangle {
                         edited(v) => { root.setting-changed("custom_name", v); }
                     }
                 }
+            }
+        }
+        // tasti delle azioni
+        if root.section == 6: VerticalLayout {
+            width: 680px;
+            alignment: start;
+            spacing: 8px;
+            Title { text: @tr("Keys"); }
+            Text {
+                text: @tr("Choose the key for each action: press Change, then the key on the keyboard or on the remote control. Esc cancels. The arrows, OK and Back can't be changed.");
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            // aspetta il tasto: li prende tutti finché non arriva quello buono
+            cap := FocusScope {
+                height: 0px;
+                focus-on-click: false;
+                focus-on-tab-navigation: false;
+                focus-lost => { root.capturing = -1; }
+                key-pressed(event) => {
+                    if (root.capturing < 0) { return reject; }
+                    if (event.text == Key.Escape) {
+                        root.capturing = -1;
+                        menu.focus();
+                        return accept;
+                    }
+                    // i tasti per muoversi e quelli che da soli non fanno niente non si assegnano
+                    if (event.text == "" || event.text == Key.Shift || event.text == Key.ShiftR || event.text == Key.Control
+                        || event.text == Key.ControlR || event.text == Key.Alt || event.text == Key.AltGr
+                        || event.text == Key.Meta || event.text == Key.MetaR || event.text == Key.UpArrow
+                        || event.text == Key.DownArrow || event.text == Key.LeftArrow || event.text == Key.RightArrow
+                        || event.text == Key.Return || event.text == Key.Tab || event.text == Key.Backtab
+                        || event.text == Key.Backspace || event.text == Key.CapsLock) {
+                        return accept;
+                    }
+                    Keys.set-key(root.capturing, event.text);
+                    root.capturing = -1;
+                    menu.focus();
+                    accept
+                }
+            }
+            for name[i] in [@tr("Full screen"), @tr("Mini player"), @tr("Mute"), @tr("Volume up"), @tr("Volume down"), @tr("Favorite (in Live)"), @tr("Open the Guide"), @tr("Go to the Home")]: Rectangle {
+                height: 50px;
+                Sq {
+                    r: 18px;
+                    fill: root.capturing == i ? #ffffff26 : Theme.glass;
+                    stroke: root.capturing == i ? Theme.needle : transparent;
+                    stroke-width: 2px;
+                }
+                HorizontalLayout {
+                    padding-left: 18px;
+                    padding-right: 8px;
+                    spacing: 12px;
+                    Text {
+                        text: name;
+                        color: Theme.ink;
+                        font-size: 15px;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: root.capturing == i ? @tr("Press a key…") : (Keys.labels[i] != "" ? Keys.labels[i] : "—");
+                        color: root.capturing == i ? Theme.needle : Theme.ink;
+                        font-size: 15px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Btn {
+                            label: @tr("Change");
+                            height: 34px;
+                            clicked => {
+                                root.capturing = i;
+                                cap.focus();
+                            }
+                        }
+                    }
+                }
+            }
+            Rectangle { height: 4px; }
+            HorizontalLayout {
+                alignment: start;
+                Btn { label: @tr("Restore the default keys"); clicked => { Keys.reset(); } }
             }
         }
         // navigazione: mouse o telecomando
@@ -2127,16 +2214,21 @@ component PlayerScreen inherits Rectangle {
                 if (root.drawer) { root.drawer = false; } else { root.back(); }
                 return accept;
             }
-            if (event.text == "p" || event.text == "P") {
+            if (Keys.is(1, event.text)) {
                 root.pip();
                 return accept;
             }
-            if (event.text == "f" || event.text == "F") {
+            if (Keys.is(0, event.text)) {
                 root.toggle-fullscreen();
                 return accept;
             }
-            if (event.text == "m" || event.text == "M") {
+            if (Keys.is(2, event.text)) {
                 Video.toggle-mute();
+                root.show-overlay();
+                return accept;
+            }
+            if (Keys.is(3, event.text) || Keys.is(4, event.text)) {
+                Video.set-volume(max(0, min(100, Video.volume + (Keys.is(3, event.text) ? 5 : -5))));
                 root.show-overlay();
                 return accept;
             }
@@ -2342,8 +2434,9 @@ component PlayerScreen inherits Rectangle {
                                 sub-popup.show();
                             }
                         }
-                        aspect-btn := Btn {
-                            label: @tr("Aspect: {}", root.aspect-names[root.aspect]);
+                        aspect-btn := IconBtn {
+                            icon: Icons.aspect;
+                            size: 38px;
                             clicked => { aspect-popup.show(); }
                         }
                     }
@@ -2964,6 +3057,32 @@ export component MainWindow inherits Window {
             reject
         }
         key-pressed(event) => {
+            if (Keys.is(0, event.text)) {
+                root.toggle-fullscreen();
+                return accept;
+            }
+            if (Keys.is(1, event.text) && root.has-current) {
+                root.request-pip(-1);
+                root.playing = false;
+                return accept;
+            }
+            if (Keys.is(2, event.text)) {
+                Video.toggle-mute();
+                return accept;
+            }
+            if (Keys.is(3, event.text) || Keys.is(4, event.text)) {
+                Video.set-volume(max(0, min(100, Video.volume + (Keys.is(3, event.text) ? 5 : -5))));
+                return accept;
+            }
+            if (Keys.is(6, event.text)) {
+                root.playing = false;
+                root.page = 2;
+                return accept;
+            }
+            if (Keys.is(7, event.text)) {
+                root.go-home();
+                return accept;
+            }
             if (!Nav.tv) { return reject; }
             if (event.text == Key.LeftArrow || event.text == Key.UpArrow) {
                 Nav.step(false);

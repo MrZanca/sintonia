@@ -287,8 +287,6 @@ msgstr "Film e serie arrivano con un account Xtream Codes: aggiungilo nelle Impo
 msgid "Next episode"
 msgstr "Prossimo episodio"
 
-msgid "No favorite channels yet: choose a channel and press the star (or the S key)."
-msgstr "Ancora nessun canale preferito: scegli un canale e premi la stella (o il tasto S)."
 
 msgid "No source yet"
 msgstr "Ancora nessuna sorgente"
@@ -558,11 +556,51 @@ msgstr "Nel player: ↑ ↓ cambiano canale, OK apre l'elenco dei canali, ← �
 msgid "To type (an address, a search) you need the keyboard: the one on the back of the remote, if it has one, or the Windows on-screen keyboard."
 msgstr "Per scrivere (un indirizzo, una ricerca) serve la tastiera: quella sul retro del telecomando, se ce l'ha, o la tastiera su schermo di Windows."
 
-msgid "Aspect: {}"
-msgstr "Proporzioni: {}"
 
 msgid "Aspect ratio"
 msgstr "Proporzioni dell'immagine"
 
 msgid "Fill the screen"
 msgstr "Riempi lo schermo"
+
+msgid "No favorite channels yet: choose a channel and press the star."
+msgstr "Ancora nessun canale preferito: scegli un canale e premi la stella."
+
+msgid "Keys"
+msgstr "Tasti"
+
+msgid "Choose the key for each action: press Change, then the key on the keyboard or on the remote control. Esc cancels. The arrows, OK and Back can't be changed."
+msgstr "Scegli il tasto di ogni azione: premi Cambia, poi il tasto sulla tastiera o sul telecomando. Esc annulla. Le frecce, OK e Indietro non si cambiano."
+
+msgid "Full screen"
+msgstr "Schermo intero"
+
+msgid "Mini player"
+msgstr "Mini player"
+
+msgid "Mute"
+msgstr "Muto"
+
+msgid "Volume up"
+msgstr "Alza il volume"
+
+msgid "Volume down"
+msgstr "Abbassa il volume"
+
+msgid "Favorite (in Live)"
+msgstr "Preferito (in Live)"
+
+msgid "Open the Guide"
+msgstr "Apri la Guida"
+
+msgid "Go to the Home"
+msgstr "Vai alla Home"
+
+msgid "Press a key…"
+msgstr "Premi un tasto…"
+
+msgid "Change"
+msgstr "Cambia"
+
+msgid "Restore the default keys"
+msgstr "Rimetti i tasti di partenza"

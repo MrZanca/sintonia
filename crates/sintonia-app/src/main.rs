@@ -11,6 +11,7 @@ mod awake;
 mod catalog;
 mod guide;
 mod images;
+mod keys;
 mod remote;
 mod settings;
 mod video;

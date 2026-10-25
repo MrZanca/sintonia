@@ -38,6 +38,22 @@ pub fn remote_action(key: &WinitKey) -> Option<Action> {
             Some(Action::Press(Key::Space))
         }
         NamedKey::Select => Some(Action::Press(Key::Return)),
+        // i tasti in più dei telecomandi diventano F13…F24, che si possono assegnare in
+        // Impostazioni › Tasti
+        NamedKey::BrowserFavorites => Some(Action::Press(Key::F13)),
+        NamedKey::BrowserSearch => Some(Action::Press(Key::F14)),
+        NamedKey::BrowserRefresh => Some(Action::Press(Key::F15)),
+        NamedKey::BrowserForward => Some(Action::Press(Key::F16)),
+        NamedKey::MediaTrackNext => Some(Action::Press(Key::F17)),
+        NamedKey::MediaTrackPrevious => Some(Action::Press(Key::F18)),
+        NamedKey::MediaStop => Some(Action::Press(Key::F19)),
+        NamedKey::LaunchMail => Some(Action::Press(Key::F20)),
+        NamedKey::LaunchApplication1 => Some(Action::Press(Key::F21)),
+        NamedKey::LaunchApplication2 => Some(Action::Press(Key::F22)),
+        NamedKey::Info => Some(Action::Press(Key::F23)),
+        NamedKey::Guide => Some(Action::Press(Key::F24)),
+        NamedKey::ChannelUp => Some(Action::Press(Key::PageUp)),
+        NamedKey::ChannelDown => Some(Action::Press(Key::PageDown)),
         _ => None,
     }
 }
@@ -131,6 +147,8 @@ mod tests {
         assert_eq!(remote_action(&home), Some(Action::Home));
         let play = WinitKey::Named(NamedKey::MediaPlayPause);
         assert_eq!(remote_action(&play), Some(Action::Press(Key::Space)));
+        let fav = WinitKey::Named(NamedKey::BrowserFavorites);
+        assert_eq!(remote_action(&fav), Some(Action::Press(Key::F13)));
         // le frecce e le lettere le gestisce già Slint
         assert_eq!(remote_action(&WinitKey::Named(NamedKey::ArrowUp)), None);
         assert_eq!(remote_action(&WinitKey::Character("a".into())), None);

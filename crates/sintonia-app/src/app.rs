@@ -33,7 +33,7 @@ use crate::images;
 use crate::settings::{self, Language, Locks, Settings};
 use crate::video::VideoRouter;
 use crate::{
-    CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, MainWindow, Nav, PipWindow,
+    CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, Keys, MainWindow, Nav, PipWindow,
     SourceItem, SourceStatus, Texts, TrackItem, Video,
 };
 
@@ -566,8 +566,45 @@ Una copia dell'archivio com'era è in:
             main.set_user_agent(settings.user_agent.clone().unwrap_or_default().into());
         }
         *self.settings.borrow_mut() = settings;
+        self.show_keys();
         self.show_custom_name();
         self.apply_locks();
+    }
+
+    /// I tasti delle azioni, per l'interfaccia (anche i nomi dipendono dalla lingua).
+    fn show_keys(&self) {
+        let Some(main) = self.main() else { return };
+        let settings = self.settings.borrow();
+        let list = |f: &dyn Fn(&str) -> String| -> ModelRc<SharedString> {
+            let items: Vec<SharedString> = settings.keys.iter().map(|k| f(k).into()).collect();
+            ModelRc::new(VecModel::from(items))
+        };
+        let global = main.global::<Keys>();
+        global.set_keys(list(&|k| k.to_owned()));
+        global.set_alt(list(&crate::keys::alternate));
+        global.set_labels(list(&|k| crate::keys::label(k, settings.language)));
+    }
+
+    /// Nuovo tasto per l'azione `index` (da Impostazioni › Tasti).
+    fn set_action_key(&self, index: usize, key: &str) {
+        let changed = crate::keys::assign(&mut self.settings.borrow_mut().keys, index, key);
+        for i in changed {
+            let value = self.settings.borrow().keys[i].clone();
+            if let Some(name) = crate::keys::setting_key(i) {
+                self.save_setting(&name, &value);
+            }
+        }
+        self.show_keys();
+    }
+
+    /// Tutti i tasti come all'inizio.
+    fn reset_action_keys(&self) {
+        for (i, key) in crate::keys::defaults().iter().enumerate() {
+            if let Some(name) = crate::keys::setting_key(i) {
+                self.save_setting(&name, key);
+            }
+        }
+        self.show_keys();
     }
 
     fn apply_language(&self, language: Language) {
@@ -2138,6 +2175,12 @@ Una copia dell'archivio com'era è in:
             app.load_tracks();
         }));
         main.on_set_aspect(with_app!(|app, aspect: i32| app.set_aspect(aspect)));
+        main.global::<Keys>()
+            .on_set_key(with_app!(|app, index: i32, key: SharedString| {
+                app.set_action_key(usize::try_from(index).unwrap_or(usize::MAX), &key);
+            }));
+        main.global::<Keys>()
+            .on_reset(on(|app| app.reset_action_keys()));
         main.global::<Video>()
             .on_set_volume(with_app!(|app, volume: i32| {
                 app.router.set_volume(volume);

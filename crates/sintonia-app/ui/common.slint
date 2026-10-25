@@ -154,6 +154,22 @@ export global Nav {
     callback step(bool);
 }
 
+// I tasti delle azioni (scelti dall'utente in Impostazioni › Tasti). Li imposta Rust.
+// Azioni: 0 schermo intero, 1 mini player, 2 muto, 3 volume su, 4 volume giù, 5 preferito (Live),
+// 6 Guida, 7 Home.
+export global Keys {
+    // il tasto di ogni azione, come lo manda Slint ("" = nessuno), e la sua variante maiuscola
+    in property <[string]> keys;
+    in property <[string]> alt;
+    // il nome del tasto da mostrare
+    in property <[string]> labels;
+    callback set-key(int, string);
+    callback reset();
+    public pure function is(action: int, text: string) -> bool {
+        return text != "" && (text == root.keys[action] || text == root.alt[action]);
+    }
+}
+
 // Il video di libmpv. Rust disegna il fotogramma in una texture OpenGL grande quanto il riquadro
 // (`w` × `h`), con gli angoli già ritagliati a super-ellisse di raggio `r`, e la passa in `frame`.
 // Ogni finestra ha la sua istanza di questo global.
@@ -348,6 +364,8 @@ export global Icons {
     out property <string> forward: "M13 6 L20 12 L13 18 Z M4 6 L11 12 L4 18 Z";
     out property <string> next: "M5 5 L15 12 L5 19 Z M19 5 V19";
     out property <string> lock: "M6 11 H18 V20 H6 Z M8.5 11 V8 A3.5 3.5 0 0 1 15.5 8 V11";
+    // proporzioni dell'immagine: un riquadro con gli angoli che si allargano
+    out property <string> aspect: "M3 6 H21 V18 H3 Z M7 12 V9 H10 M17 12 V15 H14";
 }
 
 // Rende premibile con OK (Invio) un pulsante raggiunto con le frecce. Con il telecomando, quando ha

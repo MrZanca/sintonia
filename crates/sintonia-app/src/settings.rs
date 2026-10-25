@@ -67,6 +67,8 @@ pub struct Settings {
     pub remote: bool,
     /// Volume del player, da 0 a 100.
     pub volume: u32,
+    /// Il tasto di ogni azione, nell'ordine di [`crate::keys::ACTIONS`] ("" = nessuno).
+    pub keys: Vec<String>,
     /// Ogni quante ore playlist e guida si aggiornano da sole (0 = mai; li legge il servizio).
     pub playlist_hours: u32,
     pub epg_hours: u32,
@@ -164,6 +166,7 @@ impl Settings {
             update_check: true,
             remote: false,
             volume: 100,
+            keys: crate::keys::defaults(),
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
             epg_hours: EPG_HOURS_DEFAULT,
             user_agent: None,
@@ -233,7 +236,11 @@ impl Settings {
             "last_channel" => self.last_channel = Some(value.to_owned()),
             "pip_width" => self.pip_width = value.parse().ok().filter(|w: &f32| w.is_finite()),
             _ => {
-                if let Some(id) = key.strip_prefix("locks.").and_then(|id| id.parse().ok()) {
+                if let Some(name) = key.strip_prefix("key.") {
+                    if let Some(i) = crate::keys::ACTIONS.iter().position(|(n, _)| *n == name) {
+                        self.keys[i] = value.to_owned();
+                    }
+                } else if let Some(id) = key.strip_prefix("locks.").and_then(|id| id.parse().ok()) {
                     self.locks.insert(id, Locks::from_value(value));
                 } else if let Some(id) = key.strip_prefix("custom.").and_then(|id| id.parse().ok())
                 {
@@ -274,6 +281,18 @@ mod tests {
         assert!(Settings::from_pairs(&remote, Language::Italian).remote);
         let mouse = [("navigation".to_owned(), "mouse".to_owned())];
         assert!(!Settings::from_pairs(&mouse, Language::Italian).remote);
+    }
+
+    #[test]
+    fn action_keys() {
+        let pairs = [
+            ("key.mute".to_owned(), "x".to_owned()),
+            ("key.sconosciuta".to_owned(), "y".to_owned()),
+        ];
+        let s = Settings::from_pairs(&pairs, Language::Italian);
+        assert_eq!(s.keys[2], "x");
+        assert_eq!(s.keys[0], "f");
+        assert_eq!(s.keys.len(), crate::keys::ACTIONS.len());
     }
 
     #[test]
