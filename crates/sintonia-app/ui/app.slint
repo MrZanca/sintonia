@@ -1343,11 +1343,15 @@ component SwitchRow inherits Rectangle {
     in property <string> detail;
     in-out property <bool> on;
     callback toggled(bool);
-    height: 66px;
+    // la spiegazione va a capo nei riquadri stretti: la riga si allunga, l'interruttore resta dentro
+    height: max(66px, row.preferred-height);
     Sq { r: 22px; fill: Theme.glass; }
-    HorizontalLayout {
+    row := HorizontalLayout {
         padding-left: 22px;
         padding-right: 22px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 14px;
         VerticalLayout {
             alignment: center;
             spacing: 3px;
@@ -1357,11 +1361,13 @@ component SwitchRow inherits Rectangle {
                 color: Theme.ink;
                 font-size: 16px;
                 font-weight: 600;
+                wrap: word-wrap;
             }
             if root.detail != "": Text {
                 text: root.detail;
                 color: Theme.dim;
                 font-size: 12px;
+                wrap: word-wrap;
             }
         }
         VerticalLayout {
