@@ -2322,7 +2322,15 @@ component PlayerScreen inherits Rectangle {
     property <[string]> aspect-names: [@tr("Auto"), "16:9", "4:3", @tr("Fill the screen")];
     // il puntatore sparisce insieme alle informazioni (Rust lo nasconde anche col mouse fermo)
     callback cursor-hidden(bool);
-    property <bool> hide-cursor: !root.overlay && !root.drawer;
+    // con il telecomando il puntatore compare solo se il mouse si muove davvero, e sparisce al
+    // primo tasto; con il mouse va e viene con le informazioni
+    property <bool> pointer-active;
+    property <int> mouse-moves: Nav.mouse-count;
+    changed mouse-moves => { root.pointer-active = true; }
+    property <int> keys-for-pointer: Nav.key-count;
+    changed keys-for-pointer => { root.pointer-active = false; }
+    property <bool> hide-cursor: Nav.tv ? !root.pointer-active || (!root.overlay && !root.drawer)
+        : (!root.overlay && !root.drawer);
     changed hide-cursor => { root.cursor-hidden(self.hide-cursor); }
     background: #000000;
 
@@ -2389,6 +2397,7 @@ component PlayerScreen inherits Rectangle {
     init => {
         fs.focus();
         root.show-overlay();
+        root.cursor-hidden(root.hide-cursor);
     }
 
     fs := FocusScope {
@@ -2500,7 +2509,7 @@ component PlayerScreen inherits Rectangle {
     if Texts.status(Video.state, Video.attempt) != "": StatusPill { }
     TouchArea {
         // senza informazioni a video sparisce anche il puntatore
-        mouse-cursor: root.overlay || root.drawer ? MouseCursor.default : MouseCursor.none;
+        mouse-cursor: root.hide-cursor ? MouseCursor.none : MouseCursor.default;
         pointer-event(e) => {
             if (e.kind == PointerEventKind.move) {
                 root.show-overlay();

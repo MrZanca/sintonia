@@ -156,6 +156,8 @@ export global Nav {
     in-out property <bool> key-seen;
     // cresce a ogni tasto premuto (per i tempi «senza tasti»)
     in-out property <int> key-count;
+    // cresce quando il mouse si muove davvero (lo dice Rust)
+    in-out property <int> mouse-count;
     // sposta il fuoco all'elemento seguente (true) o precedente (false)
     callback step(bool);
 }
