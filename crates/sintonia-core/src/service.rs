@@ -27,6 +27,7 @@ use crate::db::{
 use crate::epg::{self, EpgError, ParseStats, Programme, XmltvChannel};
 use crate::m3u::{self, Parser, Playlist};
 use crate::secrets::{source_password_name, SecretStore};
+use crate::update;
 use crate::xtream::{self, AccountInfo, Credentials, MovieDetail, SeriesDetail, XtreamError};
 
 /// Dimensione massima di una playlist (per non riempire la memoria con una risposta sbagliata).
@@ -46,6 +47,8 @@ const HISTORY_LIMIT: u32 = 30;
 const MAX_EPG_BYTES: u64 = 1024 * 1024 * 1024;
 /// Ogni quanto si guarda se playlist e guida della sorgente in uso vanno aggiornate.
 const AUTO_CHECK: Duration = Duration::from_secs(10 * 60);
+/// Ogni quanto si chiede a GitHub se c'è una versione nuova di Sintonia (secondi).
+const UPDATE_EVERY: i64 = 86_400;
 /// Dopo un aggiornamento automatico fallito si riprova dopo un'ora (secondi).
 const AUTO_RETRY: i64 = 3600;
 /// Intervalli predefiniti di aggiornamento automatico (ore; 0 = mai).
@@ -393,6 +396,8 @@ pub enum Event {
         /// Programmi, per canale e in ordine di inizio.
         programmes: Arc<Vec<GuideProgramme>>,
     },
+    /// È uscita una versione nuova di Sintonia.
+    Update(update::Update),
     /// L'archivio all'avvio era rovinato (riparato o no); solo se non era integro.
     Health(Health),
     /// Errore da mostrare.
@@ -443,6 +448,8 @@ struct Shared {
     epg_in_flight: Mutex<HashSet<i64>>,
     /// Un controllo automatico (playlist e guida) è in corso.
     auto_in_flight: AtomicBool,
+    /// Ultimo controllo della versione nuova (secondi Unix; 0 = mai in questa sessione).
+    update_checked: Mutex<i64>,
     /// Stato dell'archivio all'avvio (si manda all'interfaccia con `Init`).
     health: Mutex<Option<Health>>,
     /// Ultimo aggiornamento automatico fallito, per sorgente (playlist o guida): si riprova dopo
@@ -581,6 +588,7 @@ impl Service {
             epg_in_flight: Mutex::new(HashSet::new()),
             auto_in_flight: AtomicBool::new(false),
             health: Mutex::new(Some(health)),
+            update_checked: Mutex::new(0),
             auto_failed: Mutex::new(HashMap::new()),
         });
         let (commands, mut inbox) = mpsc::unbounded_channel::<Command>();
@@ -597,6 +605,7 @@ impl Service {
                         loop {
                             interval.tick().await;
                             auto_refresh(&ticker).await;
+                            check_update(&ticker).await;
                         }
                     });
                     while let Some(command) = inbox.recv().await {
@@ -658,6 +667,7 @@ async fn handle(shared: Arc<Shared>, command: Command) {
             }
             emit_everything(&shared).await;
             auto_refresh(&shared).await;
+            check_update(&shared).await;
         }
         Command::VerifySource(source) => {
             shared.emit(Event::Working(true));
@@ -863,6 +873,58 @@ async fn finish_save(shared: &Arc<Shared>, result: Result<(i64, SourceReport), S
     // sorgente nuova o appena aggiornata: anche la guida
     if let Some(id) = source_id {
         refresh_epg(shared, Some(id), true).await;
+    }
+}
+
+// ───────────── versione nuova ─────────────
+
+/// Chiede a GitHub l'ultima Release (all'avvio e poi una volta al giorno, se l'impostazione
+/// «update_check» non è spenta) e manda [`Event::Update`] se è più nuova. Gli errori di rete
+/// finiscono solo nel log.
+async fn check_update(shared: &Arc<Shared>) {
+    {
+        let mut last = shared
+            .update_checked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if now() - *last < UPDATE_EVERY {
+            return;
+        }
+        *last = now();
+    }
+    let settings = shared
+        .with_store(|s| Ok((s.setting("update_check")?, s.setting("update_skipped")?)))
+        .await;
+    let Ok((enabled, skipped)) = settings else {
+        return;
+    };
+    if enabled.as_deref() == Some("0") {
+        return;
+    }
+    let response = shared
+        .http
+        .get(update::LATEST_RELEASE)
+        .header("Accept", "application/vnd.github+json")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await;
+    let body = match response {
+        Ok(r) if r.status().is_success() => r.text().await.unwrap_or_default(),
+        Ok(r) => {
+            log::info!(
+                "controllo della versione: GitHub ha risposto {}",
+                r.status()
+            );
+            return;
+        }
+        Err(err) => {
+            log::info!("controllo della versione: {}", err.without_url());
+            return;
+        }
+    };
+    if let Some(found) = update::from_response(&body, update::CURRENT, skipped.as_deref()) {
+        log::info!("disponibile la versione {}", found.version);
+        shared.emit(Event::Update(found));
     }
 }
 

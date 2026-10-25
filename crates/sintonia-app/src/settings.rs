@@ -61,6 +61,8 @@ pub struct Settings {
     pub fullscreen_start: bool,
     /// Nell'elenco Live il canale evidenziato si apre da solo dopo un attimo.
     pub live_preview: bool,
+    /// Avviso quando esce una versione nuova (il controllo lo fa il servizio).
+    pub update_check: bool,
     /// Ogni quante ore playlist e guida si aggiornano da sole (0 = mai; li legge il servizio).
     pub playlist_hours: u32,
     pub epg_hours: u32,
@@ -155,6 +157,7 @@ impl Settings {
             reconnect: true,
             fullscreen_start: false,
             live_preview: true,
+            update_check: true,
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
             epg_hours: EPG_HOURS_DEFAULT,
             user_agent: None,
@@ -197,6 +200,7 @@ impl Settings {
             "reconnect" => self.reconnect = flag,
             "fullscreen_start" => self.fullscreen_start = flag,
             "live_preview" => self.live_preview = flag,
+            "update_check" => self.update_check = flag,
             "playlist_hours" => {
                 if let Ok(hours) = value.trim().parse() {
                     self.playlist_hours = hours;
