@@ -69,7 +69,7 @@ pub struct Settings {
     pub volume: u32,
     /// Lo sfondo si sposta verso il mouse.
     pub bg_motion: bool,
-    /// Grandezza dei testi: 0 normale, 1 grande (1,5×).
+    /// Grandezza dei testi: 0 normale, 1 grande (1,25×).
     pub text_size: u32,
     /// I tasti del volume (telecomando, tastiere multimediali) regolano Sintonia e non Windows.
     pub media_volume: bool,

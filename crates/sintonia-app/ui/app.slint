@@ -1657,9 +1657,9 @@ component SettingsScreen inherits Rectangle {
                 Title { text: @tr("Text size"); }
                 Tabs {
                     options: [@tr("Normal"), @tr("Large")];
-                    current: Theme.text-scale >= 1.4 ? 1 : 0;
+                    current: Theme.text-scale >= 1.1 ? 1 : 0;
                     clicked(i) => {
-                        Theme.text-scale = i == 1 ? 1.5 : 1;
+                        Theme.text-scale = i == 1 ? 1.25 : 1;
                         root.setting-changed("text_size", i == 1 ? "1" : "0");
                     }
                 }

@@ -125,7 +125,7 @@ export struct DetailInfo {
 
 export global Theme {
     in-out property <int> page: 0;
-    // grandezza dei testi scelta nelle Impostazioni (1, 1,5 o 2); `grow` per righe e pulsanti,
+    // grandezza dei testi scelta nelle Impostazioni (1 o 1,25); `grow` per righe e pulsanti,
     // che crescono un po' meno dei testi
     in-out property <float> text-scale: 1;
     out property <float> grow: 1 + (root.text-scale - 1) * 0.85;
