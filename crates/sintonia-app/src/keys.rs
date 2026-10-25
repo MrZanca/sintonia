@@ -69,6 +69,18 @@ pub fn defaults(remote: bool) -> Vec<String> {
     keys
 }
 
+/// Prima dell'ottobre 2026 «indietro» stava sul tasto che sull'Esynic è Home (F21) e Home sulla
+/// lettera «h»: chi li aveva salvati così li ritrova come vanno (Home alla Home, «e» indietro).
+pub fn migrate_remote(keys: &mut [String]) {
+    let text = |k: Key| slint::SharedString::from(k).to_string();
+    if keys.get(8).is_some_and(|k| *k == text(Key::F21)) {
+        keys[8] = text(Key::F23);
+        if keys.get(7).is_some_and(|k| k == "h" || k.is_empty()) {
+            keys[7] = text(Key::F21);
+        }
+    }
+}
+
 /// La variante maiuscola di una lettera (con Maiusc o il blocco maiuscole la lettera arriva così).
 pub fn alternate(key: &str) -> String {
     let upper = key.to_uppercase();
@@ -166,6 +178,22 @@ mod tests {
         assert_eq!(setting_key(99, false), None);
         assert_eq!(alternate("f"), "F");
         assert_eq!(alternate("+"), "");
+    }
+
+    #[test]
+    fn old_remote_keys_are_fixed() {
+        let text = |k: Key| slint::SharedString::from(k).to_string();
+        let mut old = defaults(true);
+        old[7] = "h".to_owned();
+        old[8] = text(Key::F21);
+        migrate_remote(&mut old);
+        assert_eq!(old, defaults(true));
+        // scelte diverse restano come sono
+        let mut mine = defaults(true);
+        mine[8] = "x".to_owned();
+        let before = mine.clone();
+        migrate_remote(&mut mine);
+        assert_eq!(mine, before);
     }
 
     #[test]

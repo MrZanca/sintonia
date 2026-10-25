@@ -198,6 +198,7 @@ impl Settings {
         for (key, value) in pairs {
             settings.set(key, value);
         }
+        crate::keys::migrate_remote(&mut settings.remote_keys);
         settings
     }
 
