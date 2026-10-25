@@ -2318,12 +2318,21 @@ component PlayerScreen inherits Rectangle {
 
     // Le informazioni sul video spariscono dopo qualche secondo senza movimenti del mouse o tasti;
     // restano finché il puntatore è sopra i pulsanti o l'elenco canali è aperto.
+    property <int> video-state: Video.state;
+    changed video-state => {
+        // in onda: le informazioni restano altri 5 secondi da adesso
+        if (Nav.tv && self.video-state == 2 && root.overlay) { root.show-overlay(); }
+    }
     hide-timer := Timer {
         interval: 5s;
         running: false;
         triggered => {
             self.stop();
-            if (root.drawer || root.controls-hovered || root.controls-focused || root.paused) {
+            // con il telecomando le informazioni restano finché il canale carica: i 5 secondi
+            // partono quando è in onda
+            let loading = Nav.tv && !root.on-demand
+                && (Video.state == 1 || Video.state == 3 || Video.state == 5);
+            if (root.drawer || root.controls-hovered || root.controls-focused || root.paused || loading) {
                 self.start();
             } else {
                 root.overlay = false;
@@ -2402,7 +2411,16 @@ component PlayerScreen inherits Rectangle {
                 return accept;
             }
             if (event.text == Key.Return) {
-                if (root.drawer) { root.play(root.cursor); } else { root.toggle-drawer(); }
+                if (root.drawer) {
+                    root.play(root.cursor);
+                    // con il telecomando la scelta chiude l'elenco, come sulla TV
+                    if (Nav.tv) {
+                        root.drawer = false;
+                        root.show-overlay();
+                    }
+                } else {
+                    root.toggle-drawer();
+                }
                 return accept;
             }
             if (event.text == Key.Escape) {
@@ -2503,8 +2521,9 @@ component PlayerScreen inherits Rectangle {
             x: 36px;
             y: 28px;
             spacing: 10px;
-            opacity: root.overlay && !root.drawer ? 1 : 0;
-            visible: self.opacity > 0.01 || (root.overlay && !root.drawer);
+            // con il telecomando non servono: Indietro e Home sono sul telecomando
+            opacity: root.overlay && !root.drawer && !Nav.tv ? 1 : 0;
+            visible: !Nav.tv && (self.opacity > 0.01 || (root.overlay && !root.drawer));
             animate opacity { duration: 250ms; }
             back-btn := IconBtn { icon: Icons.back; clicked => { root.back(); } }
             home-btn := IconBtn { icon: Icons.home; clicked => { root.home(); } }
@@ -3265,7 +3284,12 @@ export component MainWindow inherits Window {
     callback page-changed(int);
 
     // tasto Home del telecomando
+    // con il telecomando lo stesso tasto apre il menu dal video e lo richiude
     public function go-home() {
+        if (Nav.tv && !root.playing && root.has-current) {
+            root.watch-current();
+            return;
+        }
         root.playing = false;
         root.page = 0;
     }
