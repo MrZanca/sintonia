@@ -3178,6 +3178,33 @@ export component MainWindow inherits Window {
     property <int> dock-focus-tick;
     property <int> pin-focus-tick;
     property <int> search-focus-tick;
+    // il livello del volume a video: si accende quando cambia, si spegne dopo 2 secondi; dopo
+    // l'avvio (il volume salvato non deve mostrarlo)
+    property <bool> osd-shown;
+    property <bool> osd-armed;
+    property <int> osd-volume: Video.volume;
+    property <bool> osd-muted: Video.muted;
+    function show-osd() {
+        if (!root.osd-armed) { return; }
+        root.osd-shown = true;
+        osd-timer.stop();
+        osd-timer.start();
+    }
+    changed osd-volume => { root.show-osd(); }
+    changed osd-muted => { root.show-osd(); }
+    osd-timer := Timer {
+        interval: 2s;
+        running: false;
+        triggered => {
+            self.running = false;
+            root.osd-shown = false;
+        }
+    }
+    Timer {
+        interval: 3s;
+        running: !root.osd-armed;
+        triggered => { root.osd-armed = true; }
+    }
 
     // c'è un riquadro video sullo schermo (Home, Live o player)
     out property <bool> video-visible: root.playing || (root.page <= 1 && !root.no-source);
@@ -3616,6 +3643,52 @@ export component MainWindow inherits Window {
             select-sub(id) => { root.select-sub(id); }
             set-aspect(i) => { root.set-aspect(i); }
             cursor-hidden(h) => { root.cursor-hidden(h); }
+        }
+
+        // il livello del volume a video quando cambia (tasti, telecomando, barra, muto)
+        if root.osd-shown: Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: parent.height * 0.12;
+            width: 340px;
+            height: 64px;
+            Sq { r: 32px; fill: #000000c8; stroke: #ffffff22; stroke-width: 1px; }
+            HorizontalLayout {
+                padding-left: 22px;
+                padding-right: 24px;
+                spacing: 16px;
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        commands: Video.muted || Video.volume == 0 ? Icons.muted : Icons.sound;
+                        width: 26px;
+                        height: 26px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Rectangle {
+                        height: 6px;
+                        Sq { r: 3px; fill: #ffffff2a; }
+                        Sq {
+                            x: 0px;
+                            width: Video.muted ? 0px : parent.width * Video.volume / 100;
+                            height: parent.height;
+                            r: 3px;
+                            fill: Theme.needle;
+                        }
+                    }
+                }
+                Text {
+                    width: 46px;
+                    text: Video.muted ? @tr("Mute") : Video.volume;
+                    color: Theme.ink;
+                    font-size: 18px;
+                    font-weight: 600;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
         }
 
         if root.pin-prompt: PinDialog {

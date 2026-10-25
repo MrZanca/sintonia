@@ -799,13 +799,13 @@ Una copia dell'archivio com'era è in:
         self.request_day();
 
         // all'avvio riprende l'ultimo canale (l'anteprima della Home è «in onda»); con il
-        // telecomando Sintonia è una TV: si accende a schermo intero sul canale
+        // telecomando Sintonia è una TV: si accende sul canale (a schermo intero se in
+        // Riproduzione è acceso «Avvia a schermo intero», se no in finestra)
         if !self.started.replace(true) {
             if let Some(id) = current {
                 self.play_channel(id);
                 if self.settings.borrow().remote {
                     if let Some(main) = self.main() {
-                        self.set_fullscreen(true);
                         main.set_playing(true);
                     }
                 }
