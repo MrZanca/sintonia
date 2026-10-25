@@ -65,6 +65,8 @@ pub struct Settings {
     pub update_check: bool,
     /// Si usa il telecomando (frecce, OK, Indietro) invece del mouse.
     pub remote: bool,
+    /// Volume del player, da 0 a 100.
+    pub volume: u32,
     /// Ogni quante ore playlist e guida si aggiornano da sole (0 = mai; li legge il servizio).
     pub playlist_hours: u32,
     pub epg_hours: u32,
@@ -161,6 +163,7 @@ impl Settings {
             live_preview: true,
             update_check: true,
             remote: false,
+            volume: 100,
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
             epg_hours: EPG_HOURS_DEFAULT,
             user_agent: None,
@@ -205,6 +208,11 @@ impl Settings {
             "live_preview" => self.live_preview = flag,
             "update_check" => self.update_check = flag,
             "navigation" => self.remote = value == "remote",
+            "volume" => {
+                if let Ok(volume) = value.trim().parse::<u32>() {
+                    self.volume = volume.min(100);
+                }
+            }
             "playlist_hours" => {
                 if let Ok(hours) = value.trim().parse() {
                     self.playlist_hours = hours;
@@ -266,6 +274,17 @@ mod tests {
         assert!(Settings::from_pairs(&remote, Language::Italian).remote);
         let mouse = [("navigation".to_owned(), "mouse".to_owned())];
         assert!(!Settings::from_pairs(&mouse, Language::Italian).remote);
+    }
+
+    #[test]
+    fn volume() {
+        assert_eq!(Settings::defaults(Language::Italian).volume, 100);
+        let low = [("volume".to_owned(), "35".to_owned())];
+        assert_eq!(Settings::from_pairs(&low, Language::Italian).volume, 35);
+        let high = [("volume".to_owned(), "250".to_owned())];
+        assert_eq!(Settings::from_pairs(&high, Language::Italian).volume, 100);
+        let bad = [("volume".to_owned(), "forte".to_owned())];
+        assert_eq!(Settings::from_pairs(&bad, Language::Italian).volume, 100);
     }
 
     #[test]

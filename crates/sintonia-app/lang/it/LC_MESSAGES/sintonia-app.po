@@ -73,8 +73,6 @@ msgstr "Elimina"
 msgid "File"
 msgstr "File"
 
-msgid "Fill"
-msgstr "Riempi"
 
 msgid "Fill in the name and the address."
 msgstr "Inserisci il nome e l'indirizzo."
@@ -456,8 +454,6 @@ msgstr "3 giorni"
 msgid "1 week"
 msgstr "1 settimana"
 
-msgid "You can always update by hand: Refresh on each source, or the button in the Guide."
-msgstr "Puoi sempre aggiornare a mano: «Aggiorna» su ogni sorgente, o il pulsante nella Guida."
 
 msgid "Locked categories disappear from every list, from search and from the Home until the PIN is entered. The PIN is asked again every time Sintonia starts."
 msgstr "Le categorie bloccate spariscono da tutti gli elenchi, dalla ricerca e dalla Home finché non si inserisce il PIN. Il PIN si richiede a ogni avvio di Sintonia."
@@ -525,8 +521,6 @@ msgstr "È uscita Sintonia {} · Scarica"
 msgid "Tell me when a new version of Sintonia is out"
 msgstr "Avvisami quando esce una nuova versione di Sintonia"
 
-msgid "Once a day Sintonia asks GitHub which is the latest version. Nothing else is sent."
-msgstr "Una volta al giorno Sintonia chiede a GitHub qual è l'ultima versione. Non viene mandato nient'altro."
 
 msgid "Your category"
 msgstr "La tua categoria"
@@ -563,3 +557,12 @@ msgstr "Nel player: ↑ ↓ cambiano canale, OK apre l'elenco dei canali, ← �
 
 msgid "To type (an address, a search) you need the keyboard: the one on the back of the remote, if it has one, or the Windows on-screen keyboard."
 msgstr "Per scrivere (un indirizzo, una ricerca) serve la tastiera: quella sul retro del telecomando, se ce l'ha, o la tastiera su schermo di Windows."
+
+msgid "Aspect: {}"
+msgstr "Proporzioni: {}"
+
+msgid "Aspect ratio"
+msgstr "Proporzioni dell'immagine"
+
+msgid "Fill the screen"
+msgstr "Riempi lo schermo"

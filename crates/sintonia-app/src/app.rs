@@ -34,7 +34,7 @@ use crate::settings::{self, Language, Locks, Settings};
 use crate::video::VideoRouter;
 use crate::{
     CategoryItem, ChannelItem, DetailInfo, EpisodeItem, HomeItem, MainWindow, Nav, PipWindow,
-    SourceItem, SourceStatus, Texts, TrackItem,
+    SourceItem, SourceStatus, Texts, TrackItem, Video,
 };
 
 /// Attesa prima di aprire il canale evidenziato nell'elenco Live (anteprima).
@@ -248,6 +248,7 @@ pub struct App {
     auto_fullscreen: Cell<bool>,
     /// Salva la dimensione del mini player poco dopo l'ultimo ridimensionamento.
     pip_save_timer: slint::Timer,
+    volume_save_timer: slint::Timer,
     pip_drag: Cell<Option<PipDrag>>,
 
     // guida
@@ -382,6 +383,7 @@ impl App {
             aspect: Cell::new(0),
             auto_fullscreen: Cell::new(false),
             pip_save_timer: slint::Timer::default(),
+            volume_save_timer: slint::Timer::default(),
             pip_drag: Cell::new(None),
             now_schedule,
             now_loaded_at: Cell::new(0),
@@ -544,6 +546,8 @@ Una copia dell'archivio com'era è in:
     fn apply_settings(&self, settings: Settings) {
         self.apply_language(settings.language);
         self.router.set_reconnect(settings.reconnect);
+        self.router
+            .set_volume(i32::try_from(settings.volume).unwrap_or(100));
         if let Err(err) = self
             .router
             .player()
@@ -2133,7 +2137,12 @@ Una copia dell'archivio com'era è in:
             }
             app.load_tracks();
         }));
-        main.on_cycle_aspect(on(|app| app.cycle_aspect()));
+        main.on_set_aspect(with_app!(|app, aspect: i32| app.set_aspect(aspect)));
+        main.global::<Video>()
+            .on_set_volume(with_app!(|app, volume: i32| {
+                app.router.set_volume(volume);
+                app.save_volume_later(volume);
+            }));
 
         // Guida
         main.on_guide_opened(on(|app| app.open_guide()));
@@ -2811,6 +2820,20 @@ Una copia dell'archivio com'era è in:
         self.save_pip_width_later(width);
     }
 
+    /// Salva il volume poco dopo l'ultimo cambiamento (trascinando la barra cambia di continuo).
+    fn save_volume_later(self: &Rc<Self>, volume: i32) {
+        let weak = Rc::downgrade(self);
+        self.volume_save_timer.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_millis(600),
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    app.save_setting("volume", &volume.clamp(0, 100).to_string());
+                }
+            },
+        );
+    }
+
     /// Salva la larghezza del mini player poco dopo l'ultimo cambiamento.
     fn save_pip_width_later(self: &Rc<Self>, width: f32) {
         let weak = Rc::downgrade(self);
@@ -2982,8 +3005,9 @@ Una copia dell'archivio com'era è in:
         main.set_sub_tracks(ModelRc::new(VecModel::from(subs)));
     }
 
-    fn cycle_aspect(&self) {
-        let next = (self.aspect.get() + 1) % 4;
+    /// 0 automatico, 1 16:9, 2 4:3, 3 riempi lo schermo.
+    fn set_aspect(&self, aspect: i32) {
+        let next = aspect.clamp(0, 3);
         self.aspect.set(next);
         let (ratio, panscan) = match next {
             1 => ("16:9", "0"),

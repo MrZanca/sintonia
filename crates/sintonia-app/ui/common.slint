@@ -168,6 +168,9 @@ export global Video {
     // audio spento; il pulsante muto di ogni player chiama `toggle-mute`
     in property <bool> muted;
     callback toggle-mute();
+    // volume da 0 a 100; il cursore del player chiama `set-volume`
+    in property <int> volume: 100;
+    callback set-volume(int);
     // scritte da `VideoView`, lette da Rust
     in-out property <length> w;
     in-out property <length> h;
@@ -549,10 +552,11 @@ export component NowNext inherits VerticalLayout {
     }
 }
 
+// i titoli delle sezioni: tutti uguali, bianchi
 export component Title inherits Text {
-    color: Theme.dim;
-    font-size: 15px;
-    font-weight: 600;
+    color: Theme.ink;
+    font-size: 18px;
+    font-weight: 700;
 }
 
 export component Ring inherits Rectangle {

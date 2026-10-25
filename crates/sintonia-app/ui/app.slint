@@ -764,6 +764,99 @@ component HomeScreen inherits Rectangle {
 
 // ───────────── Live ─────────────
 
+// Muto e volume: la barra verticale compare sopra il pulsante passandoci con il mouse (o quando il
+// pulsante ha il fuoco: allora ↑ ↓ cambiano il volume). Si trascina, si clicca o si usa la rotellina.
+component VolumeBtn inherits Rectangle {
+    out property <bool> hovered: btn.hovered || bar-ta.has-hover;
+    out property <bool> focused: press.has-focus;
+    out property <bool> dragging: bar-ta.pressed;
+    forward-focus: press;
+    width: 38px;
+    height: 38px;
+    property <bool> open: self.hovered || self.focused || self.dragging;
+    function step(delta: int) {
+        Video.set-volume(max(0, min(100, Video.volume + delta)));
+    }
+    btn := IconBtn {
+        icon: Video.muted || Video.volume == 0 ? Icons.muted : Icons.sound;
+        size: 38px;
+        tab-stop: false;
+        clicked => { Video.toggle-mute(); }
+    }
+    press := FocusScope {
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow) { root.step(5); return accept; }
+            if (event.text == Key.DownArrow) { root.step(-5); return accept; }
+            if (event.text == Key.Return || event.text == " ") { Video.toggle-mute(); return accept; }
+            reject
+        }
+        if Nav.tv && press.has-focus: Sq {
+            x: -5px;
+            y: -5px;
+            width: root.width + 10px;
+            height: root.height + 10px;
+            r: 24px;
+            stroke: Theme.ink;
+            stroke-width: 3px;
+        }
+    }
+    // la barra, sopra il pulsante; la sua zona sensibile arriva fino al pulsante, così passando
+    // dall'uno all'altra non si chiude
+    if root.open: Rectangle {
+        x: (root.width - self.width) / 2;
+        y: -self.height - 2px;
+        width: 46px;
+        height: 170px;
+        Sq { r: 23px; fill: #14151cf0; stroke: #ffffff22; stroke-width: 1px; }
+        Text {
+            y: 10px;
+            text: Video.muted ? "0" : Video.volume;
+            color: Theme.ink;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            width: parent.width;
+        }
+        track := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 34px;
+            width: 6px;
+            height: parent.height - 50px;
+            Sq { r: 3px; fill: #ffffff2a; }
+            Sq {
+                y: parent.height - self.height;
+                width: parent.width;
+                height: Video.muted ? 0px : parent.height * Video.volume / 100;
+                r: 3px;
+                fill: Theme.needle;
+            }
+        }
+    }
+    bar-ta := TouchArea {
+        x: (root.width - 46px) / 2;
+        y: -172px;
+        width: root.open ? 46px : 0px;
+        height: 172px;
+        function set-from(y: length) {
+            // la barra va da 34 px a 154 px dall'alto del riquadro (che parte 2 px sopra)
+            let top = 34px;
+            let len = 120px;
+            Video.set-volume(round(max(0, min(1, 1 - (y - top) / len)) * 100));
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) { self.set-from(self.mouse-y); }
+        }
+        moved => {
+            if (self.pressed) { self.set-from(self.mouse-y); }
+        }
+        scroll-event(e) => {
+            root.step(e.delta-y > 0 ? 5 : -5);
+            accept
+        }
+    }
+}
+
 // Pulsante rotondo con un simbolo, acceso o spento (preferito, «I miei canali»)
 component MarkBtn inherits Rectangle {
     in property <string> icon;
@@ -1003,6 +1096,8 @@ component Field inherits VerticalLayout {
         }
         if root.value == "": Text {
             x: 18px;
+            width: parent.width - 36px;
+            overflow: elide;
             text: root.placeholder;
             color: Theme.faint;
             font-size: 15px;
@@ -1186,7 +1281,7 @@ component SwitchRow inherits Rectangle {
                 font-size: 16px;
                 font-weight: 600;
             }
-            Text {
+            if root.detail != "": Text {
                 text: root.detail;
                 color: Theme.dim;
                 font-size: 12px;
@@ -1289,6 +1384,8 @@ component SettingsScreen inherits Rectangle {
         padding-right: 44px;
         padding-top: 8px;
         spacing: 44px;
+        // a schermo intero le colonne non si allungano: lo spazio in più resta a destra
+        alignment: start;
         VerticalLayout {
             width: 260px;
             alignment: start;
@@ -1323,6 +1420,7 @@ component SettingsScreen inherits Rectangle {
         // sorgenti
         if root.section == 0: HorizontalLayout {
             spacing: 44px;
+            alignment: start;
             VerticalLayout {
                 width: 380px;
                 spacing: 8px;
@@ -1356,7 +1454,7 @@ component SettingsScreen inherits Rectangle {
                 Rectangle { height: 12px; }
             }
             VerticalLayout {
-                horizontal-stretch: 1;
+                width: 480px;
                 alignment: start;
                 spacing: 14px;
                 Title { text: @tr("Add a source"); }
@@ -1427,7 +1525,7 @@ component SettingsScreen inherits Rectangle {
         }
         // lingua
         if root.section == 1: VerticalLayout {
-            horizontal-stretch: 1;
+            width: 680px;
             alignment: start;
             spacing: 12px;
             Title { text: @tr("Interface language"); }
@@ -1444,7 +1542,7 @@ component SettingsScreen inherits Rectangle {
         }
         // riproduzione
         if root.section == 2: VerticalLayout {
-            horizontal-stretch: 1;
+            width: 680px;
             alignment: start;
             spacing: 10px;
             Title { text: @tr("Playback"); }
@@ -1476,7 +1574,7 @@ component SettingsScreen inherits Rectangle {
         }
         // aggiornamenti
         if root.section == 3: VerticalLayout {
-            horizontal-stretch: 1;
+            width: 680px;
             alignment: start;
             spacing: 12px;
             Title { text: @tr("Automatic updates"); }
@@ -1501,23 +1599,15 @@ component SettingsScreen inherits Rectangle {
                 clicked(i) => { root.set-interval(1, i); }
             }
             Rectangle { height: 8px; }
-            Text {
-                text: @tr("You can always update by hand: Refresh on each source, or the button in the Guide.");
-                color: Theme.faint;
-                font-size: 13px;
-                wrap: word-wrap;
-            }
-            Rectangle { height: 8px; }
             SwitchRow {
                 label: @tr("Tell me when a new version of Sintonia is out");
-                detail: @tr("Once a day Sintonia asks GitHub which is the latest version. Nothing else is sent.");
                 on <=> root.update-check;
                 toggled(v) => { root.setting-changed("update_check", v ? "1" : "0"); }
             }
         }
         // controllo genitori
         if root.section == 4: VerticalLayout {
-            horizontal-stretch: 1;
+            width: 680px;
             alignment: start;
             spacing: 12px;
             Title { text: @tr("Parental control"); }
@@ -1673,7 +1763,7 @@ component SettingsScreen inherits Rectangle {
         }
         // navigazione: mouse o telecomando
         if root.section == 5: VerticalLayout {
-            horizontal-stretch: 1;
+            width: 680px;
             alignment: start;
             spacing: 12px;
             Title { text: @tr("How you move around Sintonia"); }
@@ -1933,9 +2023,11 @@ component PlayerScreen inherits Rectangle {
     callback load-tracks();
     callback select-audio(int);
     callback select-sub(int);
-    callback cycle-aspect();
+    callback set-aspect(int);
     property <bool> overlay: true;
     property <bool> drawer: false;
+    // i nomi delle proporzioni, nell'ordine di `aspect`
+    property <[string]> aspect-names: [@tr("Auto"), "16:9", "4:3", @tr("Fill the screen")];
     // il puntatore sparisce insieme alle informazioni (Rust lo nasconde anche col mouse fermo)
     callback cursor-hidden(bool);
     property <bool> hide-cursor: !root.overlay && !root.drawer;
@@ -1965,7 +2057,7 @@ component PlayerScreen inherits Rectangle {
     property <bool> controls-hovered: back-btn.hovered || home-btn.hovered || pip-btn.hovered
         || audio-btn.hovered || sub-btn.hovered || aspect-btn.hovered || seek-ta.has-hover
         || rew-btn.hovered || pause-btn.hovered || fwd-btn.hovered || fs-btn.hovered
-        || mute-btn.hovered;
+        || mute-btn.hovered || mute-btn.dragging;
     // con il telecomando un pulsante ha il fuoco: le informazioni restano
     property <bool> controls-focused: back-btn.focused || home-btn.focused || pip-btn.focused
         || audio-btn.focused || sub-btn.focused || aspect-btn.focused || rew-btn.focused
@@ -2234,11 +2326,7 @@ component PlayerScreen inherits Rectangle {
                             size: 38px;
                             clicked => { root.seek(10); }
                         }
-                        mute-btn := IconBtn {
-                            icon: Video.muted ? Icons.muted : Icons.sound;
-                            size: 38px;
-                            clicked => { Video.toggle-mute(); }
-                        }
+                        mute-btn := VolumeBtn { }
                         pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
                         audio-btn := Btn {
                             label: @tr("Audio");
@@ -2255,8 +2343,8 @@ component PlayerScreen inherits Rectangle {
                             }
                         }
                         aspect-btn := Btn {
-                            label: root.aspect == 1 ? "16:9" : (root.aspect == 2 ? "4:3" : (root.aspect == 3 ? @tr("Fill") : @tr("Auto")));
-                            clicked => { root.cycle-aspect(); }
+                            label: @tr("Aspect: {}", root.aspect-names[root.aspect]);
+                            clicked => { aspect-popup.show(); }
                         }
                     }
                 }
@@ -2396,7 +2484,49 @@ component PlayerScreen inherits Rectangle {
             }
         }
 
-        // l'elenco canali che scorre da sinistra, con le categorie
+        aspect-popup := PopupWindow {
+        x: root.width - 340px;
+        y: root.height - 110px - self.height;
+        width: 300px;
+        height: root.aspect-names.length * 44px + 56px;
+        Sq { r: 22px; fill: #14151cf4; stroke: #ffffff22; stroke-width: 1px; }
+        xpk := FocusScope {
+            property <int> kc: root.aspect;
+            init => { self.focus(); }
+            capture-key-pressed(event) => {
+                Nav.key-seen = true;
+                reject
+            }
+            key-pressed(event) => {
+                if (event.text == Key.UpArrow) { self.kc = max(0, self.kc - 1); return accept; }
+                if (event.text == Key.DownArrow) { self.kc = min(root.aspect-names.length - 1, self.kc + 1); return accept; }
+                if (event.text == Key.Return || event.text == " ") {
+                    root.set-aspect(self.kc);
+                    aspect-popup.close();
+                    return accept;
+                }
+                reject
+            }
+        }
+        VerticalLayout {
+            padding: 10px;
+            spacing: 4px;
+            Text {
+                text: @tr("Aspect ratio");
+                color: Theme.dim;
+                font-size: 13px;
+                height: 28px;
+                vertical-alignment: center;
+            }
+            for n[i] in root.aspect-names: TrackRow {
+                t: { id: i, label: n, selected: i == root.aspect };
+                active: Nav.tv && xpk.has-focus && i == xpk.kc;
+                clicked => { root.set-aspect(i); }
+            }
+        }
+    }
+
+    // l'elenco canali che scorre da sinistra, con le categorie
         Rectangle {
             x: root.drawer ? 16px : -self.width - 30px;
             y: 16px;
@@ -2776,7 +2906,7 @@ export component MainWindow inherits Window {
     callback load-tracks();
     callback select-audio(int);
     callback select-sub(int);
-    callback cycle-aspect();
+    callback set-aspect(int);
     callback playing-changed(bool);
     changed playing => { root.playing-changed(root.playing); }
     changed page => {
@@ -3091,7 +3221,7 @@ export component MainWindow inherits Window {
             load-tracks => { root.load-tracks(); }
             select-audio(id) => { root.select-audio(id); }
             select-sub(id) => { root.select-sub(id); }
-            cycle-aspect => { root.cycle-aspect(); }
+            set-aspect(i) => { root.set-aspect(i); }
             cursor-hidden(h) => { root.cursor-hidden(h); }
         }
 
