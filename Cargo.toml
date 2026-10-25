@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/sintonia-core", "crates/sintonia-player", "crates/sintonia-app"]
-exclude = ["bozza-grafica"]
+exclude = ["bozza-grafica", "bozza-animazioni"]
 
 [workspace.package]
 version = "0.4.2"

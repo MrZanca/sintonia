@@ -8,6 +8,51 @@ import { GuideScreen, GuideRow, DayItem } from "guide.slint";
 export { Video, Texts, Nav, Keys, ChannelItem, CategoryItem, SourceItem, TrackItem, SourceStatus, HomeItem, PosterItem, EpisodeItem, DetailInfo } from "common.slint";
 export { GuideRow, GuideBlock, DayItem } from "guide.slint";
 
+// ───────────── Sfondo ─────────────
+
+// La scala della radio: tacche sottili come quelle del menu in basso, una lancetta e un bagliore del
+// colore della sezione. `dx`/`dy` la spostano verso il mouse (la scala solo in orizzontale).
+component Backdrop inherits Rectangle {
+    in property <color> tint;
+    in property <length> dx;
+    in property <length> dy;
+    clip: true;
+    Rectangle {
+        x: root.width - 700px + root.dx;
+        y: -360px + root.dy;
+        width: 1000px;
+        height: 760px;
+        background: @radial-gradient(circle, root.tint.with-alpha(0.38) 0%, transparent 46%);
+    }
+    Rectangle {
+        x: -300px - root.dx * 0.6;
+        y: root.height - 380px - root.dy * 0.6;
+        width: 900px;
+        height: 700px;
+        background: @radial-gradient(circle, root.tint.with-alpha(0.2) 0%, transparent 46%);
+    }
+    Rectangle {
+        x: -140px + root.dx * 0.5;
+        y: root.height * 0.18;
+        width: root.width + 280px;
+        height: 120px;
+        for i in 130: Rectangle {
+            x: i * 14px;
+            y: Math.mod(i, 10) == 0 ? 0px : (Math.mod(i, 5) == 0 ? 30px : 50px);
+            width: 1px;
+            height: Math.mod(i, 10) == 0 ? 120px : (Math.mod(i, 5) == 0 ? 60px : 30px);
+            background: Theme.ink.with-alpha(Math.mod(i, 10) == 0 ? 0.07 : 0.04);
+        }
+        // la lancetta va nel verso opposto: sembra di sintonizzare
+        Rectangle {
+            x: 140px + root.width * 0.62 - root.dx * 0.8;
+            width: 2px;
+            height: 120px;
+            background: root.tint.brighter(0.9).with-alpha(0.35);
+        }
+    }
+}
+
 // ───────────── Barra in alto e fascia di lancio ─────────────
 
 component TopBar inherits HorizontalLayout {
@@ -397,8 +442,34 @@ component Preview inherits Rectangle {
     in property <bool> badge: true;
     in property <length> r: 22px;
     in property <bool> live-video: true;
+    // al passaggio del mouse la sfumatura chiara scorre dall'angolo in alto a sinistra a quello in
+    // basso a destra, poi torna subito al suo posto
+    callback clicked;
+    property <bool> hover: hover-ta.has-hover;
+    property <duration> sweep-start;
+    property <bool> sweeping;
+    changed hover => {
+        if (self.hover && !root.sweeping) {
+            root.sweep-start = animation-tick();
+            root.sweeping = true;
+        }
+    }
+    Timer {
+        interval: 900ms;
+        running: root.sweeping;
+        triggered => { root.sweeping = false; }
+    }
+    // da 0 (in alto a sinistra) a 1 (in basso a destra); fermo, al centro come prima
+    property <float> sweep: root.sweeping ? min(1, (animation-tick() - root.sweep-start) / 900ms) : 0.5;
+    clip: true;
+    // sotto a tutto: sente il passaggio del mouse (sopra c'è solo il pulsante del muto)
+    hover-ta := TouchArea { clicked => { root.clicked(); } }
     Sq { r: root.r; fill: @linear-gradient(145deg, root.c.tint.darker(0.2) 0%, #090a10 90%); }
-    Sq { r: root.r; fill: @radial-gradient(circle, #ffffff1a 0%, transparent 70%); }
+    Rectangle {
+        x: (root.sweep - 0.5) * root.width * 1.4;
+        y: (root.sweep - 0.5) * root.height * 1.4;
+        Sq { r: root.r; fill: @radial-gradient(circle, #ffffff1a 0%, transparent 70%); }
+    }
     if !(root.live-video && (Video.ready || Texts.status(Video.state, Video.attempt) != "")): Logo {
         c: root.c;
         width: min(parent.width * 0.4, 220px);
@@ -689,7 +760,7 @@ component HomeScreen inherits Rectangle {
                     width: 466px;
                     // sotto l'anteprima, così il suo pulsante muto riceve i clic
                     hta := TouchArea { clicked => { root.play(); } }
-                    Preview { c: root.hero; }
+                    Preview { c: root.hero; clicked => { root.play(); } }
                 }
                 VerticalLayout {
                     width: 440px;
@@ -1307,6 +1378,7 @@ component SettingsScreen inherits Rectangle {
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview;
     in-out property <bool> update-check;
+    in-out property <bool> bg-motion;
     in-out property <string> user-agent;
     in-out property <string> picked-file;
     // cresce dopo un salvataggio riuscito: il modulo si svuota (password compresa)
@@ -1862,6 +1934,12 @@ component SettingsScreen inherits Rectangle {
                     Nav.mode = i;
                     root.setting-changed("navigation", i == 1 ? "remote" : "mouse");
                 }
+            }
+            SwitchRow {
+                label: @tr("The background follows the mouse");
+                detail: @tr("It stays still while you watch a video.");
+                on <=> root.bg-motion;
+                toggled(v) => { root.setting-changed("bg_motion", v ? "1" : "0"); }
             }
             Rectangle { height: 4px; }
             Text {
@@ -2906,6 +2984,7 @@ export component MainWindow inherits Window {
     in-out property <bool> fullscreen-start;
     in-out property <bool> live-preview: true;
     in-out property <bool> update-check: true;
+    in-out property <bool> bg-motion: true;
     in property <string> update-version;
     callback open-update();
     callback dismiss-update();
@@ -3015,6 +3094,29 @@ export component MainWindow inherits Window {
         root.playing = false;
         root.page = 0;
     }
+    // Sfondo: il colore della sezione cambia piano; con il mouse lo sfondo si sposta verso il
+    // puntatore. Lo spostamento lo fa un timer che avvicina la posizione a quella voluta e si
+    // ferma quando ci è arrivato: fluido, e a mouse fermo non lavora più.
+    property <color> bg-tint: Theme.base;
+    animate bg-tint { duration: 700ms; easing: ease-in-out; }
+    property <bool> bg-follow: root.bg-motion && !root.playing && !Nav.tv && bg-area.has-hover;
+    property <length> bg-tx: root.bg-follow ? (bg-area.mouse-x - root.width / 2) * 0.22 : 0px;
+    property <length> bg-ty: root.bg-follow ? (bg-area.mouse-y - root.height / 2) * 0.22 : 0px;
+    property <length> bg-x;
+    property <length> bg-y;
+    Timer {
+        interval: 16ms;
+        running: !root.playing && (abs(root.bg-tx - root.bg-x) > 0.5px || abs(root.bg-ty - root.bg-y) > 0.5px);
+        triggered => {
+            root.bg-x += (root.bg-tx - root.bg-x) * 0.14;
+            root.bg-y += (root.bg-ty - root.bg-y) * 0.14;
+            if (abs(root.bg-tx - root.bg-x) <= 0.5px && abs(root.bg-ty - root.bg-y) <= 0.5px) {
+                root.bg-x = root.bg-tx;
+                root.bg-y = root.bg-ty;
+            }
+        }
+    }
+
     // apre il player sul canale in onda
     public function watch-current() {
         if (root.has-current) {
@@ -3095,204 +3197,200 @@ export component MainWindow inherits Window {
             reject
         }
 
-        // il bagliore di sfondo prende il colore della sezione
-        if !root.playing: Rectangle {
-            x: root.width - 760px;
-            y: -380px;
-            width: 1100px;
-            height: 800px;
-            background: @radial-gradient(circle, Theme.base.with-alpha(0.5) 0%, transparent 46%);
-        }
-        if !root.playing: Rectangle {
-            x: -300px;
-            y: root.height - 380px;
-            width: 900px;
-            height: 700px;
-            background: @radial-gradient(circle, Theme.base.with-alpha(0.28) 0%, transparent 46%);
-        }
-
-        // Indietro (con il telecomando): da una pagina al menu in basso, dal menu alla Home
-        if !root.playing: FocusScope {
-            focus-on-tab-navigation: false;
-            focus-on-click: false;
-            key-pressed(event) => {
-                if (!Nav.tv || event.text != Key.Escape) { return reject; }
-                if (!dock.focused) {
-                    dock.focus();
-                } else if (root.page != 0) {
-                    root.page = 0;
-                }
-                accept
+        // segue il mouse per lo sfondo (le pagine sopra ricevono i clic come prima)
+        bg-area := TouchArea {
+            enabled: !root.playing;
+            // lo sfondo prende il colore della sezione, passando piano dall'uno all'altro
+            if !root.playing: Backdrop {
+                tint: root.bg-tint;
+                dx: root.bg-x;
+                dy: root.bg-y;
             }
-            VerticalLayout {
-                TopBar {
-                    page <=> root.page;
-                    clock: root.clock;
-                    search <=> root.search;
-                    fullscreen: root.fullscreen;
-                    update-version: root.update-version;
-                    open-update => { root.open-update(); }
-                    dismiss-update => { root.dismiss-update(); }
-                    toggle-fullscreen => { root.toggle-fullscreen(); }
-                    search-edited(text) => {
-                        root.search-edited(text);
-                        // la ricerca vale per la pagina in cui si è (Guida, Film e serie), altrimenti Live
-                        if (text != "" && root.page != 2 && root.page != 3) { root.page = 1; }
+
+            // Indietro (con il telecomando): da una pagina al menu in basso, dal menu alla Home
+            if !root.playing: FocusScope {
+                focus-on-tab-navigation: false;
+                focus-on-click: false;
+                key-pressed(event) => {
+                    if (!Nav.tv || event.text != Key.Escape) { return reject; }
+                    if (!dock.focused) {
+                        dock.focus();
+                    } else if (root.page != 0) {
+                        root.page = 0;
                     }
-                    search-done => { root.enter-page(); }
+                    accept
                 }
-                Rectangle {
-                    vertical-stretch: 1;
-                    clip: true;
-                    if root.page == 0: HomeScreen {
-                        hero: root.current;
-                        has-hero: root.has-current;
-                        no-source: root.no-source;
-                        categories: root.top-categories;
-                        top-offset: root.top-offset;
-                        resume: root.resume;
-                        favorites: root.home-favorites;
-                        focus-tick: root.home-focus-tick;
-                        play => { root.watch-current(); }
-                        pip => { root.request-pip(-1); }
-                        open-category(i) => {
-                            root.pick-category(i);
-                            root.page = 1;
+                VerticalLayout {
+                    TopBar {
+                        page <=> root.page;
+                        clock: root.clock;
+                        search <=> root.search;
+                        fullscreen: root.fullscreen;
+                        update-version: root.update-version;
+                        open-update => { root.open-update(); }
+                        dismiss-update => { root.dismiss-update(); }
+                        toggle-fullscreen => { root.toggle-fullscreen(); }
+                        search-edited(text) => {
+                            root.search-edited(text);
+                            // la ricerca vale per la pagina in cui si è (Guida, Film e serie), altrimenti Live
+                            if (text != "" && root.page != 2 && root.page != 3) { root.page = 1; }
                         }
-                        open-resume(i) => { root.open-resume(i); }
-                        open-favorite(i) => { root.open-favorite(i); }
-                        add-source => { root.open-settings-sources(); }
+                        search-done => { root.enter-page(); }
                     }
-                    if root.page == 1: LiveScreen {
-                        focus-tick: root.live-focus-tick;
-                        reveal-tick: root.reveal-tick;
-                        channels: root.channels;
-                        categories: root.categories;
-                        category: root.category;
-                        search: root.search;
-                        cursor <=> root.cursor;
-                        playing-id: root.has-current ? root.current.id : -1;
-                        no-source: root.no-source;
-                        play(i) => {
-                            root.close-pip();
-                            root.play-index(i);
-                            root.playing = true;
+                    Rectangle {
+                        vertical-stretch: 1;
+                        clip: true;
+                        if root.page == 0: HomeScreen {
+                            hero: root.current;
+                            has-hero: root.has-current;
+                            no-source: root.no-source;
+                            categories: root.top-categories;
+                            top-offset: root.top-offset;
+                            resume: root.resume;
+                            favorites: root.home-favorites;
+                            focus-tick: root.home-focus-tick;
+                            play => { root.watch-current(); }
+                            pip => { root.request-pip(-1); }
+                            open-category(i) => {
+                                root.pick-category(i);
+                                root.page = 1;
+                            }
+                            open-resume(i) => { root.open-resume(i); }
+                            open-favorite(i) => { root.open-favorite(i); }
+                            add-source => { root.open-settings-sources(); }
                         }
-                        pip(i) => { root.request-pip(i); }
-                        pick-category(i) => { root.pick-category(i); }
-                        cursor-moved(i) => { root.cursor-moved(i); }
-                        toggle-fav(i) => { root.toggle-fav-channel(i); }
-                        toggle-custom(i) => { root.toggle-custom-channel(i); }
-                        add-source => { root.open-settings-sources(); }
+                        if root.page == 1: LiveScreen {
+                            focus-tick: root.live-focus-tick;
+                            reveal-tick: root.reveal-tick;
+                            channels: root.channels;
+                            categories: root.categories;
+                            category: root.category;
+                            search: root.search;
+                            cursor <=> root.cursor;
+                            playing-id: root.has-current ? root.current.id : -1;
+                            no-source: root.no-source;
+                            play(i) => {
+                                root.close-pip();
+                                root.play-index(i);
+                                root.playing = true;
+                            }
+                            pip(i) => { root.request-pip(i); }
+                            pick-category(i) => { root.pick-category(i); }
+                            cursor-moved(i) => { root.cursor-moved(i); }
+                            toggle-fav(i) => { root.toggle-fav-channel(i); }
+                            toggle-custom(i) => { root.toggle-custom-channel(i); }
+                            add-source => { root.open-settings-sources(); }
+                        }
+                        if root.page == 2: GuideScreen {
+                            rows: root.guide-rows;
+                            categories: root.categories;
+                            category: root.category;
+                            search: root.search;
+                            days: root.guide-days;
+                            day: root.guide-day;
+                            now-min: root.guide-now-min;
+                            state: root.guide-state;
+                            error: root.guide-error;
+                            no-source: root.no-source;
+                            cursor <=> root.guide-cursor;
+                            focus-tick: root.guide-focus-tick;
+                            scroll-tick: root.guide-scroll-tick;
+                            pick-day(i) => { root.guide-pick-day(i); }
+                            pick-category(i) => { root.pick-category(i); }
+                            watch(i) => {
+                                root.close-pip();
+                                root.guide-watch(i);
+                                root.playing = true;
+                            }
+                            refresh => { root.guide-refresh(); }
+                            add-source => { root.open-settings-sources(); }
+                        }
+                        if root.page == 3: MediaScreen {
+                            available: root.media-available;
+                            mode: root.media-mode;
+                            items: root.media-items;
+                            categories: root.media-categories;
+                            category: root.media-category;
+                            search: root.search;
+                            cursor <=> root.media-cursor;
+                            detail: root.media-detail;
+                            info: root.media-info;
+                            seasons: root.media-seasons;
+                            season <=> root.media-season;
+                            episodes: root.media-episodes;
+                            episode-cursor <=> root.media-episode-cursor;
+                            focus-tick: root.media-focus-tick;
+                            reveal-tick: root.reveal-tick;
+                            pick-mode(m) => { root.media-pick-mode(m); }
+                            pick-category(i) => { root.media-pick-category(i); }
+                            open(i) => { root.media-open(i); }
+                            back => { root.media-back(); }
+                            play(from-start) => {
+                                root.close-pip();
+                                root.media-play(from-start);
+                                root.playing = true;
+                            }
+                            resume-series => {
+                                root.close-pip();
+                                root.media-resume-series();
+                                root.playing = true;
+                            }
+                            play-episode(i) => {
+                                root.close-pip();
+                                root.media-play-episode(i);
+                                root.playing = true;
+                            }
+                            toggle-fav => { root.media-toggle-fav(); }
+                            pick-season(i) => { root.media-pick-season(i); }
+                            add-source => { root.open-settings-sources(); }
+                        }
+                        if root.page == 4: SettingsScreen {
+                            section <=> root.settings-section;
+                            focus-tick: root.settings-focus-tick;
+                            sources: root.sources;
+                            working: root.working;
+                            status: root.source-status;
+                            language: root.language;
+                            reconnect <=> root.reconnect;
+                            fullscreen-start <=> root.fullscreen-start;
+                            live-preview <=> root.live-preview;
+                            update-check <=> root.update-check;
+                    bg-motion <=> root.bg-motion;
+                            user-agent <=> root.user-agent;
+                            playlist-interval: root.playlist-interval;
+                            epg-interval: root.epg-interval;
+                            pin-set: root.pin-set;
+                            pin-unlocked: root.pin-unlocked;
+                            pin-message: root.pin-message;
+                            lock-live: root.lock-live;
+                            lock-movies: root.lock-movies;
+                            lock-series: root.lock-series;
+                            custom-name <=> root.custom-name;
+                            set-interval(k, i) => { root.set-interval(k, i); }
+                            pin-create(a, b) => { root.pin-create(a, b); }
+                            pin-remove => { root.pin-remove(); }
+                            pin-lock-now => { root.pin-lock-now(); }
+                            pin-unlock => { root.pin-unlock(); }
+                            toggle-lock(k, i, v) => { root.toggle-lock(k, i, v); }
+                            picked-file <=> root.picked-file;
+                            form-reset: root.form-reset;
+                            verify(k, n, l, u, p, a, g) => { root.verify-source(k, n, l, u, p, a, g); }
+                            save(k, n, l, u, p, a, g) => { root.save-source(k, n, l, u, p, a, g); }
+                            pick-file => { root.pick-file(); }
+                            activate-source(id) => { root.activate-source(id); }
+                            refresh-source(id) => { root.refresh-source(id); }
+                            delete-source(id) => { root.delete-source(id); }
+                            set-source-epg(id, url) => { root.set-source-epg(id, url); }
+                            set-language(i) => { root.set-language(i); }
+                            setting-changed(k, v) => { root.setting-changed(k, v); }
+                        }
                     }
-                    if root.page == 2: GuideScreen {
-                        rows: root.guide-rows;
-                        categories: root.categories;
-                        category: root.category;
-                        search: root.search;
-                        days: root.guide-days;
-                        day: root.guide-day;
-                        now-min: root.guide-now-min;
-                        state: root.guide-state;
-                        error: root.guide-error;
-                        no-source: root.no-source;
-                        cursor <=> root.guide-cursor;
-                        focus-tick: root.guide-focus-tick;
-                        scroll-tick: root.guide-scroll-tick;
-                        pick-day(i) => { root.guide-pick-day(i); }
-                        pick-category(i) => { root.pick-category(i); }
-                        watch(i) => {
-                            root.close-pip();
-                            root.guide-watch(i);
-                            root.playing = true;
-                        }
-                        refresh => { root.guide-refresh(); }
-                        add-source => { root.open-settings-sources(); }
+                    dock := Dock {
+                        current <=> root.page;
+                        labels: [@tr("Home"), @tr("Live"), @tr("Guide"), @tr("Movies & series")];
+                        focus-tick: root.dock-focus-tick;
+                        enter => { root.enter-page(); }
                     }
-                    if root.page == 3: MediaScreen {
-                        available: root.media-available;
-                        mode: root.media-mode;
-                        items: root.media-items;
-                        categories: root.media-categories;
-                        category: root.media-category;
-                        search: root.search;
-                        cursor <=> root.media-cursor;
-                        detail: root.media-detail;
-                        info: root.media-info;
-                        seasons: root.media-seasons;
-                        season <=> root.media-season;
-                        episodes: root.media-episodes;
-                        episode-cursor <=> root.media-episode-cursor;
-                        focus-tick: root.media-focus-tick;
-                        reveal-tick: root.reveal-tick;
-                        pick-mode(m) => { root.media-pick-mode(m); }
-                        pick-category(i) => { root.media-pick-category(i); }
-                        open(i) => { root.media-open(i); }
-                        back => { root.media-back(); }
-                        play(from-start) => {
-                            root.close-pip();
-                            root.media-play(from-start);
-                            root.playing = true;
-                        }
-                        resume-series => {
-                            root.close-pip();
-                            root.media-resume-series();
-                            root.playing = true;
-                        }
-                        play-episode(i) => {
-                            root.close-pip();
-                            root.media-play-episode(i);
-                            root.playing = true;
-                        }
-                        toggle-fav => { root.media-toggle-fav(); }
-                        pick-season(i) => { root.media-pick-season(i); }
-                        add-source => { root.open-settings-sources(); }
-                    }
-                    if root.page == 4: SettingsScreen {
-                        section <=> root.settings-section;
-                        focus-tick: root.settings-focus-tick;
-                        sources: root.sources;
-                        working: root.working;
-                        status: root.source-status;
-                        language: root.language;
-                        reconnect <=> root.reconnect;
-                        fullscreen-start <=> root.fullscreen-start;
-                        live-preview <=> root.live-preview;
-                        update-check <=> root.update-check;
-                        user-agent <=> root.user-agent;
-                        playlist-interval: root.playlist-interval;
-                        epg-interval: root.epg-interval;
-                        pin-set: root.pin-set;
-                        pin-unlocked: root.pin-unlocked;
-                        pin-message: root.pin-message;
-                        lock-live: root.lock-live;
-                        lock-movies: root.lock-movies;
-                        lock-series: root.lock-series;
-                        custom-name <=> root.custom-name;
-                        set-interval(k, i) => { root.set-interval(k, i); }
-                        pin-create(a, b) => { root.pin-create(a, b); }
-                        pin-remove => { root.pin-remove(); }
-                        pin-lock-now => { root.pin-lock-now(); }
-                        pin-unlock => { root.pin-unlock(); }
-                        toggle-lock(k, i, v) => { root.toggle-lock(k, i, v); }
-                        picked-file <=> root.picked-file;
-                        form-reset: root.form-reset;
-                        verify(k, n, l, u, p, a, g) => { root.verify-source(k, n, l, u, p, a, g); }
-                        save(k, n, l, u, p, a, g) => { root.save-source(k, n, l, u, p, a, g); }
-                        pick-file => { root.pick-file(); }
-                        activate-source(id) => { root.activate-source(id); }
-                        refresh-source(id) => { root.refresh-source(id); }
-                        delete-source(id) => { root.delete-source(id); }
-                        set-source-epg(id, url) => { root.set-source-epg(id, url); }
-                        set-language(i) => { root.set-language(i); }
-                        setting-changed(k, v) => { root.setting-changed(k, v); }
-                    }
-                }
-                dock := Dock {
-                    current <=> root.page;
-                    labels: [@tr("Home"), @tr("Live"), @tr("Guide"), @tr("Movies & series")];
-                    focus-tick: root.dock-focus-tick;
-                    enter => { root.enter-page(); }
                 }
             }
         }

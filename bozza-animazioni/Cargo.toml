@@ -1,0 +1,13 @@
+[package]
+name = "sintonia-bozza-animazioni"
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Bozza: sfondi delle sezioni e animazioni di Sintonia (solo interfaccia)"
+publish = false
+
+[dependencies]
+slint = "1.18"
+
+[build-dependencies]
+slint-build = "1.18"

@@ -604,3 +604,9 @@ msgstr "Cambia"
 
 msgid "Restore the default keys"
 msgstr "Rimetti i tasti di partenza"
+
+msgid "The background follows the mouse"
+msgstr "Lo sfondo segue il mouse"
+
+msgid "It stays still while you watch a video."
+msgstr "Resta fermo mentre guardi un video."

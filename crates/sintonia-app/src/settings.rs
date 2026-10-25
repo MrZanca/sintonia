@@ -67,6 +67,8 @@ pub struct Settings {
     pub remote: bool,
     /// Volume del player, da 0 a 100.
     pub volume: u32,
+    /// Lo sfondo si sposta verso il mouse.
+    pub bg_motion: bool,
     /// Il tasto di ogni azione, nell'ordine di [`crate::keys::ACTIONS`] ("" = nessuno).
     pub keys: Vec<String>,
     /// Ogni quante ore playlist e guida si aggiornano da sole (0 = mai; li legge il servizio).
@@ -166,6 +168,7 @@ impl Settings {
             update_check: true,
             remote: false,
             volume: 100,
+            bg_motion: true,
             keys: crate::keys::defaults(),
             playlist_hours: PLAYLIST_HOURS_DEFAULT,
             epg_hours: EPG_HOURS_DEFAULT,
@@ -210,6 +213,7 @@ impl Settings {
             "fullscreen_start" => self.fullscreen_start = flag,
             "live_preview" => self.live_preview = flag,
             "update_check" => self.update_check = flag,
+            "bg_motion" => self.bg_motion = flag,
             "navigation" => self.remote = value == "remote",
             "volume" => {
                 if let Ok(volume) = value.trim().parse::<u32>() {
