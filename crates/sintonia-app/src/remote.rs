@@ -183,6 +183,15 @@ pub fn install(main: &MainWindow) {
         if let WinitEvent::Focused(focused) = event {
             crate::mediakeys::set_focused(*focused);
         }
+        // finestra ingrandita o a schermo intero: l'interfaccia si ingrandisce con lei (zoom.rs)
+        if matches!(
+            event,
+            WinitEvent::Resized(_) | WinitEvent::ScaleFactorChanged { .. }
+        ) {
+            if let Some(main) = weak.upgrade() {
+                later(&main, crate::zoom::apply);
+            }
+        }
         let WinitEvent::KeyboardInput { event, .. } = event else {
             return EventResult::Propagate;
         };

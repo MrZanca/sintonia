@@ -16,6 +16,7 @@ mod mediakeys;
 mod remote;
 mod settings;
 mod video;
+mod zoom;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
