@@ -2342,10 +2342,14 @@ component PlayerScreen inherits Rectangle {
             // partono quando è in onda
             let loading = Nav.tv && !root.on-demand
                 && (Video.state == 1 || Video.state == 3 || Video.state == 5);
-            if (root.drawer || root.controls-hovered || root.controls-focused || root.paused || loading) {
+            // con il telecomando un pulsante con il fuoco non tiene le informazioni: dopo 5 secondi
+            // senza tasti si torna al video
+            let held = root.controls-focused && !Nav.tv;
+            if (root.drawer || root.controls-hovered || held || root.paused || loading) {
                 self.start();
             } else {
                 root.overlay = false;
+                if (Nav.tv && root.controls-focused) { fs.focus(); }
             }
         }
     }
@@ -2516,6 +2520,11 @@ component PlayerScreen inherits Rectangle {
     ctl := FocusScope {
         focus-on-tab-navigation: false;
         focus-on-click: false;
+        // ogni tasto sui pulsanti fa ripartire i 5 secondi
+        capture-key-pressed(event) => {
+            root.show-overlay();
+            reject
+        }
         key-pressed(event) => {
             if (event.text == Key.Escape || event.text == Key.UpArrow) {
                 fs.focus();
