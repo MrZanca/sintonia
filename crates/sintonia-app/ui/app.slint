@@ -1420,6 +1420,9 @@ component SettingsScreen inherits Rectangle {
     in-out property <string> custom-name;
     // cresce quando il fuoco deve tornare qui (dal menu in basso o dalla ricerca)
     in property <int> focus-tick;
+    // il telecomando ha già fatto «Insegna il telecomando» una volta
+    in property <bool> remote-taught;
+    callback teach();
     callback set-interval(int, int);
     callback pin-create(string, string);
     callback pin-remove();
@@ -1915,8 +1918,11 @@ component SettingsScreen inherits Rectangle {
                     details: [@tr("Click with the mouse."), @tr("Arrows, OK and Back. Bigger buttons.")];
                     current: Nav.mode;
                     picked(i) => {
+                        let first = i == 1 && Nav.mode != 1 && !root.remote-taught;
                         Nav.mode = i;
                         root.setting-changed("navigation", i == 1 ? "remote" : "mouse");
+                        // la prima volta con il telecomando: gli si insegnano subito i tasti
+                        if (first) { root.teach(); }
                     }
                 }
                 SwitchRow {
@@ -2066,11 +2072,144 @@ component SettingsScreen inherits Rectangle {
                         }
                     }
                     Rectangle { height: 4px; }
+                    // i due pulsanti uno sotto l'altro: con i testi grandi in fila non ci stanno
+                    if Nav.tv: HorizontalLayout {
+                        alignment: start;
+                        Btn {
+                            label: @tr("Teach the remote control");
+                            primary: true;
+                            clicked => { root.teach(); }
+                        }
+                    }
                     HorizontalLayout {
                         alignment: start;
                         Btn { label: @tr("Restore the default keys"); clicked => { Keys.reset(); } }
                     }
                 }
+            }
+        }
+    }
+}
+
+// «Insegna il telecomando»: chiede un tasto alla volta e lo assegna all'azione. OK salta il passo,
+// Indietro (Esc) chiude; al primo passo, quello di Indietro, Esc vuol dire che il telecomando ha già
+// il suo tasto Indietro.
+component TeachDialog inherits Rectangle {
+    callback done();
+    // azione (posizione in Keys) e nome di ogni passo
+    property <[int]> actions: [8, 7, 6, 0, 9, 10, 11, 13, 12, 1, 5];
+    property <[string]> names: [@tr("Back"), @tr("Go to the Home"), @tr("Open the Guide"), @tr("Full screen"), @tr("Search"),
+        @tr("Next channel"), @tr("Previous channel"), @tr("Last channel watched"), @tr("Open the Settings"),
+        @tr("Mini player"), @tr("Favorite (in Live)")];
+    property <int> step;
+    // l'ultimo tasto registrato, per conferma
+    property <string> learned;
+    function next() {
+        if (root.step + 1 >= root.actions.length) {
+            root.finish();
+        } else {
+            root.step += 1;
+        }
+    }
+    function finish() {
+        Keys.capturing = false;
+        root.done();
+    }
+    init => {
+        Keys.capturing = true;
+        fs.focus();
+    }
+    background: #000000c8;
+    TouchArea { }
+    fs := FocusScope {
+        // nei campi dietro non arriva niente: la procedura si prende tutti i tasti
+        key-pressed(event) => {
+            if (event.text == Key.Return) {
+                root.learned = "";
+                root.next();
+                return accept;
+            }
+            if (event.text == Key.Escape) {
+                if (root.actions[root.step] == 8) {
+                    // il telecomando ha già Indietro: niente tasto in più
+                    Keys.set-key(8, "");
+                    root.learned = "";
+                    root.next();
+                } else {
+                    root.finish();
+                }
+                return accept;
+            }
+            if (event.text == "" || event.text == Key.Shift || event.text == Key.ShiftR || event.text == Key.Control
+                || event.text == Key.ControlR || event.text == Key.Alt || event.text == Key.AltGr
+                || event.text == Key.Meta || event.text == Key.MetaR || event.text == Key.UpArrow
+                || event.text == Key.DownArrow || event.text == Key.LeftArrow || event.text == Key.RightArrow
+                || event.text == Key.Tab || event.text == Key.Backtab || event.text == " ") {
+                return accept;
+            }
+            Keys.set-key(root.actions[root.step], event.text);
+            root.learned = root.names[root.step];
+            root.next();
+            accept
+        }
+    }
+    Rectangle {
+        width: 560px;
+        height: box.preferred-height;
+        Sq { r: 30px; fill: Theme.panel; stroke: #ffffff22; stroke-width: 1px; }
+        box := VerticalLayout {
+            padding: 34px;
+            spacing: 14px;
+            Text {
+                text: @tr("Teach the remote control");
+                color: Theme.ink;
+                font-size: 22px * Theme.text-scale;
+                font-weight: 700;
+            }
+            Text {
+                text: @tr("Step {} of {}", root.step + 1, root.actions.length);
+                color: Theme.dim;
+                font-size: 13px * Theme.text-scale;
+            }
+            Rectangle { height: 6px; }
+            Text {
+                text: root.actions[root.step] == 8
+                    ? @tr("Press the key you want to use to go back. If your remote control has its own Back key, press it.")
+                    : @tr("Press the key you want to use for:");
+                color: Theme.dim;
+                font-size: 15px * Theme.text-scale;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.names[root.step];
+                color: Theme.ink;
+                font-size: 32px * Theme.text-scale;
+                font-weight: 700;
+            }
+            if root.learned != "": Text {
+                text: @tr("Saved: {}", root.learned);
+                color: Theme.ok;
+                font-size: 13px * Theme.text-scale;
+            }
+            Rectangle { height: 6px; }
+            Text {
+                text: @tr("OK skips this step · Back ends · The arrows, OK, Play/Pause and the volume keys keep their job.");
+                color: Theme.faint;
+                font-size: 12px * Theme.text-scale;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                Btn {
+                    label: @tr("Skip");
+                    clicked => {
+                        root.learned = "";
+                        root.next();
+                        fs.focus();
+                    }
+                }
+                Btn { label: @tr("Done"); primary: true; clicked => { root.finish(); } }
             }
         }
     }
@@ -3233,6 +3372,9 @@ export component MainWindow inherits Window {
     property <int> dock-focus-tick;
     property <int> pin-focus-tick;
     property <int> search-focus-tick;
+    // «Insegna il telecomando» aperto, e già fatto una volta
+    property <bool> teach-open;
+    in-out property <bool> remote-taught;
     // il livello del volume a video: si accende quando cambia, si spegne dopo 2 secondi; dopo
     // l'avvio (il volume salvato non deve mostrarlo)
     property <bool> osd-shown;
@@ -3609,6 +3751,11 @@ export component MainWindow inherits Window {
                         if root.page == 4: SettingsScreen {
                             section <=> root.settings-section;
                             focus-tick: root.settings-focus-tick;
+                            remote-taught: root.remote-taught;
+                            teach => {
+                                root.teach-open = true;
+                                root.setting-changed("remote_taught", "1");
+                            }
                             sources: root.sources;
                             working: root.working;
                             status: root.source-status;
@@ -3749,6 +3896,14 @@ export component MainWindow inherits Window {
                     horizontal-alignment: right;
                     vertical-alignment: center;
                 }
+            }
+        }
+
+        if root.teach-open: TeachDialog {
+            done => {
+                root.teach-open = false;
+                root.remote-taught = true;
+                root.settings-focus-tick += 1;
             }
         }
 

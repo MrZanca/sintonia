@@ -564,6 +564,8 @@ Una copia dell'archivio com'era è in:
             main.set_live_preview(settings.live_preview);
             main.set_update_check(settings.update_check);
             main.set_bg_motion(settings.bg_motion);
+            // chi usava già il telecomando prima di questa funzione non la vede comparire da sola
+            main.set_remote_taught(settings.remote_taught || settings.remote);
             main.global::<Theme>()
                 .set_text_scale(match settings.text_size {
                     1 => 1.25,

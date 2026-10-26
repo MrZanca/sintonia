@@ -65,6 +65,8 @@ pub struct Settings {
     pub update_check: bool,
     /// Si usa il telecomando (frecce, OK, Indietro) invece del mouse.
     pub remote: bool,
+    /// «Insegna il telecomando» è già stato aperto una volta.
+    pub remote_taught: bool,
     /// Volume del player, da 0 a 100.
     pub volume: u32,
     /// Lo sfondo si sposta verso il mouse.
@@ -173,6 +175,7 @@ impl Settings {
             live_preview: true,
             update_check: true,
             remote: false,
+            remote_taught: false,
             volume: 100,
             bg_motion: true,
             text_size: 0,
@@ -227,6 +230,7 @@ impl Settings {
             "text_size" => self.text_size = value.trim().parse::<u32>().unwrap_or(0).min(1),
             "media_volume" => self.media_volume = flag,
             "navigation" => self.remote = value == "remote",
+            "remote_taught" => self.remote_taught = flag,
             "volume" => {
                 if let Ok(volume) = value.trim().parse::<u32>() {
                     self.volume = volume.min(100);

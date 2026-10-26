@@ -652,3 +652,27 @@ msgstr "Normale"
 msgid "Large"
 msgstr "Grande"
 
+
+msgid "Teach the remote control"
+msgstr "Insegna il telecomando"
+
+msgid "Step {} of {}"
+msgstr "Passo {} di {}"
+
+msgid "Press the key you want to use to go back. If your remote control has its own Back key, press it."
+msgstr "Premi il tasto che vuoi usare per tornare indietro. Se il telecomando ha un suo tasto Indietro, premi quello."
+
+msgid "Press the key you want to use for:"
+msgstr "Premi il tasto che vuoi usare per:"
+
+msgid "Saved: {}"
+msgstr "Salvato: {}"
+
+msgid "OK skips this step · Back ends · The arrows, OK, Play/Pause and the volume keys keep their job."
+msgstr "OK salta questo passo · Indietro finisce · Frecce, OK, Play/Pausa e tasti del volume restano come sono."
+
+msgid "Skip"
+msgstr "Salta"
+
+msgid "Done"
+msgstr "Fatto"
