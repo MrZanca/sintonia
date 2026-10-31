@@ -43,29 +43,72 @@ Rust `aarch64-linux-android` e `x86_64-linux-android`. In ogni shell:
 ```powershell
 $a = "$env:LOCALAPPDATA\Android"
 $env:ANDROID_HOME = "$a\sdk"; $env:ANDROID_NDK_HOME = "$a\sdk\ndk\27.2.12479018"; $env:JAVA_HOME = "$a\jdk17"
-cargo ndk -t arm64-v8a build -p sintonia-core   # il core compila per Android
+cargo ndk -t arm64-v8a build -p sintonia-core                        # il core compila per Android
+cargo ndk -t arm64-v8a clippy -p sintonia-player --all-targets -- -D warnings   # il player (serve libmpv, sotto)
 ```
 
 Il backend Android di Slint compila un aiuto Java: serve `ANDROID_JAR` (lo imposta lo script).
 
-**Libmpv per Android** in `vendor\mpv-android\<abi>\` (non va nel repository): `libmpv.so`, le
-librerie di FFmpeg (`libav*.so`, `libsw*.so`) e `libc++_shared.so`. Per ora c'è solo una build **GPL**
-(solo per prove interne, mai da distribuire): `jarnedemeulemeester/libmpv-android` release `v1.0.0`,
-`libmpv-release.aar`, SHA-256 `df146592480fc8418415a06b1f1a1d6318b0088e21f52254b0e9a82b61ca8fa2`
-(coincide con quello dichiarato da GitHub), FFmpeg n8.1, API client 2.5. Si estraggono le `.so` da
-`jni/arm64-v8a/` e `jni/x86_64/` (tutte tranne `libplayer.so`, che è il collante JNI di mpv-android).
-La build LGPL va ancora prodotta (vedi `docs/m5-fase0.md`).
+### libmpv LGPL per Android
+
+Sta in `vendor\mpv-android\<abi>\` (non va nel repository): `libmpv.so`, le librerie di FFmpeg
+(`libav*.so`, `libsw*.so`) e `libc++_shared.so`, più `LICENSES\` e `BUILDINFO.txt` (versioni,
+configurazioni, SHA-256 di ogni `.so`). Un'altra cartella si indica con `SINTONIA_MPV_DIR` (con dentro
+le cartelle per ABI). Il `build.rs` di `sintonia-player` la collega e passa il percorso ai crate che
+ne dipendono come `DEP_MPV_LIB_DIR`: le `.so` vanno nell'APK in `lib/<abi>/`.
+
+Non esiste una build LGPL pronta: la produce il workflow **libmpv Android**
+(`.github/workflows/libmpv-android.yml`, su Ubuntu 24.04) con `scripts/libmpv-android.sh`, che ripete
+le `buildscripts` di mpv-android a commit fissato togliendo `--enable-gpl` da FFmpeg e aggiungendo
+`-Dgpl=false` a mpv, e si ferma se la licenza risultante non è LGPL (vedi `THIRD-PARTY.md`). Il
+workflow parte quando cambiano lo script o il workflow stesso, o a mano (solo con il file su `main`);
+dura circa 13 minuti per arm64-v8a e x86_64. Lo script gira anche su un Linux qualsiasi
+(`bash scripts/libmpv-android.sh`, con SDK e NDK scaricati dallo script di mpv-android).
+
+Versione in uso: esecuzione `41205587384` del 31/10/2026, mpv `6f605372b9` (API client 2.6, come
+Windows), FFmpeg n9.0.2, NDK r30, API minima 23. SHA-256 di `libmpv-android-lgpl.zip`
+`1f3bd5fab46aeda25bf8032cb41000febfeffe74800a93a16dd4e9a553cc0dd5`. Per installarla (scarica con `gh`,
+controlla lo SHA-256 e sposta un'eventuale build vecchia in `vendor\mpv-android-gpl\`):
 
 ```powershell
-# prototipo Slint + mpv (prototipi\android-fase0): compila, impacchetta, firma (chiave di debug) e installa
+powershell -ExecutionPolicy Bypass -File scripts\android-libmpv.ps1 -Run 41205587384 -Sha256 1f3bd5fab46aeda25bf8032cb41000febfeffe74800a93a16dd4e9a553cc0dd5
+```
+
+Gli artefatti delle esecuzioni di GitHub scadono dopo 90 giorni: dopo, si rilancia il workflow e si
+aggiornano qui esecuzione e SHA-256 (le `.so` non sono identiche bit per bit tra due compilazioni).
+
+La build **GPL** della fase 0 (`jarnedemeulemeester/libmpv-android` v1.0.0, SHA-256
+`df146592480fc8418415a06b1f1a1d6318b0088e21f52254b0e9a82b61ca8fa2`) non serve più e non va mai distribuita.
+
+### Opzioni del player su Android
+
+`hwdec=mediacodec,mediacodec-copy` (se nessuno dei due accetta il flusso mpv decodifica in software),
+`ao=audiotrack`. All'avvio l'app deve chiamare `sintonia_player::set_java_vm(app.vm_as_ptr())` e passare
+in `PlayerConfig::tls_ca_file` il file fatto da `sintonia_player::tls::system_ca_bundle(cartella)`:
+mpv verifica i certificati HTTPS, e libcurl e FFmpeg (mbedtls) su Android non trovano da soli quelli di
+sistema («TLS certificate verification failed»). Il ciclo di vita si decide con
+`sintonia_player::lifecycle::Lifecycle` (segnali `Start`/`Stop`/`InitWindow`/`TerminateWindow` di
+`slint::android::init_with_event_listener`) e si applica con `VideoRouter::suspend`/`resume`.
+
+### Banco di prova (prototipi\android-fase0)
+
+```powershell
+# compila, impacchetta, firma (chiave di debug) e installa
 powershell -ExecutionPolicy Bypass -File scripts\android-prova.ps1 -Installa   # -Abi x86_64 per l'emulatore
 
-# indirizzo da riprodurre e modalità di decodifica (prima riga: URL; poi hwdec=auto-safe|mediacodec|mediacodec-copy|no)
-# (comando provato da Git Bash con MSYS_NO_PATHCONV=1; in PowerShell cambiano le virgolette)
-adb shell "run-as it.sintonia.prova sh -c 'mkdir -p files; printf \"URL\nhwdec=mediacodec\n\" > files/prova.txt'"
-adb shell am start -W -n it.sintonia.prova/android.app.NativeActivity
-adb logcat -s sintonia:*          # una riga di numeri al secondo (mai l'indirizzo)
+# prova.txt nella cartella dati: prima riga l'indirizzo; poi, se servono, hwdec=..., live=no (film:
+# pausa invece di fermata in secondo piano), opt=nome=valore (un'opzione di mpv)
+adb shell "run-as it.sintonia.prova sh -c 'echo URL > files/prova.txt && echo live=no >> files/prova.txt'"
+adb shell am start -n it.sintonia.prova/android.app.NativeActivity
+adb logcat -s sintonia:*          # una riga di numeri al secondo, il ciclo di vita, mai l'indirizzo
 ```
+
+Un indirizzo con utente e password non va mai scritto sulla riga di comando (finisce nella cronologia
+della shell): si scrive in un file senza BOM, `adb push` in `/data/local/tmp`, poi `run-as ... cat` e si
+cancella. Con una pipe di Windows PowerShell 5.1 verso `adb shell` l'indirizzo arriva con un BOM davanti
+e mpv non lo apre.
+
+CPU per processo: `adb shell top -b -d 1 -n 11 -p (adb shell pidof it.sintonia.prova)`; per thread `-H`.
 
 ### Il core su Android (fase 1)
 
@@ -152,7 +195,7 @@ cargo run -p sintonia-app --features slint/mcp
 | Crate | Ruolo |
 |---|---|
 | `sintonia-core` | logica senza interfaccia: `m3u` (parser tollerante a righe), `epg` (XMLTV a flusso, anche `.gz`, e abbinamento ai canali), `xtream` (client `player_api.php`, risposte lette con tolleranza) e `xtream_mock` (finto server, solo test ed esempio), `db` (SQLite + FTS5: canali, film, serie, preferiti, cronologia, guida), `crypto` e `secrets` (indirizzi cifrati, chiave e password Xtream nel portachiavi), `service` (runtime tokio: download, archivio, immagini), `redact` |
-| `sintonia-player` | involucro di libmpv: `Player` (comandi, tracce, opzioni per canale, eventi da un thread dedicato), `Backoff` (riconnessione), `RenderContext` (render API OpenGL) |
+| `sintonia-player` | involucro di libmpv: `Player` (comandi, tracce, opzioni per canale, eventi da un thread dedicato), `Backoff` (riconnessione), `RenderContext` (render API OpenGL), `lifecycle` (sospensione su Android), `tls` (autorità di certificazione per Android) |
 | `sintonia-app` | finestre Slint: `app.rs` (collega interfaccia, servizio e player; ripresa, prossimo episodio), `catalog.rs` (modello virtualizzato per canali, film e serie, con preferiti), `guide.rs` (palinsesto in memoria, «in onda / dopo», griglia della Guida), `images.rs` (locandine ritagliate con gli angoli di `Sq`), `video.rs` (video di mpv nelle finestre, riconnessione, fine dei film), `settings.rs` |
 
 Il logo sta in `assets/logo/` (SVG d'origine, PNG da 32 a 1024 px, `sintonia.ico`): l'icona

@@ -58,6 +58,10 @@ non `rustls-platform-verifier` (scelta dell'utente, motivi in `docs/m5-fase1.md`
   una sola per definizione, e il file di blocco va nella cartella dati.
 
 ### Fase 2: il video
+**Fatta** (ramo `m5-fase-2`, vedi `docs/m5-fase2.md`): libmpv LGPL compilata con GitHub Actions,
+`build.rs` per Android, stato OpenGL completo, opzioni Android, certificati HTTPS di sistema, ciclo di
+vita provato sul Mi 9T (Home, schermo spento con blocco impronta). `VideoRouter::suspend`/`resume`
+si collegano in fase 3, con `android_main`. CPU non ridotta: resta un lavoro per la fase 6.
 - `sintonia-player/build.rs`: ramo Android che collega `libmpv.so` da una cartella indicata da
   `SINTONIA_MPV_DIR` (come per Windows); la `.so` finisce in `jniLibs/<abi>/` dell'APK.
 - Contesto OpenGL ES, `hwdec=mediacodec` (con ripiego su `mediacodec-copy`), uscita audio
@@ -69,6 +73,7 @@ non `rustls-platform-verifier` (scelta dell'utente, motivi in `docs/m5-fase1.md`
   Picture-in-Picture, in fase 5.
 
 ### Fase 3: l'applicazione
+Parte dal ramo `m5`, che unisce le fasi 0, 1 e 2 (non ancora su `main`).
 - Punto d'ingresso `android_main` (`#[no_mangle]`), `cfg(target_os = "android")` per `main.rs`.
 - Selettore file (importare una playlist M3U): Storage Access Framework via JNI al posto di `rfd`.
 - Aprire una pagina nel browser (avviso nuova versione): `Intent.ACTION_VIEW` via JNI.

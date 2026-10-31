@@ -1,0 +1,57 @@
+# Compila libmpv LGPL per Android (scripts/libmpv-android.sh) e la allega all'esecuzione.
+# Parte solo quando cambiano lo script o questo file, oppure a mano (Actions › libmpv Android ›
+# Run workflow, possibile solo quando il file è su main): la libreria cambia di rado e la
+# compilazione dura a lungo. Il risultato si scarica con scripts/android-libmpv.ps1.
+name: libmpv Android
+
+on:
+  push:
+    paths:
+      - scripts/libmpv-android.sh
+      - .github/workflows/libmpv-android.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Pacchetti
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf pkgconf libtool ninja-build gperf nasm zip
+          pipx install meson
+          meson --version
+
+      - name: Compilazione e controllo della licenza
+        run: bash scripts/libmpv-android.sh
+        env:
+          WORK: ${{ runner.temp }}/libmpv
+          OUT: ${{ github.workspace }}/out
+
+      - name: Riepilogo
+        run: |
+          {
+            echo '```'
+            cat out/libmpv-android-lgpl.zip.sha256
+            cat out/libmpv-android-lgpl/BUILDINFO.txt
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-android-lgpl
+          path: |
+            out/libmpv-android-lgpl.zip
+            out/libmpv-android-lgpl.zip.sha256
+          if-no-files-found: error

@@ -2,29 +2,40 @@
 //! disegnato dentro il *rendering notifier*, come fa `sintonia-app/src/video.rs` su Windows.
 //!
 //! Non è l'app: serve a misurare avvio, fotogrammi e decodifica hardware sul telefono. Il flusso e
-//! la modalità di decodifica si leggono da `prova.txt` nella cartella dati dell'app (prima riga:
-//! indirizzo; poi righe `hwdec=...`), così si provano più casi senza ricompilare.
+//! le opzioni si leggono da `prova.txt` nella cartella dati dell'app (prima riga: indirizzo; poi
+//! righe `hwdec=...`, `live=no` per provare un film, `opt=nome=valore` per un'opzione di mpv), così si
+//! provano più casi senza ricompilare.
+//!
+//! In fase 2 è il banco di prova di `sintonia-player` su Android: JavaVM, opzioni predefinite e
+//! ciclo di vita (`sintonia_player::lifecycle`), con le stesse regole di `VideoRouter::suspend`.
 
-use std::cell::Cell;
-use std::ffi::{c_int, c_void, CStr};
+use std::cell::{Cell, RefCell};
+use std::ffi::{c_void, CStr};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use android_activity::AndroidApp;
+use android_activity::{AndroidApp, MainEvent, PollEvent};
 use glow::HasContext;
+use sintonia_player::lifecycle::{Lifecycle, LifecycleEvent, Transition};
 use sintonia_player::{LoadOptions, Player, PlayerConfig, PlayerEvent, RenderContext};
 use slint::{ComponentHandle, GraphicsAPI, RenderingState};
 
 slint::include_modules!();
 
-extern "C" {
-    /// FFmpeg: la JavaVM che `mediacodec` e l'uscita audio di mpv usano per chiamare Java.
-    fn av_jni_set_java_vm(vm: *mut c_void, log_ctx: *mut c_void) -> c_int;
-}
-
 /// Modalità di decodifica provate dal secondo pulsante.
-const MODES: [&str; 4] = ["auto-safe", "mediacodec", "mediacodec-copy", "no"];
+const MODES: [&str; 5] = [
+    sintonia_player::HWDEC,
+    "auto-safe",
+    "mediacodec",
+    "mediacodec-copy",
+    "no",
+];
+
+thread_local! {
+    /// Ciclo di vita e cosa fare alle transizioni; l'ascoltatore di Slint parte prima della prova.
+    static LIFECYCLE: RefCell<(Lifecycle, Option<Rc<Prova>>)> = RefCell::default();
+}
 
 #[derive(Default)]
 struct Counters {
@@ -45,6 +56,37 @@ struct Prova {
     mode: Cell<usize>,
     counters: Counters,
     started: Instant,
+    /// Diretta (`true`) o film: decide cosa fare quando l'app va in secondo piano.
+    live: bool,
+    /// Sospesa dal ciclo di vita; per un film: se era in riproduzione.
+    suspended: Cell<Option<bool>>,
+}
+
+/// Registra un segnale del ciclo di vita e sospende o riprende la prova.
+fn on_lifecycle(event: &PollEvent<'_>) {
+    let event = match event {
+        PollEvent::Main(MainEvent::Start) => LifecycleEvent::Started,
+        PollEvent::Main(MainEvent::Stop) => LifecycleEvent::Stopped,
+        PollEvent::Main(MainEvent::InitWindow { .. }) => LifecycleEvent::WindowCreated,
+        PollEvent::Main(MainEvent::TerminateWindow { .. }) => LifecycleEvent::WindowDestroyed,
+        PollEvent::Main(MainEvent::GainedFocus) => {
+            log::info!("ciclo di vita: focus preso");
+            return;
+        }
+        PollEvent::Main(MainEvent::LostFocus) => {
+            log::info!("ciclo di vita: focus perso");
+            return;
+        }
+        _ => return,
+    };
+    let (transition, state) = LIFECYCLE.with(|l| {
+        let mut l = l.borrow_mut();
+        (l.0.handle(event), l.1.clone())
+    });
+    log::info!("ciclo di vita: {event:?} -> {transition:?}");
+    if let (Some(transition), Some(state)) = (transition, state) {
+        state.on_transition(transition);
+    }
 }
 
 #[no_mangle]
@@ -57,34 +99,54 @@ fn android_main(app: AndroidApp) {
     );
     std::panic::set_hook(Box::new(|info| log::error!("PANIC: {info}")));
 
-    // SAFETY: `vm_as_ptr` è la JavaVM del processo, valida per tutta la sua vita; il secondo
-    // argomento (contesto di log) può essere NULL.
-    let jni = unsafe { av_jni_set_java_vm(app.vm_as_ptr(), std::ptr::null_mut()) };
-    log::info!("av_jni_set_java_vm -> {jni}");
+    // SAFETY: `vm_as_ptr` è la JavaVM del processo, valida per tutta la sua vita.
+    if let Err(err) = unsafe { sintonia_player::set_java_vm(app.vm_as_ptr()) } {
+        log::error!("{err}");
+    }
 
-    let config = app
-        .internal_data_path()
+    let data_dir = app.internal_data_path();
+    let tls_ca_file = data_dir.as_deref().and_then(|dir| {
+        sintonia_player::tls::system_ca_bundle(dir)
+            .map_err(|err| log::error!("certificati di sistema: {err}"))
+            .ok()
+    });
+    let config = data_dir
+        .as_deref()
         .and_then(|dir| std::fs::read_to_string(dir.join("prova.txt")).ok())
         .unwrap_or_default();
     let mut lines = config.lines().map(str::trim).filter(|l| !l.is_empty());
     let url = lines.next().unwrap_or("").to_owned();
-    let mode = lines
+    let rest: Vec<&str> = lines.collect();
+    let mode = rest
+        .iter()
         .find_map(|l| l.strip_prefix("hwdec="))
         .and_then(|m| MODES.iter().position(|x| *x == m))
         .unwrap_or(0);
+    let live = !rest.contains(&"live=no");
+    let options: Vec<(&str, &str)> = rest
+        .iter()
+        .filter_map(|l| l.strip_prefix("opt=")?.split_once('='))
+        .collect();
     log::info!(
-        "mpv API {:?}, modalità hwdec {}",
+        "mpv API {:?}, modalità hwdec {}, {}, opzioni {options:?}",
         sintonia_player::api_version(),
-        MODES[mode]
+        MODES[mode],
+        if live { "diretta" } else { "film" }
     );
 
-    if let Err(err) = slint::android::init(app) {
+    // come farà l'app con il video in corso (fase 3): lo schermo resta acceso nelle prove lunghe
+    app.set_window_flags(
+        android_activity::WindowManagerFlags::KEEP_SCREEN_ON,
+        android_activity::WindowManagerFlags::empty(),
+    );
+    if let Err(err) = slint::android::init_with_event_listener(app, on_lifecycle) {
         log::error!("backend Android di Slint: {err}");
         return;
     }
 
     let player_config = PlayerConfig {
         log_level: "info",
+        tls_ca_file,
         ..PlayerConfig::default()
     };
     let player = match Player::new(&player_config, |event| {
@@ -105,13 +167,22 @@ fn android_main(app: AndroidApp) {
         }
     };
 
+    for (name, value) in options {
+        if let Err(err) = player.set_option(name, value) {
+            log::warn!("{name}={value}: {err}");
+        }
+    }
+
     let state = Rc::new(Prova {
         player,
         url,
         mode: Cell::new(mode),
         counters: Counters::default(),
         started,
+        live,
+        suspended: Cell::new(None),
     });
+    LIFECYCLE.with(|l| l.borrow_mut().1 = Some(Rc::clone(&state)));
     if let Err(err) = run(&state) {
         log::error!("{err}");
     }
@@ -138,19 +209,63 @@ fn run(state: &Rc<Prova>) -> Result<(), Box<dyn std::error::Error>> {
     let stats_state = Rc::clone(state);
     let stats_ui = ui.as_weak();
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
-        if let Some(ui) = stats_ui.upgrade() {
-            let text = stats_state.stats_line();
-            log::info!("{text}");
-            ui.set_stats(text.into());
-        }
-    });
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(1),
+        move || {
+            if let Some(ui) = stats_ui.upgrade() {
+                let text = stats_state.stats_line();
+                log::info!("{text}");
+                ui.set_stats(text.into());
+            }
+        },
+    );
 
     ui.run()?;
     Ok(())
 }
 
 impl Prova {
+    /// Come `VideoRouter::suspend` e `resume` dell'app: il film va in pausa, la diretta si ferma e
+    /// al ritorno si riapre.
+    fn on_transition(&self, transition: Transition) {
+        match transition {
+            Transition::Suspend => {
+                let was_playing = !self.player.is_paused();
+                let result = if self.live {
+                    self.player.stop()
+                } else {
+                    self.player.set_paused(true)
+                };
+                if let Err(err) = result {
+                    log::warn!("{err}");
+                }
+                self.suspended.set(Some(was_playing));
+                log::info!(
+                    "sospesa ({})",
+                    if self.live {
+                        "diretta fermata"
+                    } else {
+                        "pausa"
+                    }
+                );
+            }
+            Transition::Resume => {
+                let Some(was_playing) = self.suspended.take() else {
+                    return;
+                };
+                if self.live {
+                    self.start_playback();
+                } else if was_playing {
+                    if let Err(err) = self.player.set_paused(false) {
+                        log::warn!("{err}");
+                    }
+                }
+                log::info!("ripresa");
+            }
+        }
+    }
+
     fn start_playback(&self) {
         let mode = MODES[self.mode.get()];
         if let Err(err) = self.player.set_option("hwdec", mode) {
