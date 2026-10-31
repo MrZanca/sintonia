@@ -34,7 +34,7 @@ SHA-256 dell'archivio `b7a12a73a03313446657d3bf1bda525fa8b62c2628669ee0a16c0430f
 `libmpv-2.dll` dipende da `vulkan-1.dll`, che installano i driver video (NVIDIA, AMD, Intel).
 Su PC senza driver video (alcune macchine virtuali) la DLL non si carica: l'installer lo controlla e avvisa.
 
-## Android (M5, fase 0)
+## Android (M5)
 
 Ambiente su Windows, già installato in `%LOCALAPPDATA%\Android`: `platform-tools` (adb, nel PATH),
 `jdk17`, `sdk` (platform 34, build-tools 34.0.0, NDK 27.2.12479018), `cargo-ndk` 4.1.2 e i target
@@ -66,6 +66,30 @@ adb shell "run-as it.sintonia.prova sh -c 'mkdir -p files; printf \"URL\nhwdec=m
 adb shell am start -W -n it.sintonia.prova/android.app.NativeActivity
 adb logcat -s sintonia:*          # una riga di numeri al secondo (mai l'indirizzo)
 ```
+
+### Il core su Android (fase 1)
+
+```powershell
+# compila tutto il core per l'emulatore (x86_64) e controlla i lint sul codice Android
+cargo ndk -t x86_64 build -p sintonia-core
+cargo ndk -t arm64-v8a clippy -p sintonia-core --all-targets --all-features -- -D warnings
+
+# test del core sul telefono: compila senza lanciare, toglie i simboli, copia ed esegue
+# (senza TMPDIR e dalla cartella /, come dentro un'app; il percorso del binario lo stampa cargo)
+cargo ndk -t arm64-v8a test -p sintonia-core --no-run
+& "$env:ANDROID_NDK_HOME\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-strip.exe" -o core-test target\aarch64-linux-android\debug\deps\sintonia_core-<hash>
+adb push core-test /data/local/tmp/sintonia-core-test
+adb shell "chmod 755 /data/local/tmp/sintonia-core-test; cd / && env -u TMPDIR /data/local/tmp/sintonia-core-test"
+
+# prova dentro un'app vera (JVM, Keystore, cartelle dell'app, HTTPS): prototipi\android-fase1
+powershell -ExecutionPolicy Bypass -File scripts\android-core-prova.ps1 -Installa
+adb shell am start -W -n it.sintonia.provacore/android.app.NativeActivity
+adb logcat -s sintonia-prova:*                            # il rapporto, fino a «FINE»
+adb shell run-as it.sintonia.provacore cat files/prova-core.txt   # lo stesso rapporto su file
+```
+
+Su Android l'app deve chiamare `sintonia_core::android::init(app.vm_as_ptr(), app.activity_as_ptr())`
+all'avvio, prima di segreti, cartelle (`sintonia_core::android::app_dirs()`) e client HTTP.
 
 In Git Bash `adb push`/`adb shell` storpiano i percorsi che iniziano con `/`: usare
 `MSYS_NO_PATHCONV=1` o PowerShell.
