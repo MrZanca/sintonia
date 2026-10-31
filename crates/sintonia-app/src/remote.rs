@@ -6,18 +6,27 @@
 //!   Slint non traduce: diventano tasti che l'interfaccia conosce.
 //! - Se il fuoco si perde (l'elemento che lo aveva è sparito) un tasto non arriva a nessuno: lo si
 //!   rimette in un posto sicuro, così il telecomando non resta mai senza effetto.
+//!
+//! Su Android non c'è winit: i tasti arrivano dal backend Android di Slint (fase 4 di M5).
 
 use std::time::Duration;
 
 use slint::platform::{Key, WindowEvent};
+#[cfg(not(target_os = "android"))]
 use slint::winit_030::winit::event::WindowEvent as WinitEvent;
+#[cfg(not(target_os = "android"))]
 use slint::winit_030::winit::keyboard::{Key as WinitKey, NamedKey};
+#[cfg(not(target_os = "android"))]
 use slint::winit_030::{EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, SharedString};
 
+#[cfg(not(target_os = "android"))]
 use crate::mediakeys::VolumeKey;
-use crate::{Keys, MainWindow, Nav};
+#[cfg(not(target_os = "android"))]
+use crate::Keys;
+use crate::{MainWindow, Nav};
 
+#[cfg(not(target_os = "android"))]
 /// Cosa fare per un tasto speciale del telecomando.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Action {
@@ -27,6 +36,7 @@ pub enum Action {
     Home,
 }
 
+#[cfg(not(target_os = "android"))]
 /// I tasti dei telecomandi che Slint non conosce.
 pub fn remote_action(key: &WinitKey) -> Option<Action> {
     let WinitKey::Named(named) = key else {
@@ -60,6 +70,7 @@ pub fn remote_action(key: &WinitKey) -> Option<Action> {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 /// Il tasto di winit che corrisponde a un tasto virtuale di Windows (quelli di
 /// [`crate::mediakeys::OTHER_KEYS`], che arrivano come `WM_HOTKEY`).
 pub fn vk_named(vk: u32) -> Option<NamedKey> {
@@ -81,6 +92,7 @@ pub fn vk_named(vk: u32) -> Option<NamedKey> {
     })
 }
 
+#[cfg(not(target_os = "android"))]
 /// Esegue il tasto speciale `key` (premuto): restituisce `false` se non è un tasto speciale.
 fn run_special(main: &MainWindow, key: &WinitKey) -> bool {
     let Some(action) = remote_action(key) else {
@@ -103,6 +115,7 @@ fn run_special(main: &MainWindow, key: &WinitKey) -> bool {
     true
 }
 
+#[cfg(not(target_os = "android"))]
 /// Come si chiama un tasto (Impostazioni › Navigazione, «Ultimo tasto premuto»): la lettera, il
 /// nome del tasto speciale, o il codice se Windows non sa che tasto sia.
 pub fn key_name(
@@ -117,6 +130,7 @@ pub fn key_name(
     }
 }
 
+#[cfg(not(target_os = "android"))]
 /// I tasti con cui ci si muove: se non arrivano a nessun elemento il fuoco si era perso.
 fn is_navigation(key: &WinitKey) -> bool {
     matches!(
@@ -157,6 +171,21 @@ fn later(main: &MainWindow, f: impl FnOnce(&MainWindow) + 'static) {
 }
 
 pub fn install(main: &MainWindow) {
+    let weak = main.as_weak();
+    main.global::<Nav>().on_step(move |forward| {
+        if let Some(main) = weak.upgrade() {
+            later(&main, move |main| {
+                press(main, if forward { Key::Tab } else { Key::Backtab });
+            });
+        }
+    });
+    #[cfg(not(target_os = "android"))]
+    install_winit(main);
+}
+
+/// I tasti che arrivano da winit (e da Windows come `WM_HOTKEY`).
+#[cfg(not(target_os = "android"))]
+fn install_winit(main: &MainWindow) {
     // gli stessi tasti quando arrivano come WM_HOTKEY (presi a Windows, vedi mediakeys.rs)
     let weak = main.as_weak();
     crate::mediakeys::set_other_handler(move |vk| {
@@ -166,15 +195,6 @@ pub fn install(main: &MainWindow) {
         let key = WinitKey::Named(named);
         main.global::<Keys>().set_last(format!("{named:?}").into());
         run_special(&main, &key);
-    });
-
-    let weak = main.as_weak();
-    main.global::<Nav>().on_step(move |forward| {
-        if let Some(main) = weak.upgrade() {
-            later(&main, move |main| {
-                press(main, if forward { Key::Tab } else { Key::Backtab });
-            });
-        }
     });
 
     let weak = main.as_weak();
@@ -253,7 +273,7 @@ pub fn install(main: &MainWindow) {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use super::*;
 

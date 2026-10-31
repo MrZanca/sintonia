@@ -3,7 +3,7 @@
 //! Su Windows si usa `SetThreadExecutionState`, che vale finché il thread che la chiama (quello
 //! dell'interfaccia) è vivo, e si annulla da sola alla chiusura dell'app. mpv lo farebbe da sé
 //! con la sua finestra, ma qui disegna dentro Slint (`vo=libmpv`) e non lo fa.
-//! Linux e macOS arrivano con M5.
+//! Su Android c'è `FLAG_KEEP_SCREEN_ON` sulla finestra dell'activity.
 
 use std::cell::Cell;
 
@@ -33,7 +33,14 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "android")]
+mod imp {
+    pub fn set(awake: bool) {
+        crate::android::keep_screen_on(awake);
+    }
+}
+
+#[cfg(not(any(windows, target_os = "android")))]
 mod imp {
     pub fn set(_awake: bool) {}
 }

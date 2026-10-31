@@ -7,6 +7,11 @@
 //! gli altri fanno quello che dice `remote.rs`. Quando la finestra perde il fuoco Sintonia li
 //! restituisce e tornano a Windows.
 //! Alcuni dispositivi mandano invece un `WM_APPCOMMAND` alla finestra: anche quello si prende qui.
+//!
+//! Su Android i tasti del volume restano al sistema e quelli dei telecomandi arrivano come tasti
+//! normali (fase 4 di M5): di questo modulo resta solo l'interfaccia, inutilizzata.
+
+#![cfg_attr(target_os = "android", allow(dead_code))]
 
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, Ordering};

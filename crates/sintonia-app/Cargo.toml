@@ -7,6 +7,12 @@ license.workspace = true
 authors.workspace = true
 publish.workspace = true
 
+# Su Android l'APK carica la libreria come `cdylib` (scripts/android-app.ps1 la compila con
+# `cargo rustc --crate-type cdylib`): sul PC non serve, quindi non è dichiarato qui.
+[lib]
+name = "sintonia_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sintonia"
 path = "src/main.rs"
@@ -14,16 +20,31 @@ path = "src/main.rs"
 [dependencies]
 sintonia-core = { path = "../sintonia-core" }
 sintonia-player = { path = "../sintonia-player" }
-# winit_030: per nascondere il puntatore anche quando il mouse è fermo
-slint = { workspace = true, features = ["unstable-winit-030"] }
 glow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 thiserror = { workspace = true }
-rfd = "0.17.2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 sys-locale = "0.3.2"
 directories = "6.0.0"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# winit_030: per nascondere il puntatore anche quando il mouse è fermo
+slint = { workspace = true, features = ["unstable-winit-030"] }
+rfd = "0.17.2"
+
+# Android: il backend winit di Slint non c'è, si usa quello di android-activity (stessa versione
+# di Slint del workspace)
+[target.'cfg(target_os = "android")'.dependencies]
+slint = { version = "1.18", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "renderer-femtovg",
+    "backend-android-activity-06",
+] }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+jni = "0.22.4"
 
 [build-dependencies]
 embed-resource = "3.0.12"
