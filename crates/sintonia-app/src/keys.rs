@@ -38,10 +38,10 @@ const EXTRA_KEYS: [(Key, &str, &str); 12] = [
     (Key::F18, "Traccia prec.", "Prev. track"),
     (Key::F19, "Stop", "Stop"),
     (Key::F20, "Posta", "Mail"),
-    (Key::F21, "Home (telecomando)", "Home (remote)"),
+    (Key::F21, "Applicazione 1", "Application 1"),
     (Key::F22, "Lettore", "Media player"),
-    (Key::F23, "Tasto «e»", "«e» key"),
-    (Key::F24, "Guida TV", "TV guide"),
+    (Key::F23, "Home del browser", "Browser home"),
+    (Key::F24, "Guida", "Guide"),
 ];
 
 /// Chiave dell'impostazione dell'azione `index`: mouse e tastiera e telecomando hanno tasti propri.
@@ -52,18 +52,18 @@ pub fn setting_key(index: usize, remote: bool) -> Option<String> {
         .map(|(name, _)| format!("key.{mode}{name}"))
 }
 
-/// I tasti di partenza. Con il telecomando (provati su un Esynic): lettore multimediale per lo
-/// schermo intero, posta per la Guida, il tasto Home (manda «applicazione 1») per la Home, il
-/// tasto «e» (manda «home del browser») per indietro, cerca per la ricerca, traccia seguente e
-/// precedente per cambiare canale.
+/// I tasti di partenza. Con il telecomando quelli che mandano quasi tutti i telecomandi: «home del
+/// browser» per la Home, il tasto Guida, il lettore multimediale per lo schermo intero, cerca,
+/// traccia seguente e precedente per cambiare canale (Indietro, OK e Play/Pausa sono fissi). Per i
+/// telecomandi che mandano altro c'è «Insegna il telecomando».
 pub fn defaults(remote: bool) -> Vec<String> {
     let mut keys: Vec<String> = ACTIONS.iter().map(|(_, key)| (*key).to_owned()).collect();
     if remote {
         let text = |k: Key| slint::SharedString::from(k).to_string();
         keys[0] = text(Key::F22);
-        keys[6] = text(Key::F20);
-        keys[7] = text(Key::F21);
-        keys[8] = text(Key::F23);
+        keys[6] = text(Key::F24);
+        keys[7] = text(Key::F23);
+        keys[8] = String::new();
         keys[9] = text(Key::F14);
         keys[10] = text(Key::F17);
         keys[11] = text(Key::F18);
@@ -171,8 +171,10 @@ mod tests {
     fn defaults_and_names() {
         assert_eq!(defaults(false).len(), ACTIONS.len());
         assert_eq!(defaults(false)[8], "");
+        // telecomando: Indietro è fisso, Home è «home del browser»
+        assert_eq!(defaults(true)[8], "");
         assert_eq!(
-            defaults(true)[8],
+            defaults(true)[7],
             slint::SharedString::from(Key::F23).as_str()
         );
         assert_eq!(setting_key(0, false).as_deref(), Some("key.fullscreen"));
@@ -189,7 +191,9 @@ mod tests {
         old[7] = "h".to_owned();
         old[8] = text(Key::F21);
         migrate_remote(&mut old);
-        assert_eq!(old, defaults(true));
+        // la mappa dell'Esynic: Home su «applicazione 1», Indietro sul tasto «e»
+        assert_eq!(old[7], text(Key::F21));
+        assert_eq!(old[8], text(Key::F23));
         // scelte diverse restano come sono
         let mut mine = defaults(true);
         mine[8] = "x".to_owned();
