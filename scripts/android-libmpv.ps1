@@ -33,6 +33,10 @@ if ((Test-Path $dest) -and -not (Test-Path (Join-Path $dest 'BUILDINFO.txt'))) {
 }
 if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
 Expand-Archive $zip $dest
+# lo zip conserva le date della compilazione, più vecchie dell'ultima build: senza data nuova cargo
+# non rilancerebbe il build.rs di sintonia-player e resterebbe collegato alla libreria di prima
+$now = Get-Date
+Get-ChildItem $dest -Recurse -File | ForEach-Object { $_.LastWriteTime = $now }
 Remove-Item $tmp -Recurse -Force
 
 Get-Content (Join-Path $dest 'BUILDINFO.txt') -TotalCount 12
