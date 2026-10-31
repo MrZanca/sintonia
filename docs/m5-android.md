@@ -55,6 +55,10 @@ Obiettivo: sapere se la strada «Slint + mpv» regge su Android prima di costrui
   una sola per definizione, e il file di blocco va nella cartella dati.
 
 ### Fase 2: il video
+**Fatta** (ramo `m5-fase-2`, vedi `docs/m5-fase2.md`): libmpv LGPL compilata con GitHub Actions,
+`build.rs` per Android, stato OpenGL completo, opzioni Android, certificati HTTPS di sistema, ciclo di
+vita provato sul Mi 9T (Home, schermo spento con blocco impronta). `VideoRouter::suspend`/`resume`
+si collegano in fase 3, con `android_main`. CPU non ridotta: resta un lavoro per la fase 6.
 - `sintonia-player/build.rs`: ramo Android che collega `libmpv.so` da una cartella indicata da
   `SINTONIA_MPV_DIR` (come per Windows); la `.so` finisce in `jniLibs/<abi>/` dell'APK.
 - Contesto OpenGL ES, `hwdec=mediacodec` (con ripiego su `mediacodec-copy`), uscita audio
