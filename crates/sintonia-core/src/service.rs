@@ -543,6 +543,18 @@ impl Shared {
     }
 }
 
+/// Il client HTTP di Sintonia: tempi massimi, proxy e certificati del sistema (su Android
+/// vedi [`crate::android`]).
+pub fn http_client(user_agent: &str) -> Result<reqwest::Client, reqwest::Error> {
+    let builder = reqwest::Client::builder()
+        .user_agent(user_agent)
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(60));
+    #[cfg(target_os = "android")]
+    let builder = crate::android::configure_http(builder);
+    builder.build()
+}
+
 impl Service {
     /// Apre l'archivio e avvia il runtime.
     pub fn start<F>(config: ServiceConfig, on_event: F) -> Result<Self, ServiceError>
@@ -564,11 +576,7 @@ impl Service {
             Health::Damaged { problem, .. } => log::error!("archivio danneggiato: {problem}"),
         }
         let store = Store::open(&config.database, config.cipher)?;
-        let http = reqwest::Client::builder()
-            .user_agent(config.user_agent)
-            .connect_timeout(Duration::from_secs(10))
-            .read_timeout(Duration::from_secs(60))
-            .build()
+        let http = http_client(&config.user_agent)
             .map_err(|e| ServiceError::Start(e.without_url().to_string()))?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)

@@ -1731,6 +1731,34 @@ mod tests {
     }
 
     #[test]
+    fn sorts_larger_than_the_cache_work() {
+        // con una cache piccola SQLite scrive i risultati intermedi in file temporanei: nelle app
+        // Android non c'è una cartella temporanea che SQLite conosca
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("archivio.db"), Cipher::new(&[9; 32])).unwrap();
+        store
+            .conn
+            .execute_batch(
+                "PRAGMA cache_size = -64;
+                 CREATE TABLE big(a TEXT);
+                 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+                 INSERT INTO big SELECT hex(randomblob(64)) FROM n;
+                 CREATE INDEX big_a ON big(a);
+                 REINDEX big_a;",
+            )
+            .unwrap();
+        let distinct: i64 = store
+            .conn
+            .query_row(
+                "SELECT count(*) FROM (SELECT DISTINCT a FROM big ORDER BY a DESC)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(distinct, 20000);
+    }
+
+    #[test]
     fn broken_indexes_are_rebuilt() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("archivio.db");

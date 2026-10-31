@@ -43,6 +43,9 @@ Obiettivo: sapere se la strada «Slint + mpv» regge su Android prima di costrui
 - Consegna: `docs/m5-fase0.md` con esito, numeri e scelta.
 
 ### Fase 1: il core gira su Android
+**Fatta** (ramo `m5-fase-1`, vedi `docs/m5-fase1.md`): 83 test del core passano sul Mi 9T; Keystore,
+cartelle dell'app e HTTPS provati dentro un APK. Certificati: autorità di sistema lette dai file,
+non `rustls-platform-verifier` (scelta dell'utente, motivi in `docs/m5-fase1.md`).
 - Compilare `sintonia-core` per `aarch64-linux-android` (e `x86_64-linux-android` per
   l'emulatore); far passare i test che girano su dispositivo (`cargo-ndk` + `adb`).
 - Percorsi: cartella dati dell'app (`internal_data_path` di `android-activity`) al posto di
@@ -70,6 +73,7 @@ si collegano in fase 3, con `android_main`. CPU non ridotta: resta un lavoro per
   Picture-in-Picture, in fase 5.
 
 ### Fase 3: l'applicazione
+Parte dal ramo `m5`, che unisce le fasi 0, 1 e 2 (non ancora su `main`).
 - Punto d'ingresso `android_main` (`#[no_mangle]`), `cfg(target_os = "android")` per `main.rs`.
 - Selettore file (importare una playlist M3U): Storage Access Framework via JNI al posto di `rfd`.
 - Aprire una pagina nel browser (avviso nuova versione): `Intent.ACTION_VIEW` via JNI.

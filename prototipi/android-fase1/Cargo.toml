@@ -1,0 +1,26 @@
+# Prova di M5 fase 1: il core di Sintonia dentro un'app Android vera (Keystore, cartelle dell'app,
+# HTTPS con i certificati di Android). Non fa parte del workspace (ha il suo `Cargo.lock`) e non
+# viene mai pubblicata.
+[package]
+name = "sintonia-android-prova-core"
+description = "Sintonia: prova del core su Android (fase 1 di M5)"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sintonia-core = { path = "../../crates/sintonia-core" }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+log = "0.4"
+tokio = { version = "1", features = ["rt"] }
+
+[profile.release]
+strip = true
+lto = "thin"

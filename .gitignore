@@ -1,5 +1,6 @@
 /target/
 /bozza-grafica/target/
+/prototipi/*/target/
 # libmpv e altre librerie scaricate: non vanno nel repository
 /vendor/
 # playlist/EPG di prova dell'autore: mai nel repository

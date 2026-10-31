@@ -62,4 +62,7 @@ Incluso nell'eseguibile (crate `rusqlite`, versione `bundled`): pubblico dominio
 Le dipendenze Rust sono elencate in `Cargo.lock`; le principali (tokio, reqwest, rustls, rusqlite,
 chacha20poly1305, image, keyring) sono sotto licenze MIT, Apache-2.0, ISC o simili, compatibili con
 la GPL-3.0. La crittografia di rustls usa aws-lc-rs (Apache-2.0 e ISC, con parti OpenSSL).
+Solo su Android (M5 fase 1) il core usa `jni` (MIT o Apache-2.0) al posto di `keyring`; le
+autorità di certificazione sono quelle di sistema di Android, lette dai file, senza codice Java
+aggiunto all'APK.
 Un riepilogo automatico completo (`cargo about` o simili) arriva con l'installer (M4).
