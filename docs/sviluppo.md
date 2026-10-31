@@ -90,6 +90,25 @@ sistema («TLS certificate verification failed»). Il ciclo di vita si decide co
 `sintonia_player::lifecycle::Lifecycle` (segnali `Start`/`Stop`/`InitWindow`/`TerminateWindow` di
 `slint::android::init_with_event_listener`) e si applica con `VideoRouter::suspend`/`resume`.
 
+### L'app su Android (fase 3)
+
+```powershell
+# compila la vera app, impacchetta l'APK (versione da Cargo.toml, chiave di debug), installa e avvia
+powershell -ExecutionPolicy Bypass -File scripts\android-app.ps1 -Installa -Avvia   # -Abi x86_64 per l'emulatore
+adb logcat -s sintonia:*                       # i messaggi dell'app (mai gli indirizzi con le credenziali)
+adb shell run-as io.github.mrzanca.sintonia ls files   # archivio, segreti, playlist importate
+
+# prove senza un account vero: il finto server Xtream del core sul PC, raggiunto dal telefono
+cargo run -p sintonia-core --features mock --example finto_xtream -- 8899
+adb reverse tcp:8899 tcp:8899                  # poi in Sintonia: server http://127.0.0.1:8899, mario / prova123
+```
+
+L'APK contiene `libsintonia_app.so` (la libreria `sintonia-app` compilata come `cdylib` con
+`cargo rustc`), la libmpv LGPL e un `classes.dex` con l'aiuto Java di Slint e
+`crates/sintonia-app/android/java` (compilati con `javac -source 8` e `d8`: niente lambda, `android.jar`
+non ha il necessario). Nome del pacchetto `io.github.mrzanca.sintonia`. MIUI non accetta i tocchi
+simulati con `adb shell input` sui file del selettore: lì si tocca a mano.
+
 ### Banco di prova (prototipi\android-fase0)
 
 ```powershell
