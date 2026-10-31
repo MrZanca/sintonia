@@ -6,7 +6,9 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Bundle;
 import android.provider.OpenableColumns;
+import android.view.View;
 import android.view.WindowManager;
 
 import java.io.File;
@@ -28,6 +30,36 @@ public class SintoniaActivity extends NativeActivity {
 
     /** Il file scelto, copiato nella cartella dei dati; null se annullato o illeggibile. */
     private static native void onFilePicked(String path);
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        immersive();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // Android rimette le barre dopo un dialogo, il selettore o la tastiera
+        if (hasFocus) {
+            immersive();
+        }
+    }
+
+    /**
+     * Tutto schermo, senza barra di stato né di navigazione (tornano con uno scorrimento dal
+     * bordo): l'interfaccia per ora non tiene conto dei bordi, e la barra di stato copriva i
+     * pulsanti in alto. I margini veri arrivano con la fase 4.
+     */
+    private void immersive() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+    }
 
     /** Apre il selettore di file di Android per una playlist M3U. */
     public void pickPlaylist() {

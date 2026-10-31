@@ -91,9 +91,8 @@ fn android_main(app: AndroidApp) {
 
     // SAFETY: i puntatori vengono da `AndroidApp`, che tiene vive la JavaVM e l'activity finché
     // `android_main` non ritorna (e il core li usa solo da lì in poi).
-    if let Err(err) =
-        unsafe { sintonia_core::android::init(app.vm_as_ptr(), app.activity_as_ptr()) }
-    {
+    let init = unsafe { sintonia_core::android::init(app.vm_as_ptr(), app.activity_as_ptr()) };
+    if let Err(err) = init {
         log::error!("Android: {err}");
         return;
     }

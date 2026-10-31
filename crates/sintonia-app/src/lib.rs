@@ -299,6 +299,8 @@ fn run() -> Result<(), AppError> {
     #[cfg(target_os = "android")]
     drop(pip);
     remote::install(&main);
+    main.global::<Nav>()
+        .set_mini_player(cfg!(not(target_os = "android")));
 
     // chiudere la finestra principale chiude l'app, anche con il mini player aperto
     main.window().on_close_requested(|| {

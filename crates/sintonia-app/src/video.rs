@@ -222,7 +222,8 @@ impl VideoRouter {
         install(self, main)
     }
 
-    /// Vedi [`Self::install_main`].
+    /// Vedi [`Self::install_main`]. Su Android il mini player non c'è.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     pub fn install_pip(
         self: &Rc<Self>,
         pip: &PipWindow,
