@@ -165,3 +165,10 @@ extern "C" {
     pub fn mpv_render_context_report_swap(ctx: *mut mpv_render_context);
     pub fn mpv_render_context_free(ctx: *mut mpv_render_context);
 }
+
+// libavcodec (FFmpeg), collegata da build.rs solo su Android
+#[cfg(target_os = "android")]
+extern "C" {
+    /// La JavaVM che FFmpeg usa per `mediacodec` (e mpv per l'uscita `audiotrack`).
+    pub fn av_jni_set_java_vm(vm: *mut c_void, log_ctx: *mut c_void) -> c_int;
+}

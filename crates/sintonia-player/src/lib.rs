@@ -10,7 +10,9 @@
 //! gli URL IPTV contengono spesso utente e password.
 
 mod ffi;
+pub mod lifecycle;
 mod render;
+pub mod tls;
 
 use std::ffi::{c_char, c_int, CStr, CString, NulError};
 use std::fmt;
@@ -58,7 +60,7 @@ pub enum PlayerError {
 pub struct PlayerConfig {
     /// User-agent HTTP; `None` lascia quello di mpv.
     pub user_agent: Option<String>,
-    /// Decodifica hardware (`hwdec=auto-safe`).
+    /// Decodifica hardware ([`HWDEC`]).
     pub hardware_decoding: bool,
     /// Livello minimo dei messaggi di mpv da mandare al log (`"warn"`, `"info"`, `"v"`…).
     pub log_level: &'static str,
@@ -66,6 +68,9 @@ pub struct PlayerConfig {
     pub network_timeout_secs: u32,
     /// Memoria massima per i dati in arrivo (MiB). Per la TV in diretta bastano pochi secondi.
     pub cache_mib: u32,
+    /// File PEM con le autorità di certificazione per HTTPS (`tls-ca-file`). Su Windows resta
+    /// `None`: libcurl usa i certificati di sistema. Su Android va dato (`tls::system_ca_bundle`).
+    pub tls_ca_file: Option<std::path::PathBuf>,
 }
 
 impl Default for PlayerConfig {
@@ -76,6 +81,7 @@ impl Default for PlayerConfig {
             log_level: "warn",
             network_timeout_secs: 15,
             cache_mib: 48,
+            tls_ca_file: None,
         }
     }
 }
@@ -279,6 +285,28 @@ fn check(what: &'static str, code: c_int) -> Result<(), PlayerError> {
     }
 }
 
+/// Decodifica hardware. Su Android `mediacodec` scrive nella superficie senza copie (57% di un core
+/// contro 70% di `mediacodec-copy` nelle misure della fase 0 di M5); se nessuno dei due accetta il
+/// flusso mpv decodifica da sé.
+#[cfg(target_os = "android")]
+pub const HWDEC: &str = "mediacodec,mediacodec-copy";
+/// Decodifica hardware: mpv sceglie tra i decoder ritenuti sicuri (D3D11, DXVA2, NVDEC...).
+#[cfg(not(target_os = "android"))]
+pub const HWDEC: &str = "auto-safe";
+
+/// Dà a FFmpeg la JavaVM del processo. Da chiamare una volta all'avvio, prima di creare il
+/// [`Player`]: senza, `mediacodec` e `audiotrack` non partono.
+///
+/// # Safety
+/// `vm` deve essere la `JavaVM*` del processo (`AndroidApp::vm_as_ptr`), valida per tutta la sua vita.
+#[cfg(target_os = "android")]
+pub unsafe fn set_java_vm(vm: *mut std::ffi::c_void) -> Result<(), PlayerError> {
+    // SAFETY: garantito dal chiamante; il contesto di log può essere NULL.
+    check("JavaVM per FFmpeg", unsafe {
+        ffi::av_jni_set_java_vm(vm, ptr::null_mut())
+    })
+}
+
 /// User-agent quando né le impostazioni né il canale ne indicano uno.
 pub const DEFAULT_USER_AGENT: &str = concat!("Sintonia/", env!("CARGO_PKG_VERSION"), " (libmpv)");
 
@@ -315,15 +343,7 @@ impl Player {
             ("input-vo-keyboard", "no".into()),
             ("keep-open", "no".into()),
             ("audio-client-name", "Sintonia".into()),
-            (
-                "hwdec",
-                if config.hardware_decoding {
-                    "auto-safe"
-                } else {
-                    "no"
-                }
-                .into(),
-            ),
+            ("hwdec", if config.hardware_decoding { HWDEC } else { "no" }.into()),
             ("network-timeout", config.network_timeout_secs.to_string()),
             ("cache", "yes".into()),
             ("demuxer-max-bytes", format!("{}MiB", config.cache_mib)),
@@ -338,6 +358,15 @@ impl Player {
                 "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=4".into(),
             ),
         ];
+        if let Some(path) = &config.tls_ca_file {
+            match path.to_str() {
+                Some(path) => options.push(("tls-ca-file", path.to_owned())),
+                None => log::warn!("percorso dei certificati non in UTF-8: HTTPS senza autorità"),
+            }
+        }
+        // AudioTrack passa dal mixer di sistema (volume, cuffie Bluetooth, chiamate in arrivo)
+        #[cfg(target_os = "android")]
+        options.push(("ao", "audiotrack".into()));
         options.push((
             "user-agent",
             config

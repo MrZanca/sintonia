@@ -1,0 +1,35 @@
+# Prova di fattibilità di M5 fase 0: Slint + libmpv su Android. Non fa parte del workspace
+# dell'app (ha il suo `Cargo.lock`) e non viene mai pubblicata.
+[package]
+name = "sintonia-android-prova"
+description = "Sintonia: prova di fattibilità Android (fase 0 di M5)"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sintonia-player = { path = "../../crates/sintonia-player" }
+# stessa Slint dell'app; il backend Android passa da winit e android-activity
+slint = { version = "1.18", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "renderer-femtovg",
+    "backend-android-activity-06",
+] }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+glow = "0.16"
+log = "0.4"
+
+[build-dependencies]
+slint-build = "1.18"
+
+[profile.release]
+strip = true
+lto = "thin"

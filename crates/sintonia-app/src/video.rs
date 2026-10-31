@@ -118,6 +118,18 @@ pub struct VideoRouter {
     keep_awake: KeepAwake,
     /// Audio spento (vale per ogni player: c'è un solo mpv).
     muted: Cell<bool>,
+    /// Cosa è stato sospeso con l'app in secondo piano (vedi [`Self::suspend`]).
+    suspended: Cell<Option<Suspended>>,
+}
+
+/// La riproduzione sospesa da [`VideoRouter::suspend`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code, reason = "costruito solo da VideoRouter::suspend")]
+enum Suspended {
+    /// Film o episodio messo in pausa da noi (non era già in pausa).
+    Paused,
+    /// Diretta fermata: al ritorno si riapre il canale.
+    Live,
 }
 
 impl std::fmt::Debug for VideoRouter {
@@ -150,6 +162,7 @@ impl VideoRouter {
             retry_timer: slint::Timer::default(),
             keep_awake: KeepAwake::default(),
             muted: Cell::new(false),
+            suspended: Cell::new(None),
         });
         ROUTER.with(|r| *r.borrow_mut() = Rc::downgrade(&router));
         let weak = Rc::downgrade(&router);
@@ -247,6 +260,7 @@ impl VideoRouter {
 
     /// Apre un flusso già risolto; `start`: secondi da cui partire (film ed episodi).
     pub fn play(&self, stream: StreamInfo, on_demand: bool, start: Option<u32>) {
+        self.suspended.set(None);
         self.retry_timer.stop();
         self.backoff.borrow_mut().reset();
         self.set_attempt(0);
@@ -278,8 +292,62 @@ impl VideoRouter {
         }
     }
 
+    /// L'app non si vede più (Android: secondo piano, schermo spento). Senza superficie Slint non
+    /// disegna ma mpv continuerebbe a decodificare: un film va in pausa, la diretta si ferma
+    /// (riprenderla da dove era non ha senso e terrebbe occupata la connessione del fornitore).
+    #[allow(dead_code, reason = "lo chiama android_main, che arriva in M5 fase 3")]
+    pub fn suspend(&self) {
+        if self.stopped.get() || self.suspended.get().is_some() {
+            return;
+        }
+        let suspended = if self.on_demand.get() {
+            if self.player.is_paused() {
+                return;
+            }
+            self.position();
+            if let Err(err) = self.player.set_paused(true) {
+                log::warn!("{err}");
+                return;
+            }
+            Suspended::Paused
+        } else {
+            self.retry_timer.stop();
+            self.backoff.borrow_mut().reset();
+            if let Err(err) = self.player.stop() {
+                log::warn!("{err}");
+            }
+            Suspended::Live
+        };
+        log::info!("riproduzione sospesa ({suspended:?})");
+        self.suspended.set(Some(suspended));
+    }
+
+    /// L'app è di nuovo visibile: riprende quello che [`Self::suspend`] aveva fermato.
+    #[allow(dead_code, reason = "lo chiama android_main, che arriva in M5 fase 3")]
+    pub fn resume(&self) {
+        let Some(suspended) = self.suspended.take() else {
+            return;
+        };
+        if self.stopped.get() {
+            return;
+        }
+        log::info!("riproduzione ripresa ({suspended:?})");
+        match suspended {
+            Suspended::Paused => {
+                if let Err(err) = self.player.set_paused(false) {
+                    log::warn!("{err}");
+                }
+            }
+            Suspended::Live => {
+                self.set_attempt(0);
+                self.load_current();
+            }
+        }
+    }
+
     /// Ferma la riproduzione.
     pub fn stop(&self) {
+        self.suspended.set(None);
         self.retry_timer.stop();
         self.stopped.set(true);
         self.on_demand.set(false);
@@ -1004,7 +1072,7 @@ impl GlVideo {
 
         // SAFETY: contesto corrente (siamo nel notifier). Salviamo lo stato che FemtoVG si aspetta
         // di ritrovare e portiamo il resto ai valori standard che mpv richiede (render_gl.h).
-        let saved = unsafe { SavedState::capture(gl) };
+        let saved = unsafe { SavedState::capture(gl, self.vao.is_some()) };
         // SAFETY: come sopra.
         unsafe { reset_to_defaults(gl, self.vao.is_some()) };
 
@@ -1072,23 +1140,104 @@ unsafe fn current_framebuffer(gl: &glow::Context) -> Option<glow::Framebuffer> {
         .map(glow::NativeFramebuffer)
 }
 
-/// Lo stato OpenGL di FemtoVG che tocchiamo.
+/// Lo stato OpenGL che FemtoVG dà per scontato tra un disegno e l'altro e che mpv o la maschera
+/// possono cambiare. Su Windows FemtoVG reimposta da sé quasi tutto; su Android no (fase 0 di M5:
+/// con il solo framebuffer e viewport il testo usciva a blocchi neri), quindi si salva tutto ovunque.
+/// Costa una trentina di letture di stato per fotogramma video.
 struct SavedState {
     framebuffer: Option<glow::Framebuffer>,
     viewport: [i32; 4],
+    active_texture: u32,
+    textures: [Option<glow::Texture>; 2],
+    program: Option<glow::Program>,
+    /// `None` se il contesto non ha i VAO (OpenGL ES 2).
+    vertex_array: Option<Option<glow::VertexArray>>,
+    array_buffer: Option<glow::Buffer>,
+    enabled: [(u32, bool); 5],
+    color_mask: [i32; 4],
+    blend_func: [i32; 4],
+    blend_equation: [i32; 2],
+    unpack_alignment: i32,
+    stencil_mask: i32,
+    stencil_func: [i32; 3],
+    stencil_ops: [i32; 3],
+    depth_mask: bool,
+    depth_func: i32,
+    scissor: [i32; 4],
+    clear_color: [f32; 4],
 }
+
+/// Le capacità che salviamo e che mpv vuole spente.
+const FLAGS: [u32; 5] = [
+    glow::BLEND,
+    glow::SCISSOR_TEST,
+    glow::STENCIL_TEST,
+    glow::DEPTH_TEST,
+    glow::CULL_FACE,
+];
 
 impl SavedState {
     /// # Safety
     /// Il contesto di `gl` deve essere corrente.
-    unsafe fn capture(gl: &glow::Context) -> Self {
-        let mut viewport = [0; 4];
+    unsafe fn capture(gl: &glow::Context, has_vao: bool) -> Self {
+        let nz = |id: i32| u32::try_from(id).ok().and_then(NonZeroU32::new);
+        let slice = |name: u32| {
+            let mut v = [0; 4];
+            // SAFETY: garantito dal chiamante; tutti i parametri letti così hanno 4 valori.
+            unsafe { gl.get_parameter_i32_slice(name, &mut v) };
+            v
+        };
         // SAFETY: garantito dal chiamante.
         unsafe {
-            gl.get_parameter_i32_slice(glow::VIEWPORT, &mut viewport);
+            let active_texture = gl.get_parameter_i32(glow::ACTIVE_TEXTURE) as u32;
+            let mut textures = [None, None];
+            for (unit, slot) in (0u32..).zip(textures.iter_mut()) {
+                gl.active_texture(glow::TEXTURE0 + unit);
+                *slot = nz(gl.get_parameter_i32(glow::TEXTURE_BINDING_2D)).map(glow::NativeTexture);
+            }
+            gl.active_texture(active_texture);
+            let mut clear_color = [0.0; 4];
+            gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut clear_color);
             Self {
                 framebuffer: current_framebuffer(gl),
-                viewport,
+                viewport: slice(glow::VIEWPORT),
+                active_texture,
+                textures,
+                program: nz(gl.get_parameter_i32(glow::CURRENT_PROGRAM)).map(glow::NativeProgram),
+                vertex_array: has_vao.then(|| {
+                    nz(gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING))
+                        .map(glow::NativeVertexArray)
+                }),
+                array_buffer: nz(gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING))
+                    .map(glow::NativeBuffer),
+                enabled: FLAGS.map(|flag| (flag, gl.is_enabled(flag))),
+                color_mask: slice(glow::COLOR_WRITEMASK),
+                blend_func: [
+                    gl.get_parameter_i32(glow::BLEND_SRC_RGB),
+                    gl.get_parameter_i32(glow::BLEND_DST_RGB),
+                    gl.get_parameter_i32(glow::BLEND_SRC_ALPHA),
+                    gl.get_parameter_i32(glow::BLEND_DST_ALPHA),
+                ],
+                blend_equation: [
+                    gl.get_parameter_i32(glow::BLEND_EQUATION_RGB),
+                    gl.get_parameter_i32(glow::BLEND_EQUATION_ALPHA),
+                ],
+                unpack_alignment: gl.get_parameter_i32(glow::UNPACK_ALIGNMENT),
+                stencil_mask: gl.get_parameter_i32(glow::STENCIL_WRITEMASK),
+                stencil_func: [
+                    gl.get_parameter_i32(glow::STENCIL_FUNC),
+                    gl.get_parameter_i32(glow::STENCIL_REF),
+                    gl.get_parameter_i32(glow::STENCIL_VALUE_MASK),
+                ],
+                stencil_ops: [
+                    gl.get_parameter_i32(glow::STENCIL_FAIL),
+                    gl.get_parameter_i32(glow::STENCIL_PASS_DEPTH_FAIL),
+                    gl.get_parameter_i32(glow::STENCIL_PASS_DEPTH_PASS),
+                ],
+                depth_mask: gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0,
+                depth_func: gl.get_parameter_i32(glow::DEPTH_FUNC),
+                scissor: slice(glow::SCISSOR_BOX),
+                clear_color,
             }
         }
     }
@@ -1096,29 +1245,61 @@ impl SavedState {
     /// # Safety
     /// Il contesto di `gl` deve essere corrente.
     unsafe fn restore(self, gl: &glow::Context) {
-        let [x, y, w, h] = self.viewport;
-        // SAFETY: garantito dal chiamante.
+        // SAFETY: garantito dal chiamante; i valori vengono da `capture` sullo stesso contesto.
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, self.framebuffer);
+            let [x, y, w, h] = self.viewport;
             gl.viewport(x, y, w, h);
+            for (unit, texture) in (0u32..).zip(self.textures) {
+                gl.active_texture(glow::TEXTURE0 + unit);
+                gl.bind_texture(glow::TEXTURE_2D, texture);
+            }
+            gl.active_texture(self.active_texture);
+            gl.use_program(self.program);
+            if let Some(vertex_array) = self.vertex_array {
+                gl.bind_vertex_array(vertex_array);
+            }
+            gl.bind_buffer(glow::ARRAY_BUFFER, self.array_buffer);
+            for (flag, on) in self.enabled {
+                if on {
+                    gl.enable(flag);
+                } else {
+                    gl.disable(flag);
+                }
+            }
+            let [r, g, b, a] = self.color_mask;
+            gl.color_mask(r != 0, g != 0, b != 0, a != 0);
+            let [src_rgb, dst_rgb, src_alpha, dst_alpha] = self.blend_func.map(|v| v as u32);
+            gl.blend_func_separate(src_rgb, dst_rgb, src_alpha, dst_alpha);
+            let [rgb, alpha] = self.blend_equation.map(|v| v as u32);
+            gl.blend_equation_separate(rgb, alpha);
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, self.unpack_alignment);
+            gl.stencil_mask(self.stencil_mask as u32);
+            let [func, reference, mask] = self.stencil_func;
+            gl.stencil_func(func as u32, reference, mask as u32);
+            let [fail, depth_fail, pass] = self.stencil_ops.map(|v| v as u32);
+            gl.stencil_op(fail, depth_fail, pass);
+            gl.depth_mask(self.depth_mask);
+            gl.depth_func(self.depth_func as u32);
+            let [x, y, w, h] = self.scissor;
+            gl.scissor(x, y, w, h);
+            let [r, g, b, a] = self.clear_color;
+            gl.clear_color(r, g, b, a);
         }
     }
 }
 
-/// Porta lo stato ai valori standard di OpenGL che mpv si aspetta. FemtoVG reimposta da sé tutto
-/// ciò che gli serve all'inizio di ogni disegno, tranne framebuffer e viewport (vedi
-/// [`SavedState`]).
+/// Porta lo stato ai valori standard di OpenGL che mpv si aspetta (render_gl.h); quello di prima
+/// lo rimette [`SavedState::restore`].
 ///
 /// # Safety
 /// Il contesto di `gl` deve essere corrente.
 unsafe fn reset_to_defaults(gl: &glow::Context, has_vao: bool) {
     // SAFETY: garantito dal chiamante.
     unsafe {
-        gl.disable(glow::BLEND);
-        gl.disable(glow::SCISSOR_TEST);
-        gl.disable(glow::STENCIL_TEST);
-        gl.disable(glow::DEPTH_TEST);
-        gl.disable(glow::CULL_FACE);
+        for flag in FLAGS {
+            gl.disable(flag);
+        }
         gl.color_mask(true, true, true, true);
         gl.active_texture(glow::TEXTURE1);
         gl.bind_texture(glow::TEXTURE_2D, None);
@@ -1130,6 +1311,8 @@ unsafe fn reset_to_defaults(gl: &glow::Context, has_vao: bool) {
         }
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+        gl.stencil_mask(0xff);
+        gl.depth_mask(true);
     }
 }
 
