@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Solo per la prova di fase 1: debuggable, così `adb shell run-as` legge i file dell'app. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="it.sintonia.provacore">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application
+        android:label="Sintonia prova core"
+        android:debuggable="true"
+        android:hasCode="false">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode|density|keyboard|navigation">
+            <meta-data android:name="android.app.lib_name" android:value="sintonia_android_prova_core" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
