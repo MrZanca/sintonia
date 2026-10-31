@@ -1,0 +1,68 @@
+export component ProvaWindow inherits Window {
+    in property <image> frame;
+    in property <bool> ready;
+    in property <string> stats;
+    in property <string> mode;
+    in-out property <int> clicks;
+    out property <length> video-w: video-box.width;
+    out property <length> video-h: video-box.height;
+    callback next-mode();
+    background: #0c1014;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        Text {
+            text: "Sintonia · prova Android (fase 0)";
+            color: white;
+            font-size: 18px;
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            Rectangle {
+                height: 48px;
+                width: 160px;
+                border-radius: 24px;
+                background: ta.pressed ? #2a7fff : #1d5fd0;
+                Text {
+                    text: "Tocchi: " + root.clicks;
+                    color: white;
+                }
+                ta := TouchArea {
+                    clicked => { root.clicks += 1; }
+                }
+            }
+            Rectangle {
+                height: 48px;
+                width: 200px;
+                border-radius: 24px;
+                background: ta2.pressed ? #3a8f5f : #2a6f4a;
+                Text {
+                    text: root.mode;
+                    color: white;
+                }
+                ta2 := TouchArea {
+                    clicked => { root.next-mode(); }
+                }
+            }
+        }
+        video-box := Rectangle {
+            vertical-stretch: 1;
+            background: black;
+            // dimensioni esplicite: la texture è in pixel fisici e, come dimensione propria, farebbe
+            // crescere il riquadro (e quindi la texture) a ogni fotogramma sugli schermi con scala > 1
+            if root.ready: Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.frame;
+                image-fit: fill;
+            }
+        }
+        Text {
+            text: root.stats;
+            color: #9fe8b0;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+}

@@ -34,6 +34,47 @@ SHA-256 dell'archivio `b7a12a73a03313446657d3bf1bda525fa8b62c2628669ee0a16c0430f
 `libmpv-2.dll` dipende da `vulkan-1.dll`, che installano i driver video (NVIDIA, AMD, Intel).
 Su PC senza driver video (alcune macchine virtuali) la DLL non si carica: l'installer lo controlla e avvisa.
 
+## Android (M5, fase 0)
+
+Ambiente su Windows, già installato in `%LOCALAPPDATA%\Android`: `platform-tools` (adb, nel PATH),
+`jdk17`, `sdk` (platform 34, build-tools 34.0.0, NDK 27.2.12479018), `cargo-ndk` 4.1.2 e i target
+Rust `aarch64-linux-android` e `x86_64-linux-android`. In ogni shell:
+
+```powershell
+$a = "$env:LOCALAPPDATA\Android"
+$env:ANDROID_HOME = "$a\sdk"; $env:ANDROID_NDK_HOME = "$a\sdk\ndk\27.2.12479018"; $env:JAVA_HOME = "$a\jdk17"
+cargo ndk -t arm64-v8a build -p sintonia-core   # il core compila per Android
+```
+
+Il backend Android di Slint compila un aiuto Java: serve `ANDROID_JAR` (lo imposta lo script).
+
+**Libmpv per Android** in `vendor\mpv-android\<abi>\` (non va nel repository): `libmpv.so`, le
+librerie di FFmpeg (`libav*.so`, `libsw*.so`) e `libc++_shared.so`. Per ora c'è solo una build **GPL**
+(solo per prove interne, mai da distribuire): `jarnedemeulemeester/libmpv-android` release `v1.0.0`,
+`libmpv-release.aar`, SHA-256 `df146592480fc8418415a06b1f1a1d6318b0088e21f52254b0e9a82b61ca8fa2`
+(coincide con quello dichiarato da GitHub), FFmpeg n8.1, API client 2.5. Si estraggono le `.so` da
+`jni/arm64-v8a/` e `jni/x86_64/` (tutte tranne `libplayer.so`, che è il collante JNI di mpv-android).
+La build LGPL va ancora prodotta (vedi `docs/m5-fase0.md`).
+
+```powershell
+# prototipo Slint + mpv (prototipi\android-fase0): compila, impacchetta, firma (chiave di debug) e installa
+powershell -ExecutionPolicy Bypass -File scripts\android-prova.ps1 -Installa   # -Abi x86_64 per l'emulatore
+
+# indirizzo da riprodurre e modalità di decodifica (prima riga: URL; poi hwdec=auto-safe|mediacodec|mediacodec-copy|no)
+# (comando provato da Git Bash con MSYS_NO_PATHCONV=1; in PowerShell cambiano le virgolette)
+adb shell "run-as it.sintonia.prova sh -c 'mkdir -p files; printf \"URL\nhwdec=mediacodec\n\" > files/prova.txt'"
+adb shell am start -W -n it.sintonia.prova/android.app.NativeActivity
+adb logcat -s sintonia:*          # una riga di numeri al secondo (mai l'indirizzo)
+```
+
+In Git Bash `adb push`/`adb shell` storpiano i percorsi che iniziano con `/`: usare
+`MSYS_NO_PATHCONV=1` o PowerShell.
+
+**Xiaomi (MIUI/HyperOS):** `adb install` fallisce con `INSTALL_FAILED_USER_RESTRICTED` finché non si
+attiva Opzioni sviluppatore › «Installa via USB» (serve l'account Mi con i dati mobili) e il
+telefono è sbloccato. In alternativa: `adb push` dell'APK in `/sdcard/Download` e installazione a mano
+dal gestore file. Il telefono con schermo spento e blocco impronta rifiuta anche i tocchi di `adb input`.
+
 ## Comandi
 
 ```powershell

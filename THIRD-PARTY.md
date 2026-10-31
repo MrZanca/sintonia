@@ -12,6 +12,16 @@ FFmpeg senza componenti GPL.
 
 Il testo completo delle licenze va incluso nell'installer (M4).
 
+## libmpv per Android (solo prove interne, M5 fase 0)
+
+Per misurare la fattibilità su Android si è usata una build **GPL** (FFmpeg `--enable-gpl --enable-version3`):
+[jarnedemeulemeester/libmpv-android](https://github.com/jarnedemeulemeester/libmpv-android) v1.0.0 (MIT per
+gli script), derivata dalle `buildscripts` di [mpv-android](https://github.com/mpv-android/mpv-android).
+**Non va distribuita**: per le Release serve una libmpv LGPL (mpv `-Dgpl=false`, FFmpeg senza
+`--enable-gpl`), da compilare in M5 fase 2. Dipendenze dichiarate da quella build: dav1d (BSD-2),
+mbedtls (Apache-2.0), libxml2 (MIT), libass (ISC), FreeType (FTL), HarfBuzz (MIT), FriBidi (LGPL-2.1),
+Lua (MIT).
+
 ## Slint
 
 Slint è usato con la licenza **GPLv3**, compatibile con la licenza di Sintonia.
