@@ -732,7 +732,7 @@ component HomeScreen inherits Rectangle {
         }
         key-pressed(event) => {
             if (watch.focused || pip-btn.focused) {
-                if (event.text == Key.RightArrow) { pip-btn.focus(); return accept; }
+                if (event.text == Key.RightArrow && Nav.mini-player) { pip-btn.focus(); return accept; }
                 if (event.text == Key.LeftArrow) { watch.focus(); return accept; }
                 if (event.text == Key.DownArrow) { return self.first-row() ? accept : reject; }
             }
@@ -798,7 +798,7 @@ component HomeScreen inherits Rectangle {
                         spacing: 10px;
                         alignment: start;
                         watch := Btn { label: @tr("Watch"); primary: true; clicked => { root.play(); } }
-                        pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
+                        pip-btn := IconBtn { visible: Nav.mini-player; width: Nav.mini-player ? 38px : 0px; icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
                     }
                 }
             }
@@ -1091,7 +1091,7 @@ component LiveScreen inherits Rectangle {
                 spacing: 10px;
                 alignment: start;
                 Btn { label: @tr("Watch"); primary: true; clicked => { root.play(root.cursor); } }
-                IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(root.cursor); } }
+                IconBtn { visible: Nav.mini-player; width: Nav.mini-player ? 38px : 0px; icon: Icons.pip; size: 38px; clicked => { root.pip(root.cursor); } }
                 MarkBtn {
                     icon: Icons.star;
                     solid: true;
@@ -2602,7 +2602,7 @@ component PlayerScreen inherits Rectangle {
                 tune-timer.start();
                 return accept;
             }
-            if (Keys.is(1, event.text)) {
+            if (Keys.is(1, event.text) && Nav.mini-player) {
                 root.pip();
                 return accept;
             }
@@ -2813,7 +2813,7 @@ component PlayerScreen inherits Rectangle {
                             clicked => { root.seek(10); }
                         }
                         mute-btn := VolumeBtn { }
-                        pip-btn := IconBtn { icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
+                        pip-btn := IconBtn { visible: Nav.mini-player; width: Nav.mini-player ? 38px : 0px; icon: Icons.pip; size: 38px; clicked => { root.pip(); } }
                         audio-btn := Btn {
                             label: @tr("Audio");
                             clicked => {
@@ -3535,7 +3535,7 @@ export component MainWindow inherits Window {
                 root.toggle-fullscreen();
                 return accept;
             }
-            if (Keys.is(1, event.text) && root.has-current) {
+            if (Keys.is(1, event.text) && root.has-current && Nav.mini-player) {
                 root.request-pip(-1);
                 root.playing = false;
                 return accept;

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Il manifest dell'APK di Sintonia. Versione (nome e numero) e debuggable li aggiunge
+     scripts/android-app.ps1 da Cargo.toml; icona, banner per Android TV e firma arrivano con le
+     fasi 4 e 5 di M5. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.mrzanca.sintonia">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <application
+        android:label="Sintonia"
+        android:hasCode="true">
+        <activity
+            android:name=".SintoniaActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode|density|keyboard|navigation"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data android:name="android.app.lib_name" android:value="sintonia_app" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

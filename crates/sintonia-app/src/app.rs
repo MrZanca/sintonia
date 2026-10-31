@@ -22,6 +22,7 @@ use sintonia_core::service::{
 use sintonia_core::update::{self, Update};
 use sintonia_core::xtream::{Episode, MovieDetail, SeriesDetail};
 use sintonia_player::TrackKind;
+#[cfg(not(target_os = "android"))]
 use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, Model, ModelRc, PhysicalPosition, SharedString, VecModel};
 
@@ -533,16 +534,21 @@ Una copia dell'archivio com'era è in:
                 backup.display()
             ),
         };
-        let shown = slint::spawn_local(async move {
-            rfd::AsyncMessageDialog::new()
-                .set_title("Sintonia")
-                .set_description(text)
-                .set_level(rfd::MessageLevel::Warning)
-                .show()
-                .await;
-        });
-        if let Err(err) = shown {
-            log::error!("{err}");
+        #[cfg(target_os = "android")]
+        crate::android::show_message("Sintonia", &text);
+        #[cfg(not(target_os = "android"))]
+        {
+            let shown = slint::spawn_local(async move {
+                rfd::AsyncMessageDialog::new()
+                    .set_title("Sintonia")
+                    .set_description(text)
+                    .set_level(rfd::MessageLevel::Warning)
+                    .show()
+                    .await;
+            });
+            if let Err(err) = shown {
+                log::error!("{err}");
+            }
         }
     }
 
@@ -2455,14 +2461,19 @@ Una copia dell'archivio com'era è in:
         if !update::is_release_page(&url) {
             return;
         }
-        #[cfg(windows)]
-        let opened = std::process::Command::new("explorer").arg(&url).spawn();
-        #[cfg(target_os = "macos")]
-        let opened = std::process::Command::new("open").arg(&url).spawn();
-        #[cfg(all(unix, not(target_os = "macos")))]
-        let opened = std::process::Command::new("xdg-open").arg(&url).spawn();
-        if let Err(err) = opened {
-            log::warn!("pagina della versione nuova: {err}");
+        #[cfg(target_os = "android")]
+        crate::android::open_url(&url);
+        #[cfg(not(target_os = "android"))]
+        {
+            #[cfg(windows)]
+            let opened = std::process::Command::new("explorer").arg(&url).spawn();
+            #[cfg(target_os = "macos")]
+            let opened = std::process::Command::new("open").arg(&url).spawn();
+            #[cfg(all(unix, not(target_os = "macos")))]
+            let opened = std::process::Command::new("xdg-open").arg(&url).spawn();
+            if let Err(err) = opened {
+                log::warn!("pagina della versione nuova: {err}");
+            }
         }
     }
 
@@ -2831,6 +2842,10 @@ Una copia dell'archivio com'era è in:
     }
 
     fn open_pip(&self, row: i32) {
+        // su Android una seconda finestra non c'è (il Picture-in-Picture arriva con la fase 5)
+        if cfg!(target_os = "android") {
+            return;
+        }
         let (Some(main), Some(pip)) = (self.main(), self.pip.upgrade()) else {
             return;
         };
@@ -2987,10 +3002,14 @@ Una copia dell'archivio com'era è in:
 
     /// Nasconde (o rimostra) il puntatore del mouse sopra la finestra principale.
     fn set_cursor_hidden(&self, hidden: bool) {
+        // su Android non c'è un puntatore da nascondere
+        #[cfg(not(target_os = "android"))]
         if let Some(main) = self.main() {
             main.window()
                 .with_winit_window(|window| window.set_cursor_visible(!hidden));
         }
+        #[cfg(target_os = "android")]
+        let _ = hidden;
     }
 
     /// Schermo intero sì o no; l'interfaccia lo sa per mostrare il pulsante giusto.
@@ -3082,6 +3101,17 @@ Una copia dell'archivio com'era è in:
         self.service.send(command);
     }
 
+    #[cfg(target_os = "android")]
+    fn pick_file(&self) {
+        let main = self.main.clone();
+        crate::android::pick_file(move |path| {
+            if let (Some(path), Some(main)) = (path, main.upgrade()) {
+                main.set_picked_file(path.to_string_lossy().as_ref().into());
+            }
+        });
+    }
+
+    #[cfg(not(target_os = "android"))]
     fn pick_file(&self) {
         let main = self.main.clone();
         let picked = slint::spawn_local(async move {

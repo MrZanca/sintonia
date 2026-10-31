@@ -65,4 +65,7 @@ la GPL-3.0. La crittografia di rustls usa aws-lc-rs (Apache-2.0 e ISC, con parti
 Solo su Android (M5 fase 1) il core usa `jni` (MIT o Apache-2.0) al posto di `keyring`; le
 autorità di certificazione sono quelle di sistema di Android, lette dai file, senza codice Java
 aggiunto all'APK.
+L'app su Android (fase 3) usa anche `android-activity` e `android_logger` (MIT o Apache-2.0); il suo
+APK contiene solo codice Java di Sintonia (`SintoniaActivity`, GPL-3.0) e l'aiuto Java del backend
+Android di Slint (con la licenza di Slint, vedi sopra).
 Un riepilogo automatico completo (`cargo about` o simili) arriva con l'installer (M4).

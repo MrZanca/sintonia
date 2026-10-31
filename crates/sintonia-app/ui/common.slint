@@ -160,6 +160,8 @@ export global Nav {
     in-out property <int> mouse-count;
     // sposta il fuoco all'elemento seguente (true) o precedente (false)
     callback step(bool);
+    // c'è il mini player (seconda finestra): su Android no, lo spegne Rust
+    in property <bool> mini-player: true;
 }
 
 // I tasti delle azioni (scelti dall'utente in Impostazioni › Tasti). Li imposta Rust.

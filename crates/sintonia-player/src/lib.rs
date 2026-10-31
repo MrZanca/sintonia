@@ -336,6 +336,16 @@ impl Player {
             ("terminal", "no".into()),
             ("config", "no".into()),
             ("load-scripts", "no".into()),
+            // gli script Lua interni di mpv: Sintonia non ne usa nessuno, e su Android uno di
+            // loro che si chiude mentre mpv gestisce un aggancio («client removed during hook
+            // handling») bloccava il thread dell'interfaccia al primo caricamento
+            ("load-stats-overlay", "no".into()),
+            ("load-console", "no".into()),
+            ("load-select", "no".into()),
+            ("load-positioning", "no".into()),
+            ("load-commands", "no".into()),
+            ("load-context-menu", "no".into()),
+            ("load-auto-profiles", "no".into()),
             ("ytdl", "no".into()),
             ("osc", "no".into()),
             ("osd-level", "0".into()),

@@ -73,7 +73,9 @@ si collegano in fase 3, con `android_main`. CPU non ridotta: resta un lavoro per
   Picture-in-Picture, in fase 5.
 
 ### Fase 3: l'applicazione
-Parte dal ramo `m5`, che unisce le fasi 0, 1 e 2 (non ancora su `main`).
+**Fatta** (ramo `m5-fase-3`, vedi `docs/m5-fase3.md`): l'app gira sul Mi 9T con l'interfaccia di
+Windows; provati importazione da file e Xtream, guida, video in hardware e riavvio con i dati.
+NativeActivity basta (la tastiera su schermo funziona), niente Gradle.
 - Punto d'ingresso `android_main` (`#[no_mangle]`), `cfg(target_os = "android")` per `main.rs`.
 - Selettore file (importare una playlist M3U): Storage Access Framework via JNI al posto di `rfd`.
 - Aprire una pagina nel browser (avviso nuova versione): `Intent.ACTION_VIEW` via JNI.
