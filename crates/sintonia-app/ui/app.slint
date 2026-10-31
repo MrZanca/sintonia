@@ -1939,12 +1939,6 @@ component SettingsScreen inherits Rectangle {
                 }
                 Rectangle { height: 4px; }
                 Text {
-                    text: @tr("With the remote control: the arrows move the white ring from one button or list to the next, OK opens what has the ring, Back goes back (from a page it goes to the menu at the bottom, from the menu to the Home).");
-                    color: Theme.dim;
-                    font-size: 13px * Theme.text-scale;
-                    wrap: word-wrap;
-                }
-                Text {
                     text: @tr("In the player: ↑ ↓ change channel, OK opens the channel list, ← → reach the buttons. Movies and episodes: ← → skip 10 seconds, OK pauses, ↓ shows the buttons.");
                     color: Theme.dim;
                     font-size: 13px * Theme.text-scale;
@@ -2076,7 +2070,7 @@ component SettingsScreen inherits Rectangle {
                     if Nav.tv: HorizontalLayout {
                         alignment: start;
                         Btn {
-                            label: @tr("Teach the remote control");
+                            label: @tr("Guided learning");
                             primary: true;
                             clicked => { root.teach(); }
                         }
@@ -2161,7 +2155,7 @@ component TeachDialog inherits Rectangle {
             padding: 34px;
             spacing: 14px;
             Text {
-                text: @tr("Teach the remote control");
+                text: @tr("Guided learning");
                 color: Theme.ink;
                 font-size: 22px * Theme.text-scale;
                 font-weight: 700;
