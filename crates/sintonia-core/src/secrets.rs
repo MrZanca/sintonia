@@ -1,5 +1,6 @@
 //! Segreti nel portachiavi del sistema (Gestione credenziali di Windows, Portachiavi di macOS,
-//! Secret Service su Linux).
+//! Secret Service su Linux). Android non ha un portachiavi per testi: lì i segreti stanno in un
+//! file cifrato con una chiave protetta dall'Android Keystore ([`crate::vault`]).
 //!
 //! Due tipi di segreti: la chiave che cifra l'archivio ([`database_key`]) e le password degli
 //! account Xtream ([`SecretStore`], una voce per sorgente). Il resto del codice usa il tratto
@@ -18,8 +19,12 @@ const DATABASE_KEY: &str = "chiave-archivio";
 #[derive(Debug, thiserror::Error)]
 pub enum SecretsError {
     /// Il portachiavi del sistema non risponde o rifiuta l'accesso.
+    #[cfg(not(target_os = "android"))]
     #[error("portachiavi del sistema non disponibile: {0}")]
     Keyring(#[from] keyring::Error),
+    /// Il deposito dei segreti (Android Keystore e file cifrato) non risponde.
+    #[error("deposito dei segreti non disponibile: {0}")]
+    Platform(String),
     /// Nel portachiavi c'è un valore che non è una chiave valida.
     #[error("la chiave dell'archivio nel portachiavi è danneggiata")]
     Corrupt,
@@ -33,17 +38,18 @@ pub enum SecretsError {
 /// `created` è `true` se la chiave è nuova: un archivio esistente cifrato con un'altra chiave
 /// non sarà più leggibile, e l'app lo deve ricreare.
 pub fn database_key(service: &str) -> Result<([u8; KEY_LEN], bool), SecretsError> {
-    let entry = keyring::Entry::new(service, DATABASE_KEY)?;
-    match entry.get_password() {
-        Ok(text) => key_from_hex(&text)
+    let store = SystemKeyring {
+        service: service.to_owned(),
+    };
+    match store.get(DATABASE_KEY)? {
+        Some(text) => key_from_hex(&text)
             .map(|key| (key, false))
             .ok_or(SecretsError::Corrupt),
-        Err(keyring::Error::NoEntry) => {
+        None => {
             let key = Cipher::generate_key()?;
-            entry.set_password(&key_to_hex(&key))?;
+            store.set(DATABASE_KEY, &key_to_hex(&key))?;
             Ok((key, true))
         }
-        Err(err) => Err(err.into()),
     }
 }
 
@@ -68,6 +74,7 @@ pub struct SystemKeyring {
     pub service: String,
 }
 
+#[cfg(not(target_os = "android"))]
 impl SecretStore for SystemKeyring {
     fn get(&self, name: &str) -> Result<Option<String>, SecretsError> {
         match keyring::Entry::new(&self.service, name)?.get_password() {
@@ -87,6 +94,48 @@ impl SecretStore for SystemKeyring {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(err) => Err(err.into()),
         }
+    }
+}
+
+/// Il deposito di un servizio, uno solo per processo: la chiave decifrata resta in memoria e le
+/// scritture non si sovrappongono.
+#[cfg(target_os = "android")]
+fn vault(
+    service: &str,
+) -> Result<std::sync::Arc<crate::vault::Vault<crate::android::Keystore>>, SecretsError> {
+    use std::sync::{Arc, OnceLock};
+    type Vaults = Mutex<HashMap<String, Arc<crate::vault::Vault<crate::android::Keystore>>>>;
+    static VAULTS: OnceLock<Vaults> = OnceLock::new();
+
+    let (data, _) =
+        crate::android::app_dirs().map_err(|e| SecretsError::Platform(e.to_string()))?;
+    let mut vaults = VAULTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    Ok(Arc::clone(vaults.entry(service.to_owned()).or_insert_with(
+        || {
+            Arc::new(crate::vault::Vault::new(
+                &data.join("segreti"),
+                service,
+                crate::android::Keystore::new(service),
+            ))
+        },
+    )))
+}
+
+#[cfg(target_os = "android")]
+impl SecretStore for SystemKeyring {
+    fn get(&self, name: &str) -> Result<Option<String>, SecretsError> {
+        vault(&self.service)?.get(name)
+    }
+
+    fn set(&self, name: &str, value: &str) -> Result<(), SecretsError> {
+        vault(&self.service)?.set(name, value)
+    }
+
+    fn delete(&self, name: &str) -> Result<(), SecretsError> {
+        vault(&self.service)?.delete(name)
     }
 }
 
